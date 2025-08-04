@@ -1,0 +1,13 @@
+# Exclude sources and dev files from the published package
+src/
+examples/
+selenium-webdriver/
+rust/
+.vscode/
+*.log
+*.md
+!README.md
+.eslintrc.cjs
+.prettierrc
+vitest.config.ts
+*.map

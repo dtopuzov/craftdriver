@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mouse Actions Playground</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #151925;
+        --accent: #4f86ff;
+        --success: #18a558;
+        --fail: #e63946;
+        --text: #e6edf3;
+        --muted: #9aa5b1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          Cantarell,
+          Noto Sans,
+          Helvetica Neue,
+          Arial,
+          'Apple Color Emoji',
+          'Segoe UI Emoji';
+        background: var(--bg);
+        color: var(--text);
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        grid-template-rows: auto 1fr;
+        gap: 12px;
+        padding: 12px;
+      }
+      header {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      header h1 {
+        font-size: 18px;
+        margin: 0;
+        font-weight: 600;
+      }
+      header .hint {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .board {
+        background: var(--panel);
+        border: 1px solid #222839;
+        border-radius: 10px;
+        padding: 12px;
+        position: relative;
+        overflow: hidden;
+        min-height: 520px;
+      }
+      .board .grid {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.15;
+        background-image:
+          linear-gradient(#fff2 1px, transparent 1px),
+          linear-gradient(90deg, #fff2 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: #0e1320;
+        border: 1px solid #1e263a;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .card h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        font-weight: 600;
+      }
+      .sep {
+        height: 1px;
+        background: #1e263a;
+        margin: 8px 0;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #101628;
+        border: 1px solid #1f2740;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      button {
+        background: #14203a;
+        color: var(--text);
+        border: 1px solid #243257;
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #19294a;
+      }
+
+      /* Drag & Drop area */
+      .stage {
+        position: relative;
+        height: 260px;
+        background: #0b1120;
+        border: 1px dashed #2a3555;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      #drag-source {
+        position: absolute;
+        left: 24px;
+        top: 24px;
+        width: 72px;
+        height: 72px;
+        border-radius: 10px;
+        background: linear-gradient(145deg, #5a7aff, #3e5be8);
+        border: 1px solid #2f49c0;
+        box-shadow: 0 6px 16px #3e5be880;
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+        user-select: none;
+        touch-action: none;
+        color: #fff;
+      }
+      #drag-target {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        width: 160px;
+        height: 120px;
+        border-radius: 12px;
+        border: 2px dashed #3b4f7d;
+        background: #0f1730;
+        color: var(--muted);
+        display: grid;
+        place-items: center;
+        text-align: center;
+        padding: 8px;
+      }
+      #drag-target.success {
+        border-color: var(--success);
+        color: var(--success);
+        box-shadow: 0 0 0 2px #18a55833 inset;
+      }
+      #drag-target.fail {
+        border-color: var(--fail);
+        color: var(--fail);
+        box-shadow: 0 0 0 2px #e6394633 inset;
+      }
+
+      /* Interaction boxes */
+      .box {
+        height: 90px;
+        border-radius: 8px;
+        border: 1px solid #28314a;
+        background: #0c1426;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        padding: 8px;
+        user-select: none;
+      }
+      .box strong {
+        color: #c7d2fe;
+      }
+      #wheel-box {
+        height: 240px;
+        overflow: auto;
+      }
+      #wheel-content {
+        height: 600px;
+        width: 100%;
+        background: linear-gradient(#0c1426, #0f172a);
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+      }
+      #hover-tip {
+        display: none;
+        position: absolute;
+        transform: translateY(60px);
+        padding: 6px 10px;
+        font-size: 12px;
+        background: #111a2e;
+        border: 1px solid #233154;
+        border-radius: 6px;
+        color: var(--muted);
+      }
+
+      /* Sidebar */
+      .sidebar {
+        background: var(--panel);
+        border: 1px solid #222839;
+        border-radius: 10px;
+        padding: 10px;
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        gap: 10px;
+      }
+      .log {
+        background: #0b1120;
+        border: 1px solid #1b2340;
+        border-radius: 8px;
+        padding: 8px;
+        height: 320px;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+        font-size: 12px;
+      }
+      .log .item {
+        color: #d1d5db;
+      }
+      .log .time {
+        color: #7aa2ff;
+      }
+      .status {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 10px;
+        align-items: center;
+      }
+      .status .value {
+        font-weight: 600;
+      }
+      .ok {
+        color: var(--success);
+      }
+      .bad {
+        color: var(--fail);
+      }
+      .coords {
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Mouse Actions Playground</h1>
+      <span class="hint"
+        >Try press, release, move, click, double-click, right-click, wheel, and drag & drop.</span
+      >
+      <span class="pill" id="coords">x: 0, y: 0</span>
+      <button id="reset-btn" title="Reset positions and log">Reset</button>
+    </header>
+
+    <main class="board" id="board">
+      <div class="grid"></div>
+
+      <section class="card">
+        <h2>Drag & Drop (success when fully inside the target)</h2>
+        <div class="stage" id="stage">
+          <div id="drag-source" aria-label="drag-source">DRAG</div>
+          <div id="drag-target" aria-label="drag-target">
+            Drop here
+            <div style="font-size: 11px; color: var(--muted)">needs to be fully inside</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="row" style="margin-top: 12px">
+        <section class="card">
+          <h2>Press & Release</h2>
+          <div class="box" id="press-box">
+            <div><strong>press-box</strong><br /><span>pointerdown / pointerup</span></div>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Double click</h2>
+          <div class="box" id="dblclick-box">
+            <div>
+              <strong>dblclick-box</strong><br /><span
+                >dblclick counter: <span id="dblcount">0</span></span
+              >
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="row" style="margin-top: 12px">
+        <section class="card">
+          <h2>Right click / Context menu</h2>
+          <div class="box" id="context-box">
+            <div><strong>context-box</strong><br /><span>right-click here</span></div>
+          </div>
+        </section>
+        <section class="card" style="position: relative">
+          <h2>Hover</h2>
+          <div class="box" id="hover-box" style="position: relative">
+            <div><strong>hover-box</strong><br /><span>shows a tip on hover</span></div>
+            <div id="hover-tip">Hello from hover!</div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="sidebar">
+      <div class="status">
+        <div>Drag result:</div>
+        <div id="status" class="value">n/a</div>
+      </div>
+      <div class="sep"></div>
+      <section class="card">
+        <h2>Wheel / Scroll</h2>
+        <div class="box" id="wheel-box">
+          <div id="wheel-content">Scroll in this box (it overflows)</div>
+        </div>
+      </section>
+      <div id="log" class="log" aria-live="polite"></div>
+    </aside>
+
+    <script>
+      (function () {
+        const $ = (sel) => document.querySelector(sel);
+        const logEl = $('#log');
+        const status = $('#status');
+
+        const coords = $('#coords');
+        const stage = $('#stage');
+        const src = $('#drag-source');
+        const tgt = $('#drag-target');
+
+        const resetBtn = $('#reset-btn');
+
+        const fmtTime = () => new Date().toLocaleTimeString();
+        function log(msg) {
+          const div = document.createElement('div');
+          div.className = 'item';
+          div.innerHTML = '<span class="time">[' + fmtTime() + ']</span> ' + msg;
+          logEl.appendChild(div);
+          while (logEl.children.length > 200) logEl.removeChild(logEl.firstChild);
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // coords display
+        document.addEventListener(
+          'pointermove',
+          (e) => {
+            coords.textContent = 'x: ' + Math.round(e.clientX) + ', y: ' + Math.round(e.clientY);
+          },
+          { passive: true }
+        );
+
+        // Press / Release box
+        const pressBox = $('#press-box');
+        pressBox.addEventListener('pointerdown', (e) => {
+          log('press-box: pointerdown button=' + e.button);
+        });
+        pressBox.addEventListener('pointerup', (e) => {
+          log('press-box: pointerup button=' + e.button);
+        });
+
+        // Double-click box
+        const dblBox = $('#dblclick-box');
+        const dblCount = $('#dblcount');
+        dblBox.addEventListener('dblclick', () => {
+          dblCount.textContent = String(Number(dblCount.textContent || '0') + 1);
+          log('dblclick-box: dblclick');
+        });
+
+        // Context menu (right-click)
+        const ctxBox = $('#context-box');
+        ctxBox.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          log('context-box: contextmenu (right click)');
+        });
+
+        // Hover tip
+        const hoverBox = $('#hover-box');
+        const tip = $('#hover-tip');
+        hoverBox.addEventListener('pointerenter', () => {
+          tip.style.display = 'block';
+          log('hover-box: enter');
+        });
+        hoverBox.addEventListener('pointerleave', () => {
+          tip.style.display = 'none';
+          log('hover-box: leave');
+        });
+
+        // Wheel box
+        const wheelBox = $('#wheel-box');
+        wheelBox.addEventListener(
+          'wheel',
+          (e) => {
+            log('wheel-box: wheel dx=' + e.deltaX + ' dy=' + e.deltaY);
+          },
+          { passive: true }
+        );
+
+        // Drag logic (pointer events, works with WebDriver pointer actions)
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+        let startPos = { left: 24, top: 24 };
+
+        function setSrcPos(left, top) {
+          src.style.left = left + 'px';
+          src.style.top = top + 'px';
+        }
+        setSrcPos(startPos.left, startPos.top);
+
+        src.addEventListener('pointerdown', (e) => {
+          dragging = true;
+          src.setPointerCapture(e.pointerId);
+          const r = src.getBoundingClientRect();
+          offsetX = e.clientX - r.left;
+          offsetY = e.clientY - r.top;
+          log('drag: pointerdown at ' + e.clientX + ',' + e.clientY);
+        });
+
+        document.addEventListener('pointermove', (e) => {
+          if (!dragging) return;
+          const stageR = stage.getBoundingClientRect();
+          let left = e.clientX - stageR.left - offsetX;
+          let top = e.clientY - stageR.top - offsetY;
+          // keep inside stage bounds
+          const r = src.getBoundingClientRect();
+          const w = r.width,
+            h = r.height;
+          left = Math.max(0, Math.min(left, stageR.width - w));
+          top = Math.max(0, Math.min(top, stageR.height - h));
+          setSrcPos(left, top);
+        });
+
+        function isFullyInside(inner, outer) {
+          const a = inner.getBoundingClientRect();
+          const b = outer.getBoundingClientRect();
+          return a.left >= b.left && a.top >= b.top && a.right <= b.right && a.bottom <= b.bottom;
+        }
+
+        function updateDropStatus() {
+          const inside1 = isFullyInside(src, tgt);
+          status.textContent = inside1 ? 'success' : 'fail';
+          status.className = 'value ' + (inside1 ? 'ok' : 'bad');
+          tgt.classList.toggle('success', inside1);
+          tgt.classList.toggle('fail', !inside1);
+        }
+
+        document.addEventListener('pointerup', (e) => {
+          if (!dragging) return;
+          dragging = false;
+          try {
+            src.releasePointerCapture(e.pointerId);
+          } catch {}
+          updateDropStatus();
+          const inside1 = isFullyInside(src, tgt);
+          const mods =
+            [
+              e.shiftKey ? 'Shift' : '',
+              e.ctrlKey ? 'Ctrl' : '',
+              e.altKey ? 'Alt' : '',
+              e.metaKey ? 'Meta' : '',
+            ]
+              .filter(Boolean)
+              .join('+') || 'none';
+          log(
+            'drag: drop at ' +
+              e.clientX +
+              ',' +
+              e.clientY +
+              ' — target=' +
+              (inside1 ? 'success' : 'fail') +
+              ', modifiers=' +
+              mods
+          );
+        });
+
+        resetBtn.addEventListener('click', () => {
+          setSrcPos(startPos.left, startPos.top);
+          status.textContent = 'n/a';
+          status.className = 'value';
+          tgt.classList.remove('success', 'fail');
+          log('reset');
+        });
+      })();
+    </script>
+  </body>
+</html>

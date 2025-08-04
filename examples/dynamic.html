@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Craftdriver Dynamic Elements</title>
+    <style>
+      body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 1rem;
+      }
+      .container {
+        max-width: 1024px;
+        margin: 0 auto;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        align-items: start;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin: 0 0 8px;
+      }
+      button {
+        margin-top: 8px;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 6px;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #1d4ed8;
+      }
+      .muted {
+        color: #666;
+        font-size: 0.9rem;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="grid">
+        <div class="card">
+          <h2>1) Appear after 2s (not in DOM)</h2>
+          <p class="muted">Click the button; element will be created after ~2s.</p>
+          <button id="btn-appear" type="button">Create element</button>
+          <div id="appear-container" style="margin-top: 12px"></div>
+        </div>
+
+        <div class="card">
+          <h2>2) Hidden → Visible after 2s</h2>
+          <p class="muted">Element exists in DOM but is hidden and becomes visible.</p>
+          <button id="btn-unhide" type="button">Unhide after 2s</button>
+          <div style="margin-top: 12px">
+            <div id="hidden-el" style="display: none">I was hidden</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>3) Visible → Removed (immediately)</h2>
+          <p class="muted">Click the button to remove the element from DOM right away.</p>
+          <button id="btn-remove" type="button">Remove now</button>
+          <div style="margin-top: 12px">
+            <div id="to-remove">I will be removed</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>4) Visible → Hidden (immediately)</h2>
+          <p class="muted">Click the button to hide the element (display:none).</p>
+          <button id="btn-hide" type="button">Hide now</button>
+          <div style="margin-top: 12px">
+            <div id="to-hide">I will be hidden</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById('btn-appear').addEventListener('click', () => {
+        const container = document.getElementById('appear-container');
+        container.textContent = ''; // clear previous runs
+        setTimeout(() => {
+          const el = document.createElement('div');
+          el.id = 'delayed-greeting';
+          el.textContent = 'Hello after 2s';
+          container.appendChild(el);
+        }, 2000);
+      });
+
+      document.getElementById('btn-unhide').addEventListener('click', () => {
+        const el = document.getElementById('hidden-el');
+        setTimeout(() => {
+          el.style.display = 'block';
+        }, 2000);
+      });
+
+      document.getElementById('btn-remove').addEventListener('click', () => {
+        const el = document.getElementById('to-remove');
+        if (el) el.remove();
+      });
+
+      document.getElementById('btn-hide').addEventListener('click', () => {
+        const el = document.getElementById('to-hide');
+        if (el) el.style.display = 'none';
+      });
+    </script>
+  </body>
+</html>

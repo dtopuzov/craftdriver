@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Craftdriver Login Example</title>
+    <style>
+      body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 2rem;
+      }
+      .card {
+        max-width: 420px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+      }
+      label {
+        display: block;
+        margin-top: 12px;
+        font-weight: 600;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      button {
+        margin-top: 16px;
+        padding: 10px 14px;
+        border: none;
+        border-radius: 6px;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #1d4ed8;
+      }
+      #result {
+        margin-top: 16px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Login</h1>
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="off" />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="off" />
+        <button id="submit" type="submit">Sign in</button>
+      </form>
+      <div id="result" aria-live="polite"></div>
+    </div>
+    <script>
+      const form = document.getElementById('login-form');
+      const result = document.getElementById('result');
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const u = document.getElementById('username').value;
+        const p = document.getElementById('password').value;
+        if (u && p) {
+          result.textContent = `Welcome ${u}`;
+        } else {
+          result.textContent = 'Missing credentials';
+        }
+      });
+    </script>
+  </body>
+</html>

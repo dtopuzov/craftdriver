@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keyboard Actions Playground</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #151925;
+        --accent: #4f86ff;
+        --text: #e6edf3;
+        --muted: #9aa5b1;
+        --ok: #18a558;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        color: var(--text);
+        background: var(--bg);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          Cantarell,
+          Noto Sans,
+          Helvetica Neue,
+          Arial;
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 12px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid #222839;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      textarea,
+      input {
+        width: 100%;
+        background: #0c1426;
+        color: var(--text);
+        border: 1px solid #28314a;
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+      }
+      .pill {
+        display: inline-flex;
+        gap: 6px;
+        background: #101628;
+        border: 1px solid #1f2740;
+        color: var(--muted);
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+      }
+      .value {
+        font-weight: 600;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .logline {
+        color: #d1d5db;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Keyboard Actions Playground</h1>
+
+      <section class="card" style="margin-top: 8px">
+        <h2 style="font-size: 14px; margin: 0 0 8px">Editor (type / backspace / enter)</h2>
+        <textarea id="editor" rows="6" placeholder="Click here, then type..."></textarea>
+        <div style="margin-top: 8px; display: flex; gap: 12px; align-items: center">
+          <span class="pill">Lines: <span id="lineCount" class="value">0</span></span>
+          <span class="pill">Last key: <span id="lastKey" class="value">n/a</span></span>
+          <span class="pill">Modifiers: <span id="modifiers" class="value">none</span></span>
+        </div>
+        <div style="margin-top: 8px">
+          <div class="pill">Mirror</div>
+          <pre id="mirror" class="mono" style="margin: 6px 0 0; white-space: pre-wrap"></pre>
+        </div>
+      </section>
+
+      <div class="row" style="margin-top: 12px">
+        <section class="card">
+          <h2 style="font-size: 14px; margin: 0 0 8px">Enter key action</h2>
+          <input id="enterTarget" placeholder="Focus here and press Enter" />
+          <div style="margin-top: 8px" class="pill">
+            Result: <span id="enterResult" class="value">idle</span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2 style="font-size: 14px; margin: 0 0 8px">Help</h2>
+          <div class="logline">• Click the editor before using keyboard.type/press.</div>
+          <div class="logline">• Backspace removes characters; Enter creates a new line.</div>
+          <div class="logline">• Use Control+A then Backspace to clear.</div>
+          <div class="logline">• Enter inside the input sets the result to "submitted".</div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="card">
+      <h2 style="font-size: 14px; margin: 0 0 8px">Status</h2>
+      <div>Active element: <span id="activeEl" class="value mono">n/a</span></div>
+    </aside>
+
+    <script>
+      (function () {
+        const $ = (s) => document.querySelector(s);
+        const editor = $('#editor');
+        const mirror = $('#mirror');
+        const lineCount = $('#lineCount');
+        const lastKey = $('#lastKey');
+        const modsEl = $('#modifiers');
+        const enterTarget = $('#enterTarget');
+        const enterResult = $('#enterResult');
+        const activeEl = $('#activeEl');
+
+        function updateActive() {
+          const el = document.activeElement;
+          if (!el) {
+            activeEl.textContent = 'none';
+            return;
+          }
+          const id = el.id ? '#' + el.id : el.tagName.toLowerCase();
+          activeEl.textContent = id;
+        }
+        updateActive();
+        document.addEventListener('focusin', updateActive);
+        document.addEventListener('focusout', updateActive);
+
+        function updateMirror() {
+          const v = editor.value;
+          mirror.textContent = v;
+          const lines = v.length ? v.split('\n').length : 0;
+          lineCount.textContent = String(lines);
+        }
+        editor.addEventListener('input', updateMirror);
+
+        // Track last key and modifiers globally (document level)
+        const mods = new Set();
+        function renderMods() {
+          modsEl.textContent = mods.size ? Array.from(mods).join('+') : 'none';
+        }
+        document.addEventListener('keydown', (e) => {
+          lastKey.textContent = e.key;
+          if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+            mods.add(e.key);
+            renderMods();
+          }
+        });
+        document.addEventListener('keyup', (e) => {
+          if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+            mods.delete(e.key);
+            renderMods();
+          }
+        });
+
+        // Enter action in input
+        enterTarget.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            enterResult.textContent = 'submitted';
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

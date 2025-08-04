@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Selectors Playground</title>
+  <style>
+    body {
+      font-family:
+        system-ui,
+        -apple-system,
+        Segoe UI,
+        Roboto,
+        Arial;
+      margin: 20px;
+    }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 12px;
+    }
+
+    .btn {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Selectors Playground</h1>
+
+  <section class="card" id="area-attrs">
+    <h2>Attribute-based</h2>
+    <input id="by-id" placeholder="by id" />
+    <input id="by-name" name="by-name" placeholder="by name" />
+    <div class="foo" id="by-class">class=foo</div>
+    <span title="Hint title" id="by-title">has title</span>
+    <img id="by-alt" alt="Logo ALT" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+    <div id="by-testid" data-testid="by-testid">data-testid</div>
+    <div data-custom="cval" id="by-data-attr">data-custom</div>
+    <div aria-label="Aria Name" role="button" id="by-role">button aria</div>
+  </section>
+
+  <section class="card" id="area-text">
+    <h2>Text-based</h2>
+    <div id="text-exact">Exact Match</div>
+    <div id="text-partial">Contains Substring Here</div>
+    <div id="text-mixed">Spaced Text</div>
+  </section>
+
+  <section class="card" id="area-label">
+    <h2>Labels</h2>
+    <label for="email">Email Address</label>
+    <input id="email" type="email" placeholder="Enter email" />
+    <label>Wrapped Label<input id="wrapped" type="text" /></label>
+  </section>
+
+  <section class="card" id="result">
+    <h2>Result</h2>
+    <div id="status" class="muted">idle</div>
+  </section>
+
+  <script>
+    (function () {
+      const $ = (s) => document.querySelector(s);
+      const status = $('#status');
+      function mark(id) {
+        status.textContent = id;
+      }
+      // Use a single delegated handler and mark the closest element with an id
+      // Stop propagation so ancestors don't override the status with their own ids
+      document.addEventListener(
+        'click',
+        (e) => {
+          const target = e.target;
+          if (!(target instanceof Element)) return;
+          const withId = target.closest('[id]');
+          if (withId) {
+            e.stopPropagation();
+            mark(withId.id);
+          }
+        },
+        true
+      );
+    })();
+  </script>
+</body>
+
+</html>

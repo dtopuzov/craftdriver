@@ -1,0 +1,71 @@
+{
+  "name": "craftdriver",
+  "version": "1.0.0",
+  "description": "Modern WebDriver automation library for Firefox and Chrome",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "prebuild": "rimraf dist",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:firefox": "BROWSER_NAME=firefox vitest run",
+    "test:chrome": "BROWSER_NAME=chrome vitest run",
+    "test:chromium": "BROWSER_NAME=chromium vitest run",
+    "clean": "rimraf dist",
+    "serve": "http-server ./examples -a 127.0.0.1 -p 8080 -c-1 --cors",
+    "examples:start": "npm run serve",
+    "prepublishOnly": "npm run build && npm run lint"
+  },
+  "keywords": [
+    "webdriver",
+    "bidi",
+    "firefox",
+    "chrome",
+    "chromium",
+    "automation",
+    "browser-automation",
+    "testing",
+    "selenium"
+  ],
+  "author": "Dimitar Topuzov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dtopuzov/craftdriver.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dtopuzov/craftdriver/issues"
+  },
+  "homepage": "https://github.com/dtopuzov/craftdriver#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.1.0",
+    "@typescript-eslint/parser": "^8.1.0",
+    "eslint": "^9.8.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-n": "^17.10.1",
+    "eslint-plugin-promise": "^6.4.0",
+    "http-server": "^14.1.1",
+    "prettier": "^3.3.3",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.0.0",
+    "vitest": "^1.6.1"
+  },
+  "dependencies": {
+    "ws": "^8.14.0"
+  }
+}
