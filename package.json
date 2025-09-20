@@ -1,7 +1,7 @@
 {
   "name": "craftdriver",
-  "version": "1.0.0",
-  "description": "Modern WebDriver automation library for Firefox and Chrome",
+  "version": "0.0.1",
+  "description": "Modern WebDriver automation library for NodeJS",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
@@ -51,7 +51,6 @@
   "sideEffects": false,
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/ws": "^8.5.0",
     "@typescript-eslint/eslint-plugin": "^8.1.0",
     "@typescript-eslint/parser": "^8.1.0",
     "eslint": "^9.8.0",
@@ -66,6 +65,5 @@
     "vitest": "^1.6.1"
   },
   "dependencies": {
-    "ws": "^8.14.0"
   }
 }

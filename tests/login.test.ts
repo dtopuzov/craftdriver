@@ -7,7 +7,7 @@ describe('Login Form', () => {
   const baseUrl = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: 'chrome' });
+    browser = await Browser.launch({ browserName: process.env.BROWSER_NAME || 'chrome' });
   });
 
   afterAll(async () => {
@@ -22,7 +22,7 @@ describe('Login Form', () => {
     await browser.expect('#result').toHaveText('Welcome testuser');
   });
 
-  it('logs in and shows welcome message (with element references)', async () => {
+  it('logs in and shows welcome message (with element handles)', async () => {
     await browser.navigateTo(`${baseUrl}/login.html`);
     await browser.find('#username').type('handleuser');
     await browser.find('#password').type('secret');
