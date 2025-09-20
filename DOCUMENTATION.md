@@ -2,7 +2,14 @@
 
 This document covers the public API and common patterns. The library is TypeScript-first and ships types.
 
-## Browser
+## Prerequisites
+
+Ensure appropriate driver for your browser is in your PATH.
+It is easy, if you are using macOS or linux just run `npm i -g chromedriver`, otherwise ask ChatGPT how to setup browser drivers.
+
+## API Reference
+
+### Browser
 
 ```ts
 launch(options?: { browserName?: 'chrome' | 'chromium'; chromeService?: ChromeService }): Promise<Browser>
@@ -21,7 +28,7 @@ actions(): ActionsBuilder
 waitFor(check: Function, options?: { timeout?: number; interval?: number; message?: string }): Promise<any>
 ```
 
-### Example
+Example:
 
 ```ts
 const browser = await Browser.launch({ browserName: 'chrome' });
@@ -33,7 +40,7 @@ await browser.expect('#result').toHaveText('Welcome user');
 await browser.quit();
 ```
 
-## ElementHandle
+### ElementHandle
 
 Created via `browser.find(selectorOrBy)`.
 
@@ -46,7 +53,7 @@ text(): Promise<string>
 expect(): ExpectApi
 ```
 
-## Expect API
+### Expect API
 
 ```ts
 toHaveText(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>
@@ -54,7 +61,7 @@ toBeVisible(opts?: { timeout?: number }): Promise<void>
 not.toBeVisible(opts?: { timeout?: number }): Promise<void>
 ```
 
-## Keyboard
+### Keyboard
 
 ```ts
 await browser.keyboard.type('hello');
@@ -64,7 +71,7 @@ await browser.keyboard.up(Key.Control);
 await browser.keyboard.chord(Key.Control, 'a');
 ```
 
-## Mouse
+### Mouse
 
 ```ts
 await browser.mouse.click('#btn');
@@ -74,10 +81,37 @@ await browser.mouse.up();
 await browser.mouse.dblclick('#box');
 await browser.mouse.dragAndDrop('#drag-source', '#drag-target');
 await browser.mouse.dragAndDrop('#drag-source', { x: 10, y: 10 }); // viewport point
-await browser.mouse.wheel(0, 100, '#scrollable');
 ```
 
-## By locators
+### Screenshots
+
+Browser API:
+
+```ts
+screenshot(selector?: string | By): Promise<Buffer>
+saveScreenshot(path: string, selector?: string | By): Promise<Buffer>
+```
+
+Element API:
+
+```ts
+elementHandle.screenshot(path?: string): Promise<Buffer>
+```
+
+Examples:
+
+```ts
+// Full page bytes
+const buf = await browser.screenshot();
+// Element bytes
+const elBuf = await browser.screenshot('#logo');
+// Save full page
+await browser.saveScreenshot('screens/full.png');
+// Save element
+await browser.saveScreenshot('screens/logo.png', '#logo');
+```
+
+### By locators
 
 Available helpers (resolved to CSS or XPath):
 

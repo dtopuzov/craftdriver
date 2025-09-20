@@ -10,9 +10,10 @@ import { KeyboardController } from './keyboard.js';
 import { Key } from './keys.js';
 import { MouseController } from './mouse.js';
 import { ActionsBuilder } from './actions.js';
+import { Capabilities } from './types.js';
 
 export interface LaunchOptions {
-  browserName?: 'chrome' | 'chromium';
+  browserName?: 'chrome' | 'chromium' | 'firefox' | 'edge' | 'safari';
   chromeService?: ChromeService;
 }
 
@@ -24,8 +25,28 @@ export class Browser {
 
   static async launch(options: LaunchOptions = {}): Promise<Browser> {
     const name = options.browserName ?? 'chrome';
-    const service = options.chromeService ?? new ChromeService();
-    const driver = await new Builder().forBrowser(name).setChromeService(service).build();
+    let chromeService: ChromeService;
+    if (options.chromeService) {
+      chromeService = options.chromeService;
+    } else {
+      chromeService = new ChromeService();
+    }
+
+    // Handle headless mode via env var
+    const headlessEnv = process.env.HEADLESS;
+    const isHeadless = headlessEnv === 'true' || headlessEnv === '1';
+    let caps: Capabilities | undefined;
+    if (isHeadless) {
+      caps = {
+        'goog:chromeOptions': {
+          args: ['--headless=new'],
+        },
+      };
+    }
+
+    const builder = new Builder().forBrowser(name).setChromeService(chromeService);
+    if (caps) builder.withCapabilities(caps);
+    const driver = await builder.build();
     return new Browser(driver);
   }
 
@@ -56,8 +77,6 @@ export class Browser {
     await this.driver.quit();
   }
 
-  // New simplified API surface
-
   async click(selector: string | By): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), { timeout: 5000 });
@@ -74,7 +93,6 @@ export class Browser {
       timeout: opts?.timeout ?? 5000,
     });
     await el.click();
-    // Optionally mask logs; no-op here, but could integrate with logger later
     await el.sendKeys(text);
   }
 
@@ -105,20 +123,22 @@ export class Browser {
     },
   };
 
-  async screenshot(pathOrSelector: string, maybePath?: string): Promise<Buffer> {
-    if (maybePath) {
-      // element screenshot
-      const by = By.css(pathOrSelector);
+  // Capture a screenshot. If selectorOrBy provided, capture element; else full page. Returns raw buffer.
+  async screenshot(selectorOrBy?: string | By): Promise<Buffer> {
+    if (selectorOrBy) {
+      const by = typeof selectorOrBy === 'string' ? By.css(selectorOrBy) : selectorOrBy;
       const el = await this.driver.wait(until.elementIsVisible(by), { timeout: 5000 });
       const b64 = await el.screenshotBase64();
-      const buf = Buffer.from(b64, 'base64');
-      await fs.writeFile(maybePath, buf);
-      return buf;
+      return Buffer.from(b64, 'base64');
     }
-    // full page screenshot
     const b64 = await this.driver.screenshotBase64();
-    const buf = Buffer.from(b64, 'base64');
-    await fs.writeFile(pathOrSelector, buf);
+    return Buffer.from(b64, 'base64');
+  }
+
+  // Convenience: capture (optionally element) screenshot and save to file, returning buffer.
+  async saveScreenshot(path: string, selectorOrBy?: string | By): Promise<Buffer> {
+    const buf = await this.screenshot(selectorOrBy);
+    await fs.writeFile(path, buf);
     return buf;
   }
 
@@ -134,8 +154,10 @@ export class Browser {
 
   // Keyboard controller and enum for nicer usage: browser.keyboard.press(Key.Enter)
   keyboard: KeyboardController;
+
   // Mouse controller: browser.mouse.click(...), move, down, up, wheel, dragAndDrop
   mouse: MouseController;
+
   static Key = Key;
 
   async waitFor(

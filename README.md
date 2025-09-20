@@ -26,7 +26,7 @@ await browser.expect('#result').toHaveText('Welcome testuser');
 await browser.quit();
 ```
 
-See DOCUMENTATION.md for more details.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for more details.
 
 ## Contributing
 

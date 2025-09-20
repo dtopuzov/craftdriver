@@ -7,7 +7,7 @@ describe('By locator strategies (selectors.html)', () => {
   const base = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: 'chrome' });
+    browser = await Browser.launch({ browserName: process.env.BROWSER_NAME || 'chrome' });
   });
   afterAll(async () => {
     await browser.quit();
