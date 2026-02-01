@@ -2,16 +2,15 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - main
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: npm ci
@@ -19,10 +18,13 @@ jobs:
       - name: Build package
         run: npm run build
 
-      - name: Run tests
+      - name: Start test server
         run: npm run serve &
 
+      - name: Wait for server
+        run: sleep 2
+
       - name: Run tests
-        run: npm run test
+        run: npm test
         env:
           HEADLESS: true

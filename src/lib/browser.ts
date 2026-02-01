@@ -83,17 +83,43 @@ export class Browser {
     await el.click();
   }
 
-  async type(
+  async fill(
     selector: string | By,
     text: string,
-    opts?: { mask?: boolean; timeout?: number }
+    opts?: { timeout?: number }
   ): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), {
       timeout: opts?.timeout ?? 5000,
     });
     await el.click();
+    await el.clear();
     await el.sendKeys(text);
+  }
+
+  async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const el = await this.driver.wait(until.elementIsVisible(by), {
+      timeout: opts?.timeout ?? 5000,
+    });
+    await el.clear();
+  }
+
+  async getValue(selector: string | By, opts?: { timeout?: number }): Promise<string> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const el = await this.driver.wait(until.elementLocated(by), {
+      timeout: opts?.timeout ?? 5000,
+    });
+    const val = await el.getProperty('value');
+    return String(val ?? '');
+  }
+
+  async getAttribute(selector: string | By, name: string, opts?: { timeout?: number }): Promise<string | null> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const el = await this.driver.wait(until.elementLocated(by), {
+      timeout: opts?.timeout ?? 5000,
+    });
+    return await el.getAttribute(name);
   }
 
   gesture = {
@@ -152,6 +178,30 @@ export class Browser {
     return new ElementHandle(this.driver, by);
   }
 
+  // Playwright-style getBy* helpers - return ElementHandle for fluent chaining
+  getByRole(role: string, opts?: { name?: string; exact?: boolean; includeHidden?: boolean }): ElementHandle {
+    return new ElementHandle(this.driver, By.role(role, opts));
+  }
+
+  getByText(text: string, opts?: { exact?: boolean }): ElementHandle {
+    if (opts?.exact === false) {
+      return new ElementHandle(this.driver, By.partialText(text));
+    }
+    return new ElementHandle(this.driver, By.text(text));
+  }
+
+  getByLabel(text: string, opts?: { exact?: boolean }): ElementHandle {
+    return new ElementHandle(this.driver, By.labelText(text, opts));
+  }
+
+  getByPlaceholder(text: string, opts?: { exact?: boolean }): ElementHandle {
+    return new ElementHandle(this.driver, By.placeholder(text, opts));
+  }
+
+  getByTestId(id: string): ElementHandle {
+    return new ElementHandle(this.driver, By.testId(id));
+  }
+
   // Keyboard controller and enum for nicer usage: browser.keyboard.press(Key.Enter)
   keyboard: KeyboardController;
 
@@ -175,6 +225,26 @@ export class Browser {
       }
     };
     return this.wait(cond, options as any);
+  }
+
+  async waitForVisible(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? 5000 });
+  }
+
+  async waitForHidden(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    await this.driver.wait(until.elementIsNotVisible(by), { timeout: opts?.timeout ?? 5000 });
+  }
+
+  async waitForAttached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    await this.driver.wait(until.elementExists(by), { timeout: opts?.timeout ?? 5000 });
+  }
+
+  async waitForDetached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    await this.driver.wait(until.elementNotExists(by), { timeout: opts?.timeout ?? 5000 });
   }
 
   actions() {

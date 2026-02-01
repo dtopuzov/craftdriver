@@ -9,7 +9,7 @@ export class WebElement {
     private endpoint: WebDriverEndpoint,
     private sessionId: string,
     private elementId: string
-  ) {}
+  ) { }
 
   getId(): string {
     return this.elementId;
@@ -66,5 +66,74 @@ export class WebElement {
     });
     const value = (res as CommandResponse<string>)?.value ?? (res as unknown as string);
     return String(value ?? '');
+  }
+
+  async clear(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'POST',
+      path: `/session/${this.sessionId}/element/${this.elementId}/clear`,
+      body: {},
+    });
+  }
+
+  async getAttribute(name: string): Promise<string | null> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string | null>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/attribute/${name}`,
+    });
+    const value = (res as CommandResponse<string | null>)?.value ?? (res as unknown as string | null);
+    return value;
+  }
+
+  async getProperty(name: string): Promise<unknown> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<unknown>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/property/${name}`,
+    });
+    const value = (res as CommandResponse<unknown>)?.value ?? res;
+    return value;
+  }
+
+  async isEnabled(): Promise<boolean> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<boolean>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/enabled`,
+    });
+    const value = (res as CommandResponse<boolean>)?.value ?? (res as unknown as boolean);
+    return Boolean(value);
+  }
+
+  async isSelected(): Promise<boolean> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<boolean>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/selected`,
+    });
+    const value = (res as CommandResponse<boolean>)?.value ?? (res as unknown as boolean);
+    return Boolean(value);
+  }
+
+  async getTagName(): Promise<string> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/name`,
+    });
+    const value = (res as CommandResponse<string>)?.value ?? (res as unknown as string);
+    return String(value ?? '').toLowerCase();
+  }
+
+  async getRect(): Promise<{ x: number; y: number; width: number; height: number }> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<{ x: number; y: number; width: number; height: number }>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${this.elementId}/rect`,
+    });
+    const value = (res as CommandResponse<{ x: number; y: number; width: number; height: number }>)?.value ?? res;
+    return value as { x: number; y: number; width: number; height: number };
   }
 }

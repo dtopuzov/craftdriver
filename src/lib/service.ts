@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { HttpClient } from './http.js';
 import { WebDriverEndpoint } from './types.js';
+import net from 'net';
 
 export interface DriverServiceOptions {
   command: string;
@@ -13,11 +14,25 @@ export interface DriverServiceOptions {
   readinessTimeoutMs?: number;
 }
 
+async function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
 export class DriverService {
   protected proc?: ChildProcess;
-  protected endpoint: WebDriverEndpoint;
-  protected readonly opts: Required<Omit<DriverServiceOptions, 'env'>> & {
+  protected endpoint!: WebDriverEndpoint;
+  protected readonly opts: Required<Omit<DriverServiceOptions, 'env' | 'port'>> & {
     env?: NodeJS.ProcessEnv;
+    port?: number;
   };
 
   constructor(options: DriverServiceOptions) {
@@ -25,17 +40,11 @@ export class DriverService {
       args: options.args ?? [],
       command: options.command,
       hostname: options.hostname ?? '127.0.0.1',
-      port: options.port ?? 9515,
+      port: options.port, // undefined means auto-assign
       pathBase: options.pathBase ?? '',
       readinessPath: options.readinessPath ?? '/status',
       readinessTimeoutMs: options.readinessTimeoutMs ?? 5000,
       env: options.env,
-    };
-    this.endpoint = {
-      protocol: 'http',
-      hostname: this.opts.hostname,
-      port: this.opts.port,
-      path: this.opts.pathBase,
     };
   }
 
@@ -46,7 +55,17 @@ export class DriverService {
   async start(): Promise<void> {
     if (this.proc) return; // already started
     await this.ensureBinaryAvailable();
-    this.proc = spawn(this.opts.command, [`--port=${this.opts.port}`, ...this.opts.args], {
+
+    // Assign a free port if not specified
+    const port = this.opts.port ?? await findFreePort();
+    this.endpoint = {
+      protocol: 'http',
+      hostname: this.opts.hostname,
+      port,
+      path: this.opts.pathBase,
+    };
+
+    this.proc = spawn(this.opts.command, [`--port=${port}`, ...this.opts.args], {
       env: { ...process.env, ...this.opts.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });

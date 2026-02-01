@@ -19,8 +19,8 @@ import { Browser } from 'craftdriver';
 
 const browser = await Browser.launch({ browserName: 'chrome' });
 await browser.navigateTo('http://127.0.0.1:8080/login.html');
-await browser.type('#username', 'testuser');
-await browser.type('#password', 'secret');
+await browser.fill('#username', 'testuser');
+await browser.fill('#password', 'secret');
 await browser.click('#submit');
 await browser.expect('#result').toHaveText('Welcome testuser');
 await browser.quit();
