@@ -1,13 +1,13 @@
 import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Browser } from '../src';
-import { EXAMPLES_BASE_URL } from './utils';
+import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 describe('Mouse interactions on mouse.html', () => {
   let browser: Browser;
-  const base = EXAMPLES_BASE_URL;
+  const baseUrl = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: process.env.BROWSER_NAME || 'chrome' });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
 
   afterAll(async () => {
@@ -15,7 +15,7 @@ describe('Mouse interactions on mouse.html', () => {
   });
 
   beforeEach(async () => {
-    await browser.navigateTo(`${base}/mouse.html`);
+    await browser.navigateTo(`${baseUrl}/mouse.html`);
   });
 
   it('drag source fully into target => status success', async () => {

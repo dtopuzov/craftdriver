@@ -1,13 +1,12 @@
 import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Browser, Key } from '../src';
-import { EXAMPLES_BASE_URL } from './utils';
+import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 describe('Keyboard interactions on keyboard.html', () => {
   let browser: Browser;
-  const base = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: process.env.BROWSER_NAME || 'chrome' });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
 
   afterAll(async () => {
@@ -15,7 +14,7 @@ describe('Keyboard interactions on keyboard.html', () => {
   });
 
   beforeEach(async () => {
-    await browser.navigateTo(`${base}/keyboard.html`);
+    await browser.navigateTo(`${EXAMPLES_BASE_URL}/keyboard.html`);
   });
 
   it('types into editor and mirrors content with line count', async () => {
@@ -37,8 +36,9 @@ describe('Keyboard interactions on keyboard.html', () => {
   it('chord selects all then backspace clears', async () => {
     await browser.click('#editor');
     await browser.keyboard.type('keep me');
-    // Ctrl/Meta+A depending on platform — using Control works in WebDriver set
-    await browser.keyboard.chord(Key.Control, 'a');
+    // Use Command+A on macOS, Ctrl+A on Windows/Linux
+    const selectAllModifier = process.platform === 'darwin' ? Key.Meta : Key.Control;
+    await browser.keyboard.chord(selectAllModifier, 'a');
     await browser.keyboard.press(Key.Backspace);
     await browser.expect('#mirror').toHaveText('');
     await browser.expect('#lineCount').toHaveText('0');

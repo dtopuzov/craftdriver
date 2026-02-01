@@ -18,7 +18,8 @@ url(): Promise<string>
 title(): Promise<string>
 quit(): Promise<void>
 click(selector: string | By): Promise<void>
-type(selector: string | By, text: string, opts?: { mask?: boolean; timeout?: number }): Promise<void>
+fill(selector: string | By, text: string, opts?: { timeout?: number }): Promise<void>
+clear(selector: string | By, opts?: { timeout?: number }): Promise<void>
 expect(selector: string | By): ExpectApi
 find(selector: string | By): ElementHandle
 screenshot(pathOrSelector: string, maybePath?: string): Promise<Buffer>
@@ -33,8 +34,8 @@ Example:
 ```ts
 const browser = await Browser.launch({ browserName: 'chrome' });
 await browser.navigateTo('http://127.0.0.1:8080/public/login.html');
-await browser.type('#username', 'user');
-await browser.type('#password', 'secret');
+await browser.fill('#username', 'user');
+await browser.fill('#password', 'secret');
 await browser.click('#submit');
 await browser.expect('#result').toHaveText('Welcome user');
 await browser.quit();
@@ -46,10 +47,16 @@ Created via `browser.find(selectorOrBy)`.
 
 ```ts
 click(): Promise<void>
-type(text: string, options?: { timeout?: number }): Promise<void>
+fill(text: string, options?: { timeout?: number }): Promise<void>
+clear(options?: { timeout?: number }): Promise<void>
 press(key: KeyValue): Promise<void>
 screenshot(path?: string): Promise<Buffer>
 text(): Promise<string>
+value(): Promise<string>
+getAttribute(name: string): Promise<string | null>
+isVisible(): Promise<boolean>
+isEnabled(): Promise<boolean>
+boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null>
 expect(): ExpectApi
 ```
 

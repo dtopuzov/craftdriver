@@ -1,19 +1,19 @@
 import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Browser, By } from '../src';
-import { EXAMPLES_BASE_URL } from './utils';
+import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 describe('By locator strategies (selectors.html)', () => {
   let browser: Browser;
-  const base = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: process.env.BROWSER_NAME || 'chrome' });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
+
   afterAll(async () => {
     await browser.quit();
   });
   beforeEach(async () => {
-    await browser.navigateTo(`${base}/selectors.html`);
+    await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
   });
 
   it('By.id', async () => {
@@ -89,5 +89,21 @@ describe('By locator strategies (selectors.html)', () => {
   it('By.text with extra spaces (trimmed)', async () => {
     await browser.click(By.text('Spaced Text'));
     await browser.expect('#status').toHaveText('text-mixed');
+  });
+
+  describe('getBy* helpers', () => {
+    it('getByLabel() finds input by label text', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
+      await browser.getByLabel('Username').fill('labeluser');
+      await browser.getByLabel('Password').fill('secret');
+      await browser.click('#submit');
+      await browser.expect('#result').toHaveText('Welcome labeluser');
+    });
+
+    it('getByText() finds element by text content', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
+      const heading = await browser.getByText('Login').text();
+      if (!heading.includes('Login')) throw new Error(`Expected heading to contain "Login"`);
+    });
   });
 });
