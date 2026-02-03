@@ -1,5 +1,10 @@
 // @ts-check
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+
 import tsParser from '@typescript-eslint/parser';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('eslint').Linter.FlatConfig[]} */
 export default [
@@ -19,7 +24,7 @@ export default [
       parser: tsParser,
       parserOptions: {
         project: ['./tsconfig.json'],
-        tsconfigRootDir: new URL('.', import.meta.url),
+        tsconfigRootDir: __dirname,
       },
     },
     rules: {
