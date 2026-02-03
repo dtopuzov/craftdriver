@@ -16,9 +16,12 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '24'
-  
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Lint
+        run: npm run lint
 
       - name: Build package
         run: npm run build
@@ -27,7 +30,7 @@ jobs:
         run: npm run serve &
 
       - name: Wait for server
-        run: sleep 2
+        run: timeout 2m bash -c "until curl -I http://127.0.0.1:8080/login.html; do sleep 1; done"
 
       - name: Run tests
         run: npm test
