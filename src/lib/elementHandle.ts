@@ -63,6 +63,11 @@ export class ElementHandle {
     return String(val ?? '');
   }
 
+  async tag(options?: ElementOptions): Promise<string> {
+    const el = await this.driver.wait(until.elementLocated(this.by), { timeout: options?.timeout ?? 5000 });
+    return await el.getTagName();
+  }
+
   async getAttribute(name: string, options?: ElementOptions): Promise<string | null> {
     const el = await this.driver.wait(until.elementLocated(this.by), { timeout: options?.timeout ?? 5000 });
     return await el.getAttribute(name);
@@ -94,6 +99,42 @@ export class ElementHandle {
     } catch {
       return null;
     }
+  }
+
+  async hover(options?: ElementOptions): Promise<void> {
+    const el = await this.driver.wait(until.elementIsVisible(this.by), { timeout: options?.timeout ?? 5000 });
+    const rect = await el.getRect();
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    await this.driver.pointerMoveTo(undefined, centerX, centerY);
+  }
+
+  async select(value: string, options?: ElementOptions): Promise<void> {
+    const el = await this.driver.wait(until.elementLocated(this.by), { timeout: options?.timeout ?? 5000 });
+
+    // Verify element is a <select>
+    const tagName = await el.getTagName();
+    if (tagName !== 'select') {
+      throw new Error(
+        `select() can only be used on <select> elements. Found <${tagName}> instead. ` +
+        `Use browser.click('#selector option[value="..."]') for other element types.`
+      );
+    }
+
+    // Use JavaScript to select the option by value
+    const script = `
+      const select = arguments[0];
+      const value = arguments[1];
+      const option = Array.from(select.options).find(opt => opt.value === value);
+      if (!option) {
+        throw new Error('Option with value "' + value + '" not found in <select>');
+      }
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    `;
+
+    await this.driver.executeScript(script, [el, value]);
   }
 
   expect() {

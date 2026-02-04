@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Console & Errors Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    h2 {
+      color: #666;
+      margin-top: 0;
+    }
+
+    h3 {
+      color: #888;
+    }
+
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+
+    .btn-log {
+      background: #17a2b8;
+      color: white;
+    }
+
+    .btn-warn {
+      background: #ffc107;
+      color: #333;
+    }
+
+    .btn-error {
+      background: #dc3545;
+      color: white;
+    }
+
+    .btn-info {
+      background: #6c757d;
+      color: white;
+    }
+
+    .btn-debug {
+      background: #28a745;
+      color: white;
+    }
+
+    .btn-throw {
+      background: #6f42c1;
+      color: white;
+    }
+
+    button:hover {
+      opacity: 0.9;
+    }
+
+    .note {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 4px;
+      padding: 10px;
+      margin-top: 15px;
+      font-size: 14px;
+    }
+
+    .output {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 15px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .output .log {
+      color: #d4d4d4;
+    }
+
+    .output .warn {
+      color: #dcdcaa;
+    }
+
+    .output .error {
+      color: #f48771;
+    }
+
+    .output .info {
+      color: #9cdcfe;
+    }
+
+    .output .debug {
+      color: #6a9955;
+    }
+
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🖥️ Console & JavaScript Errors</h1>
+  <p>This page generates console messages and JavaScript errors for testing BiDi log monitoring.</p>
+
+  <!-- Console Log Methods -->
+  <div class="card">
+    <h2>1. Console Log Methods</h2>
+    <p>Click buttons to trigger different console methods. Open DevTools (F12) to see output.</p>
+
+    <button id="btn-console-log" class="btn-log" onclick="doLog()">console.log()</button>
+    <button id="btn-console-warn" class="btn-warn" onclick="doWarn()">console.warn()</button>
+    <button id="btn-console-error" class="btn-error" onclick="doError()">console.error()</button>
+    <button id="btn-console-info" class="btn-info" onclick="doInfo()">console.info()</button>
+    <button id="btn-console-debug" class="btn-debug" onclick="doDebug()">console.debug()</button>
+
+    <div class="note">
+      💡 These buttons call <code>console.log()</code>, <code>console.warn()</code>, etc.
+      BiDi can capture all these in real-time!
+    </div>
+  </div>
+
+  <!-- Console with Objects -->
+  <div class="card">
+    <h2>2. Complex Console Output</h2>
+    <p>Log complex objects, arrays, and multiple arguments.</p>
+
+    <button id="btn-log-object" class="btn-log" onclick="logObject()">Log Object</button>
+    <button id="btn-log-array" class="btn-log" onclick="logArray()">Log Array</button>
+    <button id="btn-log-multiple" class="btn-log" onclick="logMultiple()">Log Multiple Args</button>
+    <button id="btn-log-formatted" class="btn-log" onclick="logFormatted()">Log Formatted String</button>
+  </div>
+
+  <!-- JavaScript Errors -->
+  <div class="card">
+    <h2>3. JavaScript Errors (Thrown)</h2>
+    <p>Click buttons to throw actual JavaScript errors. BiDi captures these as uncaught exceptions.</p>
+
+    <button id="btn-throw-error" class="btn-throw" onclick="throwError()">Throw Error</button>
+    <button id="btn-throw-type" class="btn-throw" onclick="throwTypeError()">Throw TypeError</button>
+    <button id="btn-throw-reference" class="btn-throw" onclick="throwReferenceError()">Throw ReferenceError</button>
+    <button id="btn-throw-syntax" class="btn-throw" onclick="throwWithEval()">Eval Syntax Error</button>
+
+    <div class="note">
+      ⚠️ These buttons throw <strong>real uncaught exceptions</strong>.
+      You'll see them in the console as red errors.
+    </div>
+  </div>
+
+  <!-- Promise Rejections -->
+  <div class="card">
+    <h2>4. Async Errors & Promise Rejections</h2>
+    <p>Unhandled promise rejections and async errors.</p>
+
+    <button id="btn-promise-reject" class="btn-throw" onclick="rejectPromise()">Unhandled Promise Rejection</button>
+    <button id="btn-async-error" class="btn-throw" onclick="asyncError()">Async Function Error</button>
+    <button id="btn-timeout-error" class="btn-throw" onclick="timeoutError()">Error in setTimeout</button>
+  </div>
+
+  <!-- Triggered Errors -->
+  <div class="card">
+    <h2>5. DOM Errors</h2>
+    <p>Errors triggered by DOM operations.</p>
+
+    <button id="btn-null-access" class="btn-throw" onclick="nullAccess()">Access Null Element</button>
+    <button id="btn-invalid-selector" class="btn-throw" onclick="invalidSelector()">Invalid Selector</button>
+  </div>
+
+  <!-- Log Display -->
+  <div class="card">
+    <h2>📋 Local Log Display</h2>
+    <p>Shows logs captured on this page (for visual reference):</p>
+    <div id="log-output" class="output">Logs will appear here...</div>
+    <button onclick="clearLogs()" style="margin-top: 10px; background: #6c757d; color: white;">Clear Logs</button>
+  </div>
+
+  <script>
+    const logOutput = document.getElementById('log-output');
+    let logCount = 0;
+
+    function appendToDisplay(type, message) {
+      logCount++;
+      const line = document.createElement('div');
+      line.className = type;
+      line.textContent = `[${logCount}] [${type.toUpperCase()}] ${message}`;
+      logOutput.appendChild(line);
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function clearLogs() {
+      logOutput.innerHTML = '';
+      logCount = 0;
+    }
+
+    // Console methods
+    function doLog() {
+      const msg = 'Hello from console.log!';
+      console.log(msg);
+      appendToDisplay('log', msg);
+    }
+
+    function doWarn() {
+      const msg = 'This is a warning message';
+      console.warn(msg);
+      appendToDisplay('warn', msg);
+    }
+
+    function doError() {
+      const msg = 'This is an error message (via console.error)';
+      console.error(msg);
+      appendToDisplay('error', msg);
+    }
+
+    function doInfo() {
+      const msg = 'This is an info message';
+      console.info(msg);
+      appendToDisplay('info', msg);
+    }
+
+    function doDebug() {
+      const msg = 'This is a debug message';
+      console.debug(msg);
+      appendToDisplay('debug', msg);
+    }
+
+    // Complex logging
+    function logObject() {
+      const obj = {
+        user: 'testuser',
+        role: 'admin',
+        permissions: ['read', 'write', 'delete'],
+        metadata: { created: new Date().toISOString() }
+      };
+      console.log('User object:', obj);
+      appendToDisplay('log', 'User object: ' + JSON.stringify(obj));
+    }
+
+    function logArray() {
+      const arr = [1, 2, 3, { nested: true }, ['a', 'b', 'c']];
+      console.log('Array:', arr);
+      appendToDisplay('log', 'Array: ' + JSON.stringify(arr));
+    }
+
+    function logMultiple() {
+      console.log('Multiple', 'arguments', 123, true, { key: 'value' });
+      appendToDisplay('log', 'Multiple arguments 123 true {"key":"value"}');
+    }
+
+    function logFormatted() {
+      console.log('User %s has %d items (verified: %o)', 'Alice', 5, true);
+      appendToDisplay('log', 'User Alice has 5 items (verified: true)');
+    }
+
+    // JavaScript errors
+    function throwError() {
+      appendToDisplay('error', 'About to throw Error...');
+      throw new Error('This is a thrown Error!');
+    }
+
+    function throwTypeError() {
+      appendToDisplay('error', 'About to throw TypeError...');
+      throw new TypeError('Cannot read property "foo" of undefined');
+    }
+
+    function throwReferenceError() {
+      appendToDisplay('error', 'About to throw ReferenceError...');
+      throw new ReferenceError('undefinedVariable is not defined');
+    }
+
+    function throwWithEval() {
+      appendToDisplay('error', 'About to eval invalid syntax...');
+      eval('function() { invalid syntax here }}}');
+    }
+
+    // Async errors
+    function rejectPromise() {
+      appendToDisplay('error', 'Creating unhandled promise rejection...');
+      new Promise((_, reject) => {
+        reject(new Error('Unhandled promise rejection!'));
+      });
+    }
+
+    function asyncError() {
+      appendToDisplay('error', 'Calling async function that throws...');
+      (async () => {
+        throw new Error('Error inside async function!');
+      })();
+    }
+
+    function timeoutError() {
+      appendToDisplay('error', 'Error will occur in 100ms...');
+      setTimeout(() => {
+        throw new Error('Error inside setTimeout!');
+      }, 100);
+    }
+
+    // DOM errors
+    function nullAccess() {
+      appendToDisplay('error', 'Accessing property of null element...');
+      const elem = document.getElementById('non-existent-element');
+      elem.textContent = 'This will fail';
+    }
+
+    function invalidSelector() {
+      appendToDisplay('error', 'Using invalid CSS selector...');
+      document.querySelector('div[invalid==>]');
+    }
+
+    // Initial log
+    console.log('Page loaded: console-errors.html');
+    appendToDisplay('log', 'Page loaded: console-errors.html');
+  </script>
+</body>
+
+</html>

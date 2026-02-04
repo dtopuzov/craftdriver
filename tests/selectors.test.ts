@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser, By } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
@@ -97,13 +97,13 @@ describe('By locator strategies (selectors.html)', () => {
       await browser.getByLabel('Username').fill('labeluser');
       await browser.getByLabel('Password').fill('secret');
       await browser.click('#submit');
-      await browser.expect('#result').toHaveText('Welcome labeluser');
+      await browser.expect('#result').toContainText('Welcome back, labeluser!');
     });
 
     it('getByText() finds element by text content', async () => {
       await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
-      const heading = await browser.getByText('Login').text();
-      if (!heading.includes('Login')) throw new Error(`Expected heading to contain "Login"`);
+      const tagName = await browser.getByText('Login').tag();
+      expect(tagName).toBe('h1');
     });
   });
 });
