@@ -5,10 +5,13 @@ import { WebElement, W3C_ELEMENT_KEY, LEGACY_ELEMENT_KEY } from './webelement.js
 import { WebDriverWait, type Condition, type WaitOptions } from './wait.js';
 
 export class Driver {
+  /** BiDi WebSocket URL if available */
+  public __wsUrl?: string;
+
   constructor(
     private endpoint: WebDriverEndpoint,
     private sessionId: string
-  ) {}
+  ) { }
 
   static async create(endpoint: WebDriverEndpoint, caps: Capabilities): Promise<Driver> {
     const client = new HttpClient(endpoint);
@@ -26,7 +29,16 @@ export class Driver {
       const msg = v?.message || v?.data || JSON.stringify(res);
       throw new Error(`Failed to create session${err ? ` [${err}]` : ''}: ${msg}`);
     }
-    return new Driver(endpoint, sessionId);
+
+    const driver = new Driver(endpoint, sessionId);
+
+    // Capture BiDi WebSocket URL from capabilities if available
+    const capabilities = (value as any)?.capabilities || (res as any)?.capabilities;
+    if (capabilities?.webSocketUrl) {
+      driver.__wsUrl = capabilities.webSocketUrl;
+    }
+
+    return driver;
   }
 
   async navigateTo(url: string): Promise<void> {

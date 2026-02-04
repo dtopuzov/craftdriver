@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session Management Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    h2 {
+      color: #666;
+      margin-top: 0;
+    }
+
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    button.danger {
+      background: #dc3545;
+    }
+
+    button.danger:hover {
+      background: #c82333;
+    }
+
+    button.success {
+      background: #28a745;
+    }
+
+    button.success:hover {
+      background: #218838;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .display {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 15px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 80px;
+    }
+
+    input[type="text"] {
+      padding: 8px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      width: 150px;
+    }
+
+    label {
+      display: inline-block;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+
+    .status.logged-in {
+      background: #d4edda;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+    }
+
+    .status.logged-out {
+      background: #f8d7da;
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+    }
+
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid #dee2e6;
+    }
+
+    th {
+      background: #f8f9fa;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🔐 Session Management Example</h1>
+  <p>This page demonstrates cookies and localStorage for testing BiDi session state persistence.</p>
+
+  <!-- Current Session Status -->
+  <div class="card">
+    <h2>Current Session Status</h2>
+    <div id="session-status" class="status logged-out">
+      Checking session...
+    </div>
+    <div id="user-info" style="display: none;">
+      <table>
+        <tr>
+          <th>Username</th>
+          <td id="display-username">-</td>
+        </tr>
+        <tr>
+          <th>Role</th>
+          <td id="display-role">-</td>
+        </tr>
+        <tr>
+          <th>Login Time</th>
+          <td id="display-login-time">-</td>
+        </tr>
+        <tr>
+          <th>Session ID</th>
+          <td id="display-session-id">-</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Login Form -->
+  <div id="login-section" class="card">
+    <h2>Login</h2>
+    <p>Login to create session cookies and localStorage data.</p>
+
+    <div class="form-group">
+      <label for="username">Username:</label><br>
+      <input type="text" id="username" placeholder="Enter username" value="testuser">
+    </div>
+
+    <div class="form-group">
+      <label for="password">Password:</label><br>
+      <input type="text" id="password" placeholder="Enter password" value="secret123">
+    </div>
+
+    <button id="login-btn" class="success" onclick="login()">Login</button>
+    <p style="font-size: 13px; color: #666; margin-top: 10px;">
+      💡 Any username/password works. This simulates authentication.
+    </p>
+  </div>
+
+  <!-- Logout -->
+  <div id="logout-section" class="card" style="display: none;">
+    <h2>Session Active</h2>
+    <p>Your session is active. Click logout to clear all session data.</p>
+    <button id="logout-btn" class="danger" onclick="logout()">Logout</button>
+  </div>
+
+  <div class="grid">
+    <!-- Cookies Section -->
+    <div class="card">
+      <h2>🍪 Cookies</h2>
+      <p>Session data stored in cookies:</p>
+
+      <div class="form-group">
+        <input type="text" id="cookie-name" placeholder="Cookie name">
+        <input type="text" id="cookie-value" placeholder="Cookie value">
+        <button id="set-cookie-btn" onclick="setCookie()">Set Cookie</button>
+      </div>
+
+      <button id="refresh-cookies-btn" onclick="refreshCookies()">Refresh</button>
+      <button id="clear-cookies-btn" class="danger" onclick="clearAllCookies()">Clear All</button>
+
+      <div id="cookies-display" class="display">Loading cookies...</div>
+    </div>
+
+    <!-- LocalStorage Section -->
+    <div class="card">
+      <h2>💾 LocalStorage</h2>
+      <p>Session data stored in localStorage:</p>
+
+      <div class="form-group">
+        <input type="text" id="storage-key" placeholder="Key">
+        <input type="text" id="storage-value" placeholder="Value">
+        <button id="set-storage-btn" onclick="setStorageItem()">Set Item</button>
+      </div>
+
+      <button id="refresh-storage-btn" onclick="refreshStorage()">Refresh</button>
+      <button id="clear-storage-btn" class="danger" onclick="clearAllStorage()">Clear All</button>
+
+      <div id="storage-display" class="display">Loading localStorage...</div>
+    </div>
+  </div>
+
+  <!-- SessionStorage Section -->
+  <div class="card">
+    <h2>📦 SessionStorage</h2>
+    <p>Temporary session data (cleared when tab closes):</p>
+
+    <div class="form-group">
+      <input type="text" id="session-key" placeholder="Key">
+      <input type="text" id="session-value" placeholder="Value">
+      <button id="set-session-btn" onclick="setSessionItem()">Set Item</button>
+      <button id="refresh-session-btn" onclick="refreshSession()">Refresh</button>
+      <button id="clear-session-btn" class="danger" onclick="clearAllSession()">Clear All</button>
+    </div>
+
+    <div id="session-display" class="display">Loading sessionStorage...</div>
+  </div>
+
+  <!-- Preferences Card -->
+  <div class="card">
+    <h2>⚙️ User Preferences (saved to localStorage)</h2>
+    <p>These preferences persist across sessions:</p>
+
+    <div class="form-group">
+      <label><input type="checkbox" id="pref-darkmode" onchange="savePreferences()"> Dark Mode</label><br>
+      <label><input type="checkbox" id="pref-notifications" onchange="savePreferences()"> Enable
+        Notifications</label><br>
+      <label><input type="checkbox" id="pref-analytics" onchange="savePreferences()"> Allow Analytics</label>
+    </div>
+
+    <div class="form-group">
+      <label for="pref-language">Language:</label>
+      <select id="pref-language" onchange="savePreferences()">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+      </select>
+    </div>
+  </div>
+
+  <script>
+    // Generate session ID
+    function generateSessionId() {
+      return 'sess_' + Math.random().toString(36).substr(2, 16);
+    }
+
+    // Cookie helpers
+    function getCookies() {
+      const cookies = {};
+      document.cookie.split(';').forEach(cookie => {
+        const [name, value] = cookie.trim().split('=');
+        if (name) cookies[name] = decodeURIComponent(value || '');
+      });
+      return cookies;
+    }
+
+    function setCookieValue(name, value, days = 7) {
+      const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+      document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
+    }
+
+    function deleteCookie(name) {
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    }
+
+    // Login function
+    function login() {
+      const username = document.getElementById('username').value || 'testuser';
+      const password = document.getElementById('password').value || 'secret123';
+      const sessionId = generateSessionId();
+      const loginTime = new Date().toISOString();
+
+      // Set session cookies
+      setCookieValue('session_id', sessionId);
+      setCookieValue('auth_token', 'jwt_' + btoa(username + ':' + Date.now()));
+      setCookieValue('user_id', 'user_' + Math.floor(Math.random() * 10000));
+
+      // Set localStorage
+      localStorage.setItem('currentUser', JSON.stringify({
+        username: username,
+        role: 'admin',
+        loginTime: loginTime,
+        sessionId: sessionId
+      }));
+      localStorage.setItem('isLoggedIn', 'true');
+      localStorage.setItem('lastActivity', loginTime);
+
+      // Set sessionStorage
+      sessionStorage.setItem('tabSession', sessionId);
+      sessionStorage.setItem('pageViews', '1');
+
+      updateUI();
+      refreshAll();
+    }
+
+    // Logout function
+    function logout() {
+      // Clear session cookies
+      deleteCookie('session_id');
+      deleteCookie('auth_token');
+      deleteCookie('user_id');
+
+      // Clear session-related localStorage (keep preferences)
+      localStorage.removeItem('currentUser');
+      localStorage.removeItem('isLoggedIn');
+      localStorage.removeItem('lastActivity');
+
+      // Clear sessionStorage
+      sessionStorage.clear();
+
+      updateUI();
+      refreshAll();
+    }
+
+    // Update UI based on session state
+    function updateUI() {
+      const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+      const statusDiv = document.getElementById('session-status');
+      const userInfo = document.getElementById('user-info');
+      const loginSection = document.getElementById('login-section');
+      const logoutSection = document.getElementById('logout-section');
+
+      if (isLoggedIn) {
+        const user = JSON.parse(localStorage.getItem('currentUser') || '{}');
+        statusDiv.className = 'status logged-in';
+        statusDiv.textContent = `✅ Logged in as ${user.username}`;
+        userInfo.style.display = 'block';
+        loginSection.style.display = 'none';
+        logoutSection.style.display = 'block';
+
+        document.getElementById('display-username').textContent = user.username;
+        document.getElementById('display-role').textContent = user.role;
+        document.getElementById('display-login-time').textContent = user.loginTime;
+        document.getElementById('display-session-id').textContent = user.sessionId;
+      } else {
+        statusDiv.className = 'status logged-out';
+        statusDiv.textContent = '❌ Not logged in';
+        userInfo.style.display = 'none';
+        loginSection.style.display = 'block';
+        logoutSection.style.display = 'none';
+      }
+    }
+
+    // Refresh displays
+    function refreshCookies() {
+      const cookies = getCookies();
+      const display = document.getElementById('cookies-display');
+      if (Object.keys(cookies).length === 0) {
+        display.textContent = '(no cookies set)';
+      } else {
+        display.textContent = JSON.stringify(cookies, null, 2);
+      }
+    }
+
+    function refreshStorage() {
+      const display = document.getElementById('storage-display');
+      const items = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        try {
+          items[key] = JSON.parse(localStorage.getItem(key));
+        } catch {
+          items[key] = localStorage.getItem(key);
+        }
+      }
+      if (Object.keys(items).length === 0) {
+        display.textContent = '(localStorage is empty)';
+      } else {
+        display.textContent = JSON.stringify(items, null, 2);
+      }
+    }
+
+    function refreshSession() {
+      const display = document.getElementById('session-display');
+      const items = {};
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        items[key] = sessionStorage.getItem(key);
+      }
+      if (Object.keys(items).length === 0) {
+        display.textContent = '(sessionStorage is empty)';
+      } else {
+        display.textContent = JSON.stringify(items, null, 2);
+      }
+    }
+
+    function refreshAll() {
+      refreshCookies();
+      refreshStorage();
+      refreshSession();
+    }
+
+    // Manual cookie/storage setters
+    function setCookie() {
+      const name = document.getElementById('cookie-name').value;
+      const value = document.getElementById('cookie-value').value;
+      if (name) {
+        setCookieValue(name, value);
+        refreshCookies();
+      }
+    }
+
+    function setStorageItem() {
+      const key = document.getElementById('storage-key').value;
+      const value = document.getElementById('storage-value').value;
+      if (key) {
+        localStorage.setItem(key, value);
+        refreshStorage();
+      }
+    }
+
+    function setSessionItem() {
+      const key = document.getElementById('session-key').value;
+      const value = document.getElementById('session-value').value;
+      if (key) {
+        sessionStorage.setItem(key, value);
+        refreshSession();
+      }
+    }
+
+    // Clear functions
+    function clearAllCookies() {
+      const cookies = getCookies();
+      Object.keys(cookies).forEach(name => deleteCookie(name));
+      refreshCookies();
+      updateUI();
+    }
+
+    function clearAllStorage() {
+      localStorage.clear();
+      refreshStorage();
+      updateUI();
+    }
+
+    function clearAllSession() {
+      sessionStorage.clear();
+      refreshSession();
+    }
+
+    // Preferences
+    function savePreferences() {
+      const prefs = {
+        darkMode: document.getElementById('pref-darkmode').checked,
+        notifications: document.getElementById('pref-notifications').checked,
+        analytics: document.getElementById('pref-analytics').checked,
+        language: document.getElementById('pref-language').value
+      };
+      localStorage.setItem('userPreferences', JSON.stringify(prefs));
+      refreshStorage();
+    }
+
+    function loadPreferences() {
+      const prefs = JSON.parse(localStorage.getItem('userPreferences') || '{}');
+      document.getElementById('pref-darkmode').checked = prefs.darkMode || false;
+      document.getElementById('pref-notifications').checked = prefs.notifications || false;
+      document.getElementById('pref-analytics').checked = prefs.analytics || false;
+      document.getElementById('pref-language').value = prefs.language || 'en';
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadPreferences();
+      updateUI();
+      refreshAll();
+    });
+  </script>
+</body>
+
+</html>

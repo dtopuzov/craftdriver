@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hover & Select Examples</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    h2 {
+      color: #666;
+      margin-top: 0;
+    }
+
+    /* Tooltip */
+    .tooltip-container {
+      position: relative;
+      display: inline-block;
+      padding: 10px 20px;
+      background: #007bff;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .tooltip {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      bottom: 125%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      white-space: nowrap;
+      font-size: 14px;
+      transition: opacity 0.2s;
+      z-index: 1000;
+    }
+
+    .tooltip::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      margin-left: -5px;
+      border-width: 5px;
+      border-style: solid;
+      border-color: #333 transparent transparent transparent;
+    }
+
+    .tooltip-container:hover .tooltip {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* Dropdown menu */
+    .dropdown {
+      position: relative;
+      display: inline-block;
+    }
+
+    .dropdown-button {
+      background: #28a745;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .dropdown-menu {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      background: white;
+      min-width: 200px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+      margin-top: 5px;
+      transition: opacity 0.2s;
+      z-index: 1000;
+    }
+
+    .dropdown:hover .dropdown-menu {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .dropdown-item {
+      padding: 10px 15px;
+      cursor: pointer;
+      border-bottom: 1px solid #eee;
+    }
+
+    .dropdown-item:last-child {
+      border-bottom: none;
+    }
+
+    .dropdown-item:hover {
+      background: #f5f5f5;
+    }
+
+    /* Selects */
+    select {
+      padding: 10px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      font-size: 14px;
+      min-width: 200px;
+      margin-bottom: 10px;
+    }
+
+    .result {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 15px;
+      font-family: monospace;
+    }
+
+    label {
+      display: block;
+      margin-top: 15px;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🎯 Hover & Select Examples</h1>
+  <p>Test page for hover interactions and native select elements.</p>
+
+  <!-- Tooltip Example -->
+  <div class="card">
+    <h2>1. Tooltip on Hover</h2>
+    <p>Hover over the button to see a tooltip:</p>
+
+    <div class="tooltip-container" id="tooltip-trigger">
+      Hover Me
+      <span class="tooltip" id="tooltip-text">This is a helpful tooltip!</span>
+    </div>
+
+    <div id="tooltip-status" class="result">Tooltip not shown</div>
+  </div>
+
+  <!-- Dropdown Menu Example -->
+  <div class="card">
+    <h2>2. Dropdown Menu on Hover</h2>
+    <p>Hover over the button to reveal menu:</p>
+
+    <div class="dropdown">
+      <button class="dropdown-button" id="dropdown-trigger">Menu ▼</button>
+      <div class="dropdown-menu" id="dropdown-menu">
+        <div class="dropdown-item" id="menu-item-1" onclick="selectMenuItem('Profile')">👤 Profile</div>
+        <div class="dropdown-item" id="menu-item-2" onclick="selectMenuItem('Settings')">⚙️ Settings</div>
+        <div class="dropdown-item" id="menu-item-3" onclick="selectMenuItem('Logout')">🚪 Logout</div>
+      </div>
+    </div>
+
+    <div id="menu-selection" class="result">No menu item selected</div>
+  </div>
+
+  <!-- Native Select Elements -->
+  <div class="card">
+    <h2>3. Native Select Dropdowns</h2>
+
+    <label for="language-select">Language:</label>
+    <select id="language-select" onchange="updateSelection()">
+      <option value="">-- Choose Language --</option>
+      <option value="en">English</option>
+      <option value="es">Spanish</option>
+      <option value="fr">French</option>
+      <option value="de">German</option>
+      <option value="ja">Japanese</option>
+    </select>
+
+    <label for="country-select">Country:</label>
+    <select id="country-select" onchange="updateSelection()">
+      <option value="">-- Choose Country --</option>
+      <option value="us">United States</option>
+      <option value="uk">United Kingdom</option>
+      <option value="ca">Canada</option>
+      <option value="au">Australia</option>
+      <option value="jp">Japan</option>
+    </select>
+
+    <label for="framework-select">Framework:</label>
+    <select id="framework-select" onchange="updateSelection()">
+      <option value="">-- Choose Framework --</option>
+      <option value="react">React</option>
+      <option value="vue">Vue</option>
+      <option value="angular">Angular</option>
+      <option value="svelte">Svelte</option>
+    </select>
+
+    <div id="select-result" class="result">Make selections above...</div>
+  </div>
+
+  <!-- Hover State Change -->
+  <div class="card">
+    <h2>4. Hover State Detection</h2>
+    <p>These elements change state on hover:</p>
+
+    <div id="hover-box"
+      style="display: inline-block; padding: 20px; background: #007bff; color: white; border-radius: 4px; cursor: pointer; transition: all 0.2s;">
+      Hover Box
+    </div>
+
+    <div id="hover-box-status" class="result" style="margin-top: 10px;">Hover state: not hovered</div>
+  </div>
+
+  <script>
+    // Tooltip tracking
+    const tooltipTrigger = document.getElementById('tooltip-trigger');
+    const tooltipStatus = document.getElementById('tooltip-status');
+
+    tooltipTrigger.addEventListener('mouseenter', () => {
+      tooltipStatus.textContent = 'Tooltip is visible';
+      tooltipStatus.style.background = '#d4edda';
+    });
+
+    tooltipTrigger.addEventListener('mouseleave', () => {
+      tooltipStatus.textContent = 'Tooltip hidden';
+      tooltipStatus.style.background = '#f8f9fa';
+    });
+
+    // Dropdown menu item selection
+    function selectMenuItem(item) {
+      document.getElementById('menu-selection').textContent = `Selected: ${item}`;
+      document.getElementById('menu-selection').style.background = '#d4edda';
+    }
+
+    // Select updates
+    function updateSelection() {
+      const language = document.getElementById('language-select').value;
+      const country = document.getElementById('country-select').value;
+      const framework = document.getElementById('framework-select').value;
+
+      const parts = [];
+      if (language) parts.push(`Language: ${language}`);
+      if (country) parts.push(`Country: ${country}`);
+      if (framework) parts.push(`Framework: ${framework}`);
+
+      const result = document.getElementById('select-result');
+      result.textContent = parts.length > 0 ? parts.join(' | ') : 'Make selections above...';
+      result.style.background = parts.length > 0 ? '#d4edda' : '#f8f9fa';
+    }
+
+    // Hover box
+    const hoverBox = document.getElementById('hover-box');
+    const hoverBoxStatus = document.getElementById('hover-box-status');
+
+    hoverBox.addEventListener('mouseenter', () => {
+      hoverBox.style.background = '#0056b3';
+      hoverBox.style.transform = 'scale(1.05)';
+      hoverBoxStatus.textContent = 'Hover state: hovered';
+      hoverBoxStatus.style.background = '#d4edda';
+    });
+
+    hoverBox.addEventListener('mouseleave', () => {
+      hoverBox.style.background = '#007bff';
+      hoverBox.style.transform = 'scale(1)';
+      hoverBoxStatus.textContent = 'Hover state: not hovered';
+      hoverBoxStatus.style.background = '#f8f9fa';
+    });
+  </script>
+</body>
+
+</html>

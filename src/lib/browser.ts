@@ -11,13 +11,30 @@ import { Key } from './keys.js';
 import { MouseController } from './mouse.js';
 import { ActionsBuilder } from './actions.js';
 import { Capabilities } from './types.js';
+import {
+  BiDiSession,
+  NetworkInterceptor,
+  LogMonitor,
+  SessionStateManager,
+  type SessionState,
+  type StorageStateOptions,
+} from './bidi/index.js';
 
 export interface LaunchOptions {
   browserName?: 'chrome' | 'chromium' | 'firefox' | 'edge' | 'safari';
   chromeService?: ChromeService;
+  /** Enable BiDi features (network interception, logs, etc.) */
+  enableBiDi?: boolean;
+  /** Load session state from file on launch */
+  storageState?: string;
 }
 
 export class Browser {
+  private bidiSession?: BiDiSession;
+  private _network?: NetworkInterceptor;
+  private _logs?: LogMonitor;
+  private _storage?: SessionStateManager;
+
   private constructor(private driver: Driver) {
     this.keyboard = new KeyboardController(this.driver);
     this.mouse = new MouseController(this.driver);
@@ -35,19 +52,117 @@ export class Browser {
     // Handle headless mode via env var
     const headlessEnv = process.env.HEADLESS;
     const isHeadless = headlessEnv === 'true' || headlessEnv === '1';
-    let caps: Capabilities | undefined;
-    if (isHeadless) {
-      caps = {
-        'goog:chromeOptions': {
-          args: ['--headless=new'],
-        },
-      };
+
+    // Base capabilities
+    const chromeOptions: Record<string, unknown> = {
+      args: isHeadless ? ['--headless=new'] : [],
+    };
+
+    // Request webSocketUrl for BiDi if enabled
+    let caps: Capabilities = {
+      'goog:chromeOptions': chromeOptions,
+    };
+
+    if (options.enableBiDi !== false) {
+      // Request BiDi WebSocket URL
+      caps.webSocketUrl = true;
     }
 
     const builder = new Builder().forBrowser(name).setChromeService(chromeService);
-    if (caps) builder.withCapabilities(caps);
+    builder.withCapabilities(caps);
     const driver = await builder.build();
-    return new Browser(driver);
+    const browser = new Browser(driver);
+
+    // Initialize BiDi session if WebSocket URL available
+    const wsUrl = (driver as any).__wsUrl;
+    if (wsUrl && options.enableBiDi !== false) {
+      await browser.initBiDi(wsUrl);
+    }
+
+    // Load session state if provided
+    if (options.storageState) {
+      await browser.loadState(options.storageState);
+    }
+
+    return browser;
+  }
+
+  /**
+   * Initialize BiDi WebSocket connection
+   */
+  private async initBiDi(wsUrl: string): Promise<void> {
+    this.bidiSession = new BiDiSession(this.driver);
+    try {
+      await this.bidiSession.connect(wsUrl);
+    } catch (err) {
+      // BiDi connection failed, continue with Classic-only mode
+      console.warn('BiDi connection failed, using Classic WebDriver only:', err);
+      this.bidiSession = undefined;
+    }
+  }
+
+  /**
+   * Check if BiDi features are available
+   */
+  isBiDiEnabled(): boolean {
+    return this.bidiSession?.isConnected() ?? false;
+  }
+
+  // === BiDi Feature Accessors ===
+
+  /**
+   * Network interception API (BiDi)
+   * Mock, intercept, and modify network requests
+   */
+  get network(): NetworkInterceptor {
+    if (!this._network) {
+      if (!this.bidiSession?.isConnected()) {
+        throw new Error('Network interception requires BiDi. Launch with enableBiDi: true');
+      }
+      this._network = this.bidiSession.network;
+    }
+    return this._network;
+  }
+
+  /**
+   * Console/error log monitoring (BiDi)
+   */
+  get logs(): LogMonitor {
+    if (!this._logs) {
+      if (!this.bidiSession?.isConnected()) {
+        throw new Error('Log monitoring requires BiDi. Launch with enableBiDi: true');
+      }
+      this._logs = this.bidiSession.logs;
+    }
+    return this._logs;
+  }
+
+  /**
+   * Session state management (cookies, localStorage)
+   * Works with both BiDi and Classic WebDriver
+   */
+  get storage(): SessionStateManager {
+    if (!this._storage) {
+      this._storage = new SessionStateManager(
+        this.driver,
+        this.bidiSession?.isConnected() ? this.bidiSession.getConnection() : null
+      );
+    }
+    return this._storage;
+  }
+
+  /**
+   * Save current session state (cookies + localStorage) to file
+   */
+  async saveState(path: string, options?: StorageStateOptions): Promise<SessionState> {
+    return this.storage.saveState(path, options);
+  }
+
+  /**
+   * Load session state from file
+   */
+  async loadState(path: string): Promise<void> {
+    return this.storage.loadState(path);
   }
 
   async navigateTo(url: string): Promise<void> {
@@ -74,6 +189,10 @@ export class Browser {
   }
 
   async quit(): Promise<void> {
+    // Close BiDi connection first
+    if (this.bidiSession) {
+      await this.bidiSession.close().catch(() => { });
+    }
     await this.driver.quit();
   }
 
@@ -178,7 +297,6 @@ export class Browser {
     return new ElementHandle(this.driver, by);
   }
 
-  // Playwright-style getBy* helpers - return ElementHandle for fluent chaining
   getByRole(role: string, opts?: { name?: string; exact?: boolean; includeHidden?: boolean }): ElementHandle {
     return new ElementHandle(this.driver, By.role(role, opts));
   }

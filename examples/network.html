@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Calls Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #333;
+    }
+
+    h2 {
+      color: #666;
+      margin-top: 0;
+    }
+
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .result {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 15px;
+      min-height: 60px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .loading {
+      color: #666;
+      font-style: italic;
+    }
+
+    .error {
+      color: #dc3545;
+    }
+
+    .success {
+      color: #28a745;
+    }
+
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>🌐 Network Calls Example</h1>
+  <p>This page demonstrates various network requests for testing mocking and interception.</p>
+
+  <!-- Fetch JSON API -->
+  <div class="card">
+    <h2>1. Fetch JSON API</h2>
+    <p>Fetches data from <code>/api/users</code> endpoint.</p>
+    <button id="fetch-users-btn" onclick="fetchUsers()">Fetch Users</button>
+    <div id="users-result" class="result">Click button to fetch users...</div>
+  </div>
+
+  <!-- POST Request -->
+  <div class="card">
+    <h2>2. POST Request</h2>
+    <p>Sends a POST request to <code>/api/login</code> with credentials.</p>
+    <button id="post-login-btn" onclick="postLogin()">Send Login Request</button>
+    <div id="login-result" class="result">Click button to send login request...</div>
+  </div>
+
+  <!-- External API -->
+  <div class="card">
+    <h2>3. External API Call</h2>
+    <p>Fetches data from <code>https://jsonplaceholder.typicode.com/posts/1</code></p>
+    <button id="fetch-external-btn" onclick="fetchExternal()">Fetch External Post</button>
+    <div id="external-result" class="result">Click button to fetch external data...</div>
+  </div>
+
+  <!-- Multiple Requests -->
+  <div class="card">
+    <h2>4. Multiple Parallel Requests</h2>
+    <p>Makes 3 parallel requests to <code>/api/items/1</code>, <code>/api/items/2</code>, <code>/api/items/3</code></p>
+    <button id="fetch-parallel-btn" onclick="fetchParallel()">Fetch All Items</button>
+    <div id="parallel-result" class="result">Click button to fetch items in parallel...</div>
+  </div>
+
+  <!-- Delayed Response -->
+  <div class="card">
+    <h2>5. Slow Endpoint</h2>
+    <p>Requests <code>/api/slow</code> which simulates a 2-second delay.</p>
+    <button id="fetch-slow-btn" onclick="fetchSlow()">Fetch Slow Endpoint</button>
+    <div id="slow-result" class="result">Click button to test slow endpoint...</div>
+  </div>
+
+  <script>
+    // Check if BiDi testing mode is enabled (no client-side mocking)
+    const urlParams = new URLSearchParams(window.location.search);
+    const bidiMode = urlParams.get('bidi') === 'true';
+
+    // Simple mock server responses (for standalone testing without BiDi)
+    const mockResponses = {
+      '/api/users': {
+        users: [
+          { id: 1, name: 'Alice', email: 'alice@example.com' },
+          { id: 2, name: 'Bob', email: 'bob@example.com' },
+          { id: 3, name: 'Charlie', email: 'charlie@example.com' }
+        ]
+      },
+      '/api/login': { success: true, token: 'mock-jwt-token-12345' },
+      '/api/items/1': { id: 1, name: 'Item One', price: 9.99 },
+      '/api/items/2': { id: 2, name: 'Item Two', price: 19.99 },
+      '/api/items/3': { id: 3, name: 'Item Three', price: 29.99 },
+      '/api/slow': { message: 'This response was delayed by 2 seconds' }
+    };
+
+    // Intercept fetch to simulate server (only for standalone testing, NOT BiDi mode)
+    if (!bidiMode) {
+      const originalFetch = window.fetch;
+      window.fetch = async function (url, options = {}) {
+        const urlStr = typeof url === 'string' ? url : url.toString();
+
+        // Check if it's a mock endpoint
+        for (const [endpoint, response] of Object.entries(mockResponses)) {
+          if (urlStr.endsWith(endpoint) || urlStr.includes(endpoint)) {
+            // Simulate network delay
+            const delay = endpoint === '/api/slow' ? 2000 : 100;
+            await new Promise(r => setTimeout(r, delay));
+
+            return new Response(JSON.stringify(response), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+        }
+
+        // For external URLs, use real fetch
+        return originalFetch.apply(this, arguments);
+      };
+    }
+
+    async function fetchUsers() {
+      const btn = document.getElementById('fetch-users-btn');
+      const result = document.getElementById('users-result');
+
+      btn.disabled = true;
+      result.className = 'result loading';
+      result.textContent = 'Loading...';
+
+      try {
+        const response = await fetch('/api/users');
+        const data = await response.json();
+        result.className = 'result success';
+        result.textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        result.className = 'result error';
+        result.textContent = 'Error: ' + error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function postLogin() {
+      const btn = document.getElementById('post-login-btn');
+      const result = document.getElementById('login-result');
+
+      btn.disabled = true;
+      result.className = 'result loading';
+      result.textContent = 'Sending login request...';
+
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'testuser', password: 'secret123' })
+        });
+        const data = await response.json();
+        result.className = 'result success';
+        result.textContent = 'Response:\n' + JSON.stringify(data, null, 2);
+      } catch (error) {
+        result.className = 'result error';
+        result.textContent = 'Error: ' + error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function fetchExternal() {
+      const btn = document.getElementById('fetch-external-btn');
+      const result = document.getElementById('external-result');
+
+      btn.disabled = true;
+      result.className = 'result loading';
+      result.textContent = 'Fetching from jsonplaceholder...';
+
+      try {
+        const response = await fetch('https://jsonplaceholder.typicode.com/posts/1');
+        const data = await response.json();
+        result.className = 'result success';
+        result.textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        result.className = 'result error';
+        result.textContent = 'Error: ' + error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function fetchParallel() {
+      const btn = document.getElementById('fetch-parallel-btn');
+      const result = document.getElementById('parallel-result');
+
+      btn.disabled = true;
+      result.className = 'result loading';
+      result.textContent = 'Fetching 3 items in parallel...';
+
+      try {
+        const [item1, item2, item3] = await Promise.all([
+          fetch('/api/items/1').then(r => r.json()),
+          fetch('/api/items/2').then(r => r.json()),
+          fetch('/api/items/3').then(r => r.json())
+        ]);
+        result.className = 'result success';
+        result.textContent = 'All items:\n' + JSON.stringify([item1, item2, item3], null, 2);
+      } catch (error) {
+        result.className = 'result error';
+        result.textContent = 'Error: ' + error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function fetchSlow() {
+      const btn = document.getElementById('fetch-slow-btn');
+      const result = document.getElementById('slow-result');
+
+      btn.disabled = true;
+      result.className = 'result loading';
+      result.textContent = 'Waiting for slow endpoint (2s delay)...';
+
+      const startTime = Date.now();
+      try {
+        const response = await fetch('/api/slow');
+        const data = await response.json();
+        const elapsed = Date.now() - startTime;
+        result.className = 'result success';
+        result.textContent = `Response (took ${elapsed}ms):\n` + JSON.stringify(data, null, 2);
+      } catch (error) {
+        result.className = 'result error';
+        result.textContent = 'Error: ' + error.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+
+</html>

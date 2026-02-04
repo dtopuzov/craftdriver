@@ -2,7 +2,7 @@ import { describe, it, beforeAll, afterAll } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
-describe('Dynamic elements (local app)', () => {
+describe('Waiting and Dynamic Elements', () => {
   let browser: Browser;
 
   beforeAll(async () => {
