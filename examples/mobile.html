@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mobile Emulation Example</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      color: #333;
+      font-size: 1.5rem;
+      margin-top: 0;
+    }
+
+    h2 {
+      color: #666;
+      font-size: 1.1rem;
+      margin-top: 0;
+    }
+
+    .device-info {
+      display: grid;
+      gap: 10px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border-radius: 6px;
+    }
+
+    .info-label {
+      color: #666;
+      font-weight: 500;
+    }
+
+    .info-value {
+      color: #333;
+      font-family: monospace;
+    }
+
+    .touch-area {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 12px;
+      padding: 40px;
+      text-align: center;
+      color: white;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    .touch-area:active {
+      transform: scale(0.98);
+    }
+
+    #touch-result {
+      margin-top: 15px;
+      padding: 10px;
+      background: #e9ecef;
+      border-radius: 6px;
+      font-family: monospace;
+      min-height: 40px;
+    }
+
+    .responsive-indicator {
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .mobile-view {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .tablet-view {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .desktop-view {
+      background: #cce5ff;
+      color: #004085;
+    }
+
+    @media (max-width: 480px) {
+      .responsive-indicator::before {
+        content: '📱 ';
+      }
+    }
+
+    @media (min-width: 481px) and (max-width: 1024px) {
+      .responsive-indicator::before {
+        content: '📱 ';
+      }
+    }
+
+    @media (min-width: 1025px) {
+      .responsive-indicator::before {
+        content: '🖥️ ';
+      }
+    }
+
+    .orientation-box {
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 1.2rem;
+    }
+
+    .portrait {
+      background: #e2e3f3;
+    }
+
+    .landscape {
+      background: #f3e2e3;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>📱 Mobile Emulation Test Page</h1>
+
+  <div class="card">
+    <h2>Device Information</h2>
+    <div class="device-info">
+      <div class="info-row">
+        <span class="info-label">Viewport Width</span>
+        <span class="info-value" id="viewport-width">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Viewport Height</span>
+        <span class="info-value" id="viewport-height">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Device Pixel Ratio</span>
+        <span class="info-value" id="pixel-ratio">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Touch Support</span>
+        <span class="info-value" id="touch-support">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">User Agent</span>
+        <span class="info-value" id="user-agent" style="word-break: break-all; font-size: 11px;">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Platform</span>
+        <span class="info-value" id="platform">-</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Responsive Layout Detection</h2>
+    <div id="responsive-indicator" class="responsive-indicator">Detecting...</div>
+    <div id="orientation-box" class="orientation-box">Checking orientation...</div>
+  </div>
+
+  <div class="card">
+    <h2>Touch Event Test</h2>
+    <div class="touch-area" id="touch-area">
+      Tap or Click Here
+    </div>
+    <div id="touch-result">Waiting for interaction...</div>
+  </div>
+
+  <script>
+    // Update device information
+    function updateDeviceInfo() {
+      document.getElementById('viewport-width').textContent = window.innerWidth + 'px';
+      document.getElementById('viewport-height').textContent = window.innerHeight + 'px';
+      document.getElementById('pixel-ratio').textContent = window.devicePixelRatio;
+      document.getElementById('user-agent').textContent = navigator.userAgent;
+      document.getElementById('platform').textContent = navigator.platform || navigator.userAgentData?.platform || 'Unknown';
+
+      // Touch support detection
+      const hasTouch = 'ontouchstart' in window ||
+        navigator.maxTouchPoints > 0 ||
+        navigator.msMaxTouchPoints > 0;
+      document.getElementById('touch-support').textContent = hasTouch ? 'Yes ✓' : 'No ✗';
+
+      // Responsive indicator
+      const width = window.innerWidth;
+      const indicator = document.getElementById('responsive-indicator');
+      if (width <= 480) {
+        indicator.className = 'responsive-indicator mobile-view';
+        indicator.textContent = 'Mobile View (' + width + 'px)';
+      } else if (width <= 1024) {
+        indicator.className = 'responsive-indicator tablet-view';
+        indicator.textContent = 'Tablet View (' + width + 'px)';
+      } else {
+        indicator.className = 'responsive-indicator desktop-view';
+        indicator.textContent = 'Desktop View (' + width + 'px)';
+      }
+
+      // Orientation
+      const orientationBox = document.getElementById('orientation-box');
+      if (window.innerHeight > window.innerWidth) {
+        orientationBox.className = 'orientation-box portrait';
+        orientationBox.textContent = '📱 Portrait Mode';
+      } else {
+        orientationBox.className = 'orientation-box landscape';
+        orientationBox.textContent = '📱 Landscape Mode';
+      }
+    }
+
+    // Touch area event handling
+    const touchArea = document.getElementById('touch-area');
+    const touchResult = document.getElementById('touch-result');
+    let eventLog = [];
+
+    function logEvent(type, details) {
+      const entry = `${type}: ${details}`;
+      eventLog.push(entry);
+      if (eventLog.length > 5) eventLog.shift();
+      touchResult.textContent = eventLog.join('\n');
+    }
+
+    touchArea.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      logEvent('touchstart', `x=${Math.round(touch.clientX)}, y=${Math.round(touch.clientY)}`);
+    });
+
+    touchArea.addEventListener('touchend', (e) => {
+      logEvent('touchend', 'Touch released');
+    });
+
+    touchArea.addEventListener('click', (e) => {
+      logEvent('click', `x=${Math.round(e.clientX)}, y=${Math.round(e.clientY)}`);
+    });
+
+    touchArea.addEventListener('mousedown', (e) => {
+      logEvent('mousedown', `x=${Math.round(e.clientX)}, y=${Math.round(e.clientY)}`);
+    });
+
+    // Initial update and resize listener
+    updateDeviceInfo();
+    window.addEventListener('resize', updateDeviceInfo);
+    window.addEventListener('orientationchange', updateDeviceInfo);
+  </script>
+</body>
+
+</html>

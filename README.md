@@ -6,8 +6,6 @@ Think of it as a modern take on Selenium with automatic waits and ergonomic API,
 
 ## Getting started
 
-Install from npm (package coming soon):
-
 ```bash
 npm install craftdriver
 ```
@@ -26,6 +24,41 @@ await browser.expect('#result').toHaveText('Welcome testuser');
 await browser.quit();
 ```
 
+Mobile emulation:
+
+```ts
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  mobileEmulation: 'iPhone 14',
+});
+```
+
+Network mocking:
+
+```ts
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  enableBiDi: true,
+});
+
+await browser.network.mock('**/api/users', {
+  status: 200,
+  body: { users: [] },
+});
+```
+
+Session persistence:
+
+```ts
+await browser.saveState('./session.json');
+
+// Later: restore with storageState option
+const browser2 = await Browser.launch({
+  browserName: 'chrome',
+  storageState: './session.json',
+});
+```
+
 ## Feature Overview
 
 ### Core Features
@@ -36,6 +69,7 @@ await browser.quit();
 - **Bulletproof interactions** - Reliable element, mouse, and keyboard control
 - **Auto-waiting** - Smart waits built into all actions
 - **Real browsers** - Test on actual Chrome, Edge, and other W3C-compliant browsers
+- **Mobile emulation** - Test responsive designs with device presets (iPhone, Pixel, iPad)
 
 ### Advanced Features (BiDi)
 
@@ -55,6 +89,7 @@ await browser.quit();
 | [Keyboard & Mouse](./docs/keyboard-mouse.md)       | Low-level input simulation                          |
 | [Session Management](./docs/session-management.md) | Cookies, localStorage, and session persistence      |
 | [Screenshots](./docs/screenshots.md)               | Capturing page and element screenshots              |
+| [Mobile Emulation](./docs/mobile-emulation.md)     | Test with mobile device viewports and touch events  |
 | [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture             |
 
 ## Contributing
