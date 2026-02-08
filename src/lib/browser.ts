@@ -20,6 +20,63 @@ import {
   type StorageStateOptions,
 } from './bidi/index.js';
 
+/** Device metrics for custom mobile emulation */
+export interface DeviceMetrics {
+  width: number;
+  height: number;
+  pixelRatio: number;
+  mobile?: boolean;
+  touch?: boolean;
+}
+
+/** Mobile emulation configuration */
+export interface MobileEmulation {
+  /** Use a predefined device (e.g., 'iPhone 14', 'Pixel 7') */
+  deviceName?: string;
+  /** Custom device metrics */
+  deviceMetrics?: DeviceMetrics;
+  /** Custom user agent string */
+  userAgent?: string;
+}
+
+/** Common mobile device presets */
+export const devices = {
+  'iPhone 14': {
+    deviceMetrics: { width: 390, height: 844, pixelRatio: 3, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+  },
+  'iPhone 14 Pro Max': {
+    deviceMetrics: { width: 430, height: 932, pixelRatio: 3, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+  },
+  'iPhone SE': {
+    deviceMetrics: { width: 375, height: 667, pixelRatio: 2, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+  },
+  'Pixel 7': {
+    deviceMetrics: { width: 412, height: 915, pixelRatio: 2.625, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+  },
+  'Pixel 7 Pro': {
+    deviceMetrics: { width: 412, height: 892, pixelRatio: 3.5, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+  },
+  'Samsung Galaxy S23': {
+    deviceMetrics: { width: 360, height: 780, pixelRatio: 3, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+  },
+  'iPad Pro 11': {
+    deviceMetrics: { width: 834, height: 1194, pixelRatio: 2, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+  },
+  'iPad Mini': {
+    deviceMetrics: { width: 768, height: 1024, pixelRatio: 2, mobile: true, touch: true },
+    userAgent: 'Mozilla/5.0 (iPad; CPU OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+  },
+} as const;
+
+export type DeviceName = keyof typeof devices;
+
 export interface LaunchOptions {
   browserName?: 'chrome' | 'chromium' | 'firefox' | 'edge' | 'safari';
   chromeService?: ChromeService;
@@ -27,6 +84,8 @@ export interface LaunchOptions {
   enableBiDi?: boolean;
   /** Load session state from file on launch */
   storageState?: string;
+  /** Enable mobile device emulation (Chrome/Chromium only) */
+  mobileEmulation?: MobileEmulation | DeviceName;
 }
 
 export class Browser {
@@ -57,6 +116,37 @@ export class Browser {
     const chromeOptions: Record<string, unknown> = {
       args: isHeadless ? ['--headless=new'] : [],
     };
+
+    // Add mobile emulation if specified
+    if (options.mobileEmulation) {
+      const emulation = typeof options.mobileEmulation === 'string'
+        ? devices[options.mobileEmulation]
+        : options.mobileEmulation;
+
+      if ('deviceName' in emulation && emulation.deviceName) {
+        // Use Chrome's built-in device name
+        chromeOptions.mobileEmulation = { deviceName: emulation.deviceName };
+      } else {
+        // Build custom mobile emulation config
+        const mobileConfig: Record<string, unknown> = {};
+
+        if (emulation.deviceMetrics) {
+          mobileConfig.deviceMetrics = {
+            width: emulation.deviceMetrics.width,
+            height: emulation.deviceMetrics.height,
+            pixelRatio: emulation.deviceMetrics.pixelRatio,
+            mobile: emulation.deviceMetrics.mobile ?? true,
+            touch: emulation.deviceMetrics.touch ?? true,
+          };
+        }
+
+        if (emulation.userAgent) {
+          mobileConfig.userAgent = emulation.userAgent;
+        }
+
+        chromeOptions.mobileEmulation = mobileConfig;
+      }
+    }
 
     // Request webSocketUrl for BiDi if enabled
     let caps: Capabilities = {
