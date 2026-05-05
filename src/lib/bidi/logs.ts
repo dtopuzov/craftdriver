@@ -125,9 +125,9 @@ export class LogMonitor {
   }
 
   /**
-   * Get all console messages
+   * Get all captured console messages.
    */
-  getConsoleLogs(): ConsoleMessage[] {
+  getMessages(): ConsoleMessage[] {
     return this.logs.filter((log): log is ConsoleMessage => log.type === 'console');
   }
 

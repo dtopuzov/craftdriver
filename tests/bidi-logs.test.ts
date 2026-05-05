@@ -1,6 +1,6 @@
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser } from '../src';
-import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
+import { EXAMPLES_BASE_URL, BROWSER_NAME, IS_CHROMIUM } from './utils';
 
 describe('Console Logs and JavaScript Errors', () => {
   let browser: Browser;
@@ -24,41 +24,36 @@ describe('Console Logs and JavaScript Errors', () => {
 
   describe('Console Log Capture', () => {
     it('captures console.log() messages', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('Hello from console.log'), 5000);
       await browser.click('#btn-console-log');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const logMessage = messages.find((m) => m.text.includes('Hello from console.log'));
+      const logMessage = await msgPromise;
 
       expect(logMessage).toBeDefined();
       expect(logMessage?.type).toBe('console');
       expect(logMessage?.level).toBe('info');
       expect(logMessage?.method).toBe('log');
       expect(logMessage?.timestamp).instanceOf(Date);
-      expect(logMessage?.stackTrace?.length).toEqual(2);
+      // Firefox only attaches stack traces to error-level entries.
+      if (IS_CHROMIUM) expect(logMessage?.stackTrace?.length).toEqual(2);
     });
 
     it('captures console.warn() messages', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('This is a warning message'), 5000);
       await browser.click('#btn-console-warn');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const logMessage = messages.find((m) => m.text.includes('This is a warning message'));
+      const logMessage = await msgPromise;
 
       expect(logMessage).toBeDefined();
       expect(logMessage?.type).toBe('console');
       expect(logMessage?.level).toBe('warn');
       expect(logMessage?.method).toBe('warn');
       expect(logMessage?.timestamp).instanceOf(Date);
-      expect(logMessage?.stackTrace?.length).toEqual(2);
+      if (IS_CHROMIUM) expect(logMessage?.stackTrace?.length).toEqual(2);
     });
 
     it('captures console.error() messages', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('This is an error message'), 5000);
       await browser.click('#btn-console-error');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const logMessage = messages.find((m) => m.text.includes('This is an error message'));
+      const logMessage = await msgPromise;
 
       expect(logMessage).toBeDefined();
       expect(logMessage?.type).toBe('console');
@@ -69,131 +64,93 @@ describe('Console Logs and JavaScript Errors', () => {
     });
 
     it('captures console.info() messages', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('This is an info message'), 5000);
       await browser.click('#btn-console-info');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const logMessage = messages.find((m) => m.text.includes('This is an info message'));
+      const logMessage = await msgPromise;
 
       expect(logMessage).toBeDefined();
       expect(logMessage?.type).toBe('console');
       expect(logMessage?.level).toBe('info');
       expect(logMessage?.method).toBe('info');
       expect(logMessage?.timestamp).instanceOf(Date);
-      expect(logMessage?.stackTrace?.length).toEqual(2);
+      if (IS_CHROMIUM) expect(logMessage?.stackTrace?.length).toEqual(2);
     });
 
     it('captures console.debug() messages', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('This is a debug message'), 5000);
       await browser.click('#btn-console-debug');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const logMessage = messages.find((m) => m.text.includes('This is a debug message'));
+      const logMessage = await msgPromise;
 
       expect(logMessage).toBeDefined();
       expect(logMessage?.type).toBe('console');
       expect(logMessage?.level).toBe('debug');
       expect(logMessage?.method).toBe('debug');
       expect(logMessage?.timestamp).instanceOf(Date);
-      expect(logMessage?.stackTrace?.length).toEqual(2);
+      if (IS_CHROMIUM) expect(logMessage?.stackTrace?.length).toEqual(2);
     });
   });
 
   describe('Complex Console Output', () => {
     it('captures console logs with objects', async () => {
-      await browser.click('#btn-log-object');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const objectLogs = messages.filter(
-        (m) => m.text.includes('User object') || m.text.includes('testuser')
+      const msgPromise = browser.logs.waitForConsole(
+        (m) => m.text.includes('User object') || m.text.includes('testuser'),
+        5000
       );
-
-      if (objectLogs.length === 0) {
-        throw new Error('Expected to capture object log message');
-      }
+      await browser.click('#btn-log-object');
+      await msgPromise;
     });
 
     it('captures console logs with arrays', async () => {
+      const msgPromise = browser.logs.waitForConsole((m) => m.text.includes('Array'), 5000);
       await browser.click('#btn-log-array');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const arrayLogs = messages.filter((m) => m.text.includes('Array'));
-
-      if (arrayLogs.length === 0) {
-        throw new Error('Expected to capture array log message');
-      }
+      await msgPromise;
     });
 
     it('captures console logs with multiple arguments', async () => {
-      await browser.click('#btn-log-multiple');
-      await browser.pause(50);
-
-      const messages = browser.logs.getConsoleLogs();
-      const multiLogs = messages.filter(
-        (m) => m.text.includes('Multiple') && m.text.includes('arguments')
+      const msgPromise = browser.logs.waitForConsole(
+        (m) => m.text.includes('Multiple') && m.text.includes('arguments'),
+        5000
       );
-
-      if (multiLogs.length === 0) {
-        throw new Error('Expected to capture multiple argument log');
-      }
+      await browser.click('#btn-log-multiple');
+      await msgPromise;
     });
   });
 
   describe('JavaScript Error Capture', () => {
     it('captures thrown Error', async () => {
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('This is a thrown Error'),
+        5000
+      );
       await browser.click('#btn-throw-error');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const thrownError = errors.find((e) => e.text.includes('This is a thrown Error'));
-
-      if (!thrownError) {
-        throw new Error('Expected to capture thrown Error');
-      }
+      await errorPromise;
     });
 
     it('captures TypeError', async () => {
-      await browser.click('#btn-throw-type');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const typeError = errors.find(
-        (e) => e.text.includes('TypeError') || e.text.includes('Cannot read property')
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('TypeError') || e.text.includes('Cannot read property'),
+        5000
       );
-
-      if (!typeError) {
-        throw new Error('Expected to capture TypeError');
-      }
+      await browser.click('#btn-throw-type');
+      await errorPromise;
     });
 
     it('captures ReferenceError', async () => {
-      await browser.click('#btn-throw-reference');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const refError = errors.find(
-        (e) => e.text.includes('ReferenceError') || e.text.includes('not defined')
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('ReferenceError') || e.text.includes('not defined'),
+        5000
       );
-
-      if (!refError) {
-        throw new Error('Expected to capture ReferenceError');
-      }
+      await browser.click('#btn-throw-reference');
+      await errorPromise;
     });
 
     it('captures eval syntax error', async () => {
-      await browser.click('#btn-throw-syntax');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const syntaxError = errors.find(
-        (e) => e.text.includes('SyntaxError') || e.text.toLowerCase().includes('syntax')
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('SyntaxError') || e.text.toLowerCase().includes('syntax'),
+        5000
       );
-
-      if (!syntaxError) {
-        throw new Error('Expected to capture SyntaxError from eval');
-      }
+      await browser.click('#btn-throw-syntax');
+      await errorPromise;
     });
   });
 
@@ -242,55 +199,50 @@ describe('Console Logs and JavaScript Errors', () => {
 
   describe('DOM Errors', () => {
     it('captures null element access error', async () => {
-      await browser.click('#btn-null-access');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const nullError = errors.find(
-        (e) =>
-          e.text.includes('null') || e.text.includes('Cannot') || e.text.includes('textContent')
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('null') || e.text.includes('Cannot') || e.text.includes('textContent'),
+        5000
       );
-
-      if (!nullError) {
-        throw new Error('Expected to capture null access error');
-      }
+      await browser.click('#btn-null-access');
+      await errorPromise;
     });
 
     it('captures invalid selector error', async () => {
-      await browser.click('#btn-invalid-selector');
-      await browser.pause(50);
-
-      const errors = browser.logs.getErrors();
-      const selectorError = errors.find(
-        (e) => e.text.toLowerCase().includes('selector') || e.text.toLowerCase().includes('valid')
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.toLowerCase().includes('selector') || e.text.toLowerCase().includes('valid'),
+        5000
       );
-
-      if (!selectorError) {
-        throw new Error('Expected to capture invalid selector error');
-      }
+      await browser.click('#btn-invalid-selector');
+      await errorPromise;
     });
   });
 
   describe('Clear Logs', () => {
     it('can clear captured messages', async () => {
+      const logPromise = browser.logs.waitForConsole((m) => m.method === 'log', 5000);
       await browser.click('#btn-console-log');
-      await browser.pause(50);
+      await logPromise;
+      const warnPromise = browser.logs.waitForConsole((m) => m.method === 'warn', 5000);
       await browser.click('#btn-console-warn');
-      await browser.pause(50);
-      expect(browser.logs.getConsoleLogs().length).toBeGreaterThan(0);
+      await warnPromise;
+      expect(browser.logs.getMessages().length).toBeGreaterThan(0);
 
       browser.logs.clearLogs();
-      await browser.pause(50);
-      expect(browser.logs.getConsoleLogs().length).toEqual(0);
+      await browser.pause(100);
+      expect(browser.logs.getMessages().length).toEqual(0);
     });
 
     it('can clear captured errors', async () => {
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('This is a thrown Error'),
+        5000
+      );
       await browser.click('#btn-throw-error');
-      await browser.pause(50);
+      await errorPromise;
       expect(browser.logs.getErrors().length).toBeGreaterThan(0);
 
       browser.logs.clearLogs();
-      await browser.pause(50);
+      await browser.pause(100);
       expect(browser.logs.getErrors().length).toEqual(0);
     });
   });
@@ -303,14 +255,22 @@ describe('Console Logs and JavaScript Errors', () => {
       // 1. Subscribe to JavaScript errors - code runs when error happens
       const unsubscribe = browser.logs.onError((error) => {
         capturedError = error;
-        screenshotTaken = true; // In real scenario: await browser.saveScreenshot('error.png')
+        screenshotTaken = true; // In real scenario: await browser.screenshot({ path: 'error.png' })
       });
 
-      // 2. Trigger an error
-      await browser.click('#btn-throw-error');
-      await browser.pause(50); // Allow event to propagate
+      // 2. Register event-driven wait BEFORE triggering the error
+      const errorPromise = browser.logs.waitForError(
+        (e) => e.text.includes('This is a thrown Error'),
+        5000
+      );
 
-      // 3. Verify subscription code got executed
+      // 3. Trigger an error
+      await browser.click('#btn-throw-error');
+
+      // 4. Wait for the error event (instead of a fixed pause)
+      await errorPromise;
+
+      // 5. Verify subscription code got executed
       expect(capturedError).not.toBeNull();
       expect(capturedError.type).toBe('javascript');
       expect(capturedError.text).toContain('This is a thrown Error');

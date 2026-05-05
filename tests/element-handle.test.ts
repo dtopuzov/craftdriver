@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
@@ -32,7 +32,7 @@ describe('ElementHandle API', () => {
     });
   });
 
-  describe('text(), value(), tag(), getAttribute()', () => {
+  describe('text(), value(), tagName(), getAttribute()', () => {
     beforeEach(async () => {
       await browser.navigateTo(`${baseUrl}/login.html`);
     });
@@ -48,8 +48,8 @@ describe('ElementHandle API', () => {
       if (val !== 'test123') throw new Error(`Expected "test123" but got "${val}"`);
     });
 
-    it('tag() returns element tag name', async () => {
-      const tag = await browser.find('h1').tag();
+    it('tagName() returns element tag name', async () => {
+      const tag = await browser.find('h1').tagName();
       if (tag !== 'h1') throw new Error(`Expected "h1" but got "${tag}"`);
     });
 
@@ -137,6 +137,19 @@ describe('ElementHandle API', () => {
       await browser.navigateTo(`${baseUrl}/login.html`);
       await browser.find('#username').fill('chained');
       await browser.find('#username').expect().toHaveValue('chained');
+    });
+  });
+
+  describe('screenshot() error paths', () => {
+    it('throws when capturing a detached element', async () => {
+      await browser.navigateTo(`${baseUrl}/dynamic.html`);
+      // Resolve once while attached, then remove the element from the DOM.
+      const handle = browser.find('#to-remove');
+      await handle.expect().toBeVisible();
+      await browser.click('#btn-remove');
+      // The element is now detached — screenshot should reject loudly,
+      // not return an empty buffer.
+      await expect(handle.screenshot({ timeout: 500 })).rejects.toThrow();
     });
   });
 });

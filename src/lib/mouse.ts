@@ -13,8 +13,8 @@ function toButtonCode(btn: MouseButton | undefined): number {
   return 0;
 }
 
-export class MouseController {
-  constructor(private driver: Driver) {}
+export class Mouse {
+  constructor(private driver: Driver) { }
 
   private async resolveElement(selector: string | By) {
     const by = typeof selector === 'string' ? By.css(selector) : selector;

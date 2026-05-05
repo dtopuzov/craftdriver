@@ -38,7 +38,7 @@ describe('Login Form', () => {
   it('supports locating with By locators', async () => {
     await browser.navigateTo(`${baseUrl}/login.html`);
     await browser.fill(By.id('username'), 'byuser');
-    await browser.fill(By.nameAttr('password'), 'secret');
+    await browser.fill(By.name('password'), 'secret');
     await browser.click(By.css('#submit'));
     await browser.expect(By.css('#result')).toContainText('Welcome back, byuser!');
   });

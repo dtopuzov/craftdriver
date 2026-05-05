@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Craftdriver Popup</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 1rem;
+    }
+
+    button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    #popup-result {
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Popup Test Page</h1>
+  <button id="open-popup">Open Popup</button>
+  <p id="popup-result"></p>
+  <script>
+    document.getElementById('open-popup').addEventListener('click', function () {
+      const w = window.open('/popup-target.html', '_blank', 'width=600,height=400');
+      if (!w) {
+        document.getElementById('popup-result').textContent = 'blocked';
+      } else {
+        document.getElementById('popup-result').textContent = 'opened';
+      }
+    });
+  </script>
+</body>
+
+</html>

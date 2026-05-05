@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Locator Playground</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 20px;
+    }
+
+    .product-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .product {
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .product-name {
+      font-weight: 600;
+    }
+
+    .product-price {
+      color: #6b7280;
+      margin-left: 8px;
+    }
+
+    .buy-btn {
+      padding: 6px 14px;
+      border-radius: 4px;
+      border: 1px solid #6366f1;
+      background: #eef2ff;
+      cursor: pointer;
+    }
+
+    #status {
+      margin-top: 16px;
+      font-size: 14px;
+      color: #374151;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Locator Playground</h1>
+
+  <!-- product list — five cards with stable ids and predictable text -->
+  <ul class="product-list" id="product-list">
+    <li class="product" id="product-1">
+      <span>
+        <span class="product-name">Widget Lite</span>
+        <span class="product-price">$9</span>
+      </span>
+      <button class="buy-btn" id="buy-1">Buy</button>
+    </li>
+    <li class="product" id="product-2">
+      <span>
+        <span class="product-name">Widget Pro</span>
+        <span class="product-price">$29</span>
+      </span>
+      <button class="buy-btn" id="buy-2">Buy</button>
+    </li>
+    <li class="product" id="product-3">
+      <span>
+        <span class="product-name">Widget Max</span>
+        <span class="product-price">$49</span>
+      </span>
+      <button class="buy-btn" id="buy-3">Buy</button>
+    </li>
+    <li class="product" id="product-4">
+      <span>
+        <span class="product-name">Gadget Basic</span>
+        <span class="product-price">$15</span>
+      </span>
+      <button class="buy-btn" id="buy-4">Buy</button>
+    </li>
+    <li class="product" id="product-5">
+      <span>
+        <span class="product-name">Gadget Plus</span>
+        <span class="product-price">$39</span>
+      </span>
+      <button class="buy-btn" id="buy-5">Buy</button>
+    </li>
+  </ul>
+
+  <!-- dynamic item — toggled in/out to test re-resolution -->
+  <button id="toggle-btn">Toggle dynamic item</button>
+  <div id="dynamic-container"></div>
+
+  <!-- click result area -->
+  <div id="status">idle</div>
+
+  <script>
+    // Mark which buy button was last clicked
+    document.querySelectorAll('.buy-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.getElementById('status').textContent = 'clicked:' + btn.id;
+      });
+    });
+
+    // Toggle a dynamic product in and out of the DOM
+    var dynamicVisible = false;
+    document.getElementById('toggle-btn').addEventListener('click', function () {
+      var container = document.getElementById('dynamic-container');
+      if (dynamicVisible) {
+        container.innerHTML = '';
+      } else {
+        container.innerHTML =
+          '<li class="product" id="product-dynamic">' +
+          '<span><span class="product-name">Dynamic Item</span></span>' +
+          '<button class="buy-btn" id="buy-dynamic">Buy</button>' +
+          '</li>';
+        document.getElementById('buy-dynamic').addEventListener('click', function () {
+          document.getElementById('status').textContent = 'clicked:buy-dynamic';
+        });
+      }
+      dynamicVisible = !dynamicVisible;
+    });
+  </script>
+</body>
+
+</html>

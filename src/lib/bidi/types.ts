@@ -136,7 +136,7 @@ export interface NetworkInterceptResult {
 
 export type BytesValue = { type: 'string'; value: string } | { type: 'base64'; value: string };
 
-export interface NetworkCookie {
+export interface RawNetworkCookie {
   name: string;
   value: BytesValue;
   domain: string;
@@ -145,6 +145,29 @@ export interface NetworkCookie {
   httpOnly: boolean;
   secure: boolean;
   sameSite: 'strict' | 'lax' | 'none' | 'default';
+  expiry?: number;
+}
+
+export interface Cookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  size: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: 'strict' | 'lax' | 'none' | 'default';
+  expiry?: number;
+}
+
+export interface CookieInput {
+  name: string;
+  value: string | BytesValue;
+  domain: string;
+  path?: string;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: 'strict' | 'lax' | 'none' | 'default';
   expiry?: number;
 }
 
@@ -158,7 +181,7 @@ export interface NetworkRequestData {
   url: string;
   method: string;
   headers: NetworkHeader[];
-  cookies: NetworkCookie[];
+  cookies: RawNetworkCookie[];
   headersSize: number;
   bodySize: number | null;
   timings?: FetchTimingInfo;
@@ -270,11 +293,11 @@ export interface PartitionDescriptor {
 }
 
 export interface SetCookieParams {
-  cookie: PartialCookie;
+  cookie: RawPartialCookie;
   partition?: PartitionDescriptor;
 }
 
-export interface PartialCookie {
+export interface RawPartialCookie {
   name: string;
   value: BytesValue;
   domain: string;
@@ -286,7 +309,7 @@ export interface PartialCookie {
 }
 
 export interface GetCookiesResult {
-  cookies: NetworkCookie[];
+  cookies: RawNetworkCookie[];
   partitionKey: {
     userContext?: string;
     sourceOrigin?: string;
@@ -308,7 +331,7 @@ export interface SubscriptionRequest {
 
 // Serialized session state for Playwright-style persistence
 export interface SessionState {
-  cookies?: NetworkCookie[];
+  cookies?: Cookie[];
   localStorage?: Record<string, Record<string, string>>; // origin -> key/value
   sessionStorage?: Record<string, Record<string, string>>;
   origins?: string[];

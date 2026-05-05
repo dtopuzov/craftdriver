@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Dialogs</title>
+</head>
+
+<body>
+  <h1>Dialogs</h1>
+
+  <!-- alert -->
+  <button id="show-alert">Show Alert</button>
+
+  <!-- confirm — records whether user accepted or dismissed -->
+  <button id="show-confirm">Show Confirm</button>
+  <p id="confirm-result"></p>
+
+  <!-- prompt — echoes the entered value -->
+  <button id="show-prompt">Show Prompt</button>
+  <p id="prompt-result"></p>
+
+  <!-- beforeunload is not tested here — browser behaviour varies -->
+
+  <script>
+    document.getElementById('show-alert').addEventListener('click', () => {
+      alert('Hello from alert');
+    });
+
+    document.getElementById('show-confirm').addEventListener('click', () => {
+      const ok = confirm('Are you sure?');
+      document.getElementById('confirm-result').textContent = ok ? 'confirmed' : 'dismissed';
+    });
+
+    document.getElementById('show-prompt').addEventListener('click', () => {
+      const value = prompt('Enter a value', 'default');
+      document.getElementById('prompt-result').textContent = value ?? 'dismissed';
+    });
+  </script>
+</body>
+
+</html>
