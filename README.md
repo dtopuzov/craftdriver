@@ -1,8 +1,14 @@
 # Craftdriver 🍺🍺🍺
 
-Crafted Node.js browser automation built directly on the WebDriver protocol.
+[![CI](https://github.com/dtopuzov/craftdriver/actions/workflows/ci.yml/badge.svg)](https://github.com/dtopuzov/craftdriver/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/craftdriver.svg)](https://www.npmjs.com/package/craftdriver)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Think of it as a modern take on Selenium with automatic waits and ergonomic API, while staying true to the W3C standards so your tests stay stable across real browsers.
+Crafted Node.js browser automation built directly on the WebDriver protocols.
+
+**Playwright-style ergonomics, WebDriver-standard internals.** Auto-waiting,
+semantic locators, and a small public surface — without leaving the W3C spec
+behind, so your tests stay stable across real browsers.
 
 ## Getting started
 
@@ -15,19 +21,17 @@ npm install craftdriver
 You need the appropriate WebDriver binary on your PATH (or as a dev-dependency).
 
 **Chrome / Chromium:**
+
 ```bash
 npm install --save-dev chromedriver
 ```
 
 **Firefox:**
+
 ```bash
 npm install --save-dev geckodriver
 # or: brew install geckodriver
 ```
-
-String selectors are treated as CSS selectors. For semantic locators such as
-text, role, label, or test id, use the `By.*` helpers or `browser.getBy*()`
-methods.
 
 Quick example:
 
@@ -41,12 +45,16 @@ const browser = await Browser.launch({ browserName: 'chrome' });
 // const browser = await Browser.launch({ browserName: 'firefox' });
 
 await browser.navigateTo('http://127.0.0.1:8080/login.html');
-await browser.fill('#username', 'testuser');
+await browser.fill('#username', 'testuser'); // string = CSS selector
 await browser.fill('#password', 'secret');
 await browser.click('#submit');
 await browser.expect('#result').toHaveText('Welcome testuser');
 await browser.quit();
 ```
+
+String selectors are CSS by default. For text, role, label, or test id, use
+the `By.*` helpers or `browser.getBy*()` methods — see
+[Selectors](./docs/selectors.md).
 
 Mobile emulation:
 
@@ -57,13 +65,10 @@ const browser = await Browser.launch({
 });
 ```
 
-Network mocking:
+Network mocking (BiDi is on by default):
 
 ```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  enableBiDi: true,
-});
+const browser = await Browser.launch({ browserName: 'chrome' });
 
 await browser.network.mock('**/api/users', {
   status: 200,
@@ -87,41 +92,48 @@ const browser2 = await Browser.launch({
 
 ### Core Features
 
-- **Simple API** - Easy to use, works as expected
-- **TypeScript-first** - Full type definitions included
-- **Flexible locators** - CSS, XPath, text, role, and semantic selectors that stay stable
-- **Composable Locators** - Lazy, chainable `locator()` API with `.nth()`, `.filter()`, `.all()`
-- **Bulletproof interactions** - Reliable element, mouse, and keyboard control
-- **Auto-waiting** - Smart waits built into all actions
-- **Real browsers** - Test on actual Chrome, Chromium, and Firefox (via geckodriver)
-- **Mobile emulation** - Test responsive designs with device presets (iPhone, Pixel, iPad)
-- **Iframes** - Interact with iframe content via `browser.frame(selector)`
-- **Tabs & popups** - Open with `browser.openPage()`; capture popups with `browser.waitForPage()`
+- **Simple API** — Easy to use, works as expected
+- **TypeScript-first** — Full type definitions included
+- **Flexible locators** — CSS, XPath, text, role, label, alt text, title, and test id
+- **Composable Locators** — Lazy, chainable `locator()` API with `.nth()`, `.filter()`, `.all()`
+- **Auto-waiting** — Smart waits built into every action and assertion
+- **Configurable timeouts** — `setDefaultTimeout()` / `setDefaultNavigationTimeout()`
+- **Built-in assertions** — `browser.expect(selector).toHaveText(...)` etc.
+- **Real browsers** — Tested on Chrome and Firefox (geckodriver) in CI
+- **Mobile emulation** — Device presets (iPhone, Pixel, iPad) plus custom metrics
+- **Iframes** — Interact with iframe content via `browser.frame(selector)`
+- **Tabs & popups** — `browser.openPage()` and `browser.waitForPage()`
+- **Dialogs** — `waitForDialog()`, `acceptDialog()`, `dismissDialog()`
+- **File uploads & downloads** — `element.setInputFiles()` and `browser.waitForDownload()`
+- **Navigation helpers** — `goBack()`, `goForward()`, `reload()`, `content()`, `setContent()`
+- **In-page scripts** — `browser.evaluate()` and `browser.addInitScript()`
 
 ### Advanced Features (BiDi)
 
-- **Browser contexts** - Isolated profiles for multi-user tests with `browser.newContext()`
-- **Session persistence** - Save/load cookies and localStorage
-- **Network mocking** - Intercept and mock HTTP requests
-- **Console/Error logs** - Capture browser console messages
-- **Tracing** - Record network, console, and navigation events to a JSON bundle
+- **Browser contexts** — Isolated profiles for multi-user tests with `browser.newContext()`
+- **Session persistence** — Save/load cookies and localStorage
+- **Network mocking & listeners** — Intercept, mock, or observe traffic with `network.mock()` and `network.on('request' | 'response')`
+- **Console & error logs** — Capture browser console messages and JS errors
+- **Permissions & geolocation** — `grantPermissions()`, `setGeolocation()`
+- **Tracing** — Record network, console, and navigation events to a JSON bundle
 
 ## Documentation
 
-| Guide                                              | Description                                         |
-| -------------------------------------------------- | --------------------------------------------------- |
-| [Getting Started](./docs/getting-started.md)       | Installation, prerequisites, and first test         |
-| [Browser API](./docs/browser-api.md)               | Core browser control: navigation, clicks, forms     |
-| [Element API](./docs/element-api.md)               | ElementHandle methods for interacting with elements |
+| Guide                                              | Description                                                 |
+| -------------------------------------------------- | ----------------------------------------------------------- |
+| [Getting Started](./docs/getting-started.md)       | Installation, prerequisites, and first test                 |
+| [Browser API](./docs/browser-api.md)               | Core browser control: navigation, clicks, forms             |
+| [Element API](./docs/element-api.md)               | ElementHandle methods for interacting with elements         |
 | [Selectors](./docs/selectors.md)                   | CSS, XPath, semantic locators, and composable `Locator` API |
-| [Assertions](./docs/assertions.md)                 | Built-in expect API for testing                     |
-| [Keyboard & Mouse](./docs/keyboard-mouse.md)       | Low-level input simulation                          |
-| [Session Management](./docs/session-management.md) | Cookies, localStorage, and session persistence      |
-| [Screenshots](./docs/screenshots.md)               | Capturing page and element screenshots              |
-| [Mobile Emulation](./docs/mobile-emulation.md)     | Test with mobile device viewports and touch events  |
-| [Browser Contexts](./docs/browser-context.md)      | Isolated user profiles for multi-user testing       |
-| [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture             |
-| [Tracing](./docs/tracing.md)                       | Record events and screenshots to a JSON trace bundle |
+| [Assertions](./docs/assertions.md)                 | Built-in expect API for testing                             |
+| [Keyboard & Mouse](./docs/keyboard-mouse.md)       | Low-level input simulation                                  |
+| [Dialogs](./docs/dialogs.md)                       | Handling `alert`, `confirm`, `prompt`, and `beforeunload`   |
+| [Session Management](./docs/session-management.md) | Cookies, localStorage, and session persistence              |
+| [Screenshots](./docs/screenshots.md)               | Capturing page and element screenshots                      |
+| [Mobile Emulation](./docs/mobile-emulation.md)     | Test with mobile device viewports and touch events          |
+| [Browser Contexts](./docs/browser-context.md)      | Isolated user profiles for multi-user testing               |
+| [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture                     |
+| [Tracing](./docs/tracing.md)                       | Record events and screenshots to a JSON trace bundle        |
 
 ## Contributing
 
