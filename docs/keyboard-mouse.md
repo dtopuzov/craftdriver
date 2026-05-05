@@ -221,3 +221,30 @@ await browser.find('#username').fill('user').press('Tab');
 ```
 
 This is often more convenient than using the global keyboard API.
+
+---
+
+## Touch gestures (mobile emulation)
+
+When running with `mobileEmulation`, two convenience gestures are
+exposed under `browser.gesture`:
+
+```typescript
+// Swipe from one point to another (px coordinates).
+await browser.gesture.swipe({
+  from: [200, 600],
+  to:   [200, 200],
+  durationMs: 300,
+});
+
+// Pinch / zoom centered on a point.
+await browser.gesture.pinch({
+  center: [200, 400],
+  scale: 0.5,      // < 1 zooms out, > 1 zooms in
+  distance: 100,   // initial finger separation, px
+  durationMs: 250,
+});
+```
+
+These wrap the W3C Pointer Actions API with two simulated touch
+pointers. They work whether or not BiDi is enabled.

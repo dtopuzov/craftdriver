@@ -6,6 +6,10 @@ CraftDriver provides multiple ways to locate elements on the page.
 
 The most common way to find elements is using CSS selectors as strings:
 
+> String selectors are always parsed as CSS selectors. Craftdriver does not
+> support Playwright-style selector strings such as `text=Save` or `role=button`.
+> For semantic queries, use `By.*` or `browser.getBy*()`.
+
 ```typescript
 // By ID
 await browser.click('#submit-button');
@@ -57,7 +61,8 @@ browser.find(By.className('btn-primary'));
 
 ### By.name(name)
 
-Locate by the `name` attribute.
+Locate by the `name` attribute (matches the canonical Selenium
+`By.name` locator).
 
 ```typescript
 browser.find(By.name('email'));
@@ -73,16 +78,97 @@ browser.find(By.tagName('h1'));
 // Finds the first <h1> element
 ```
 
-### By.text(text, options?)
+### By.attr(name, value)
 
-Locate by visible text content.
+Locate by an arbitrary attribute and value.
 
 ```typescript
-// Exact match
+browser.find(By.attr('role', 'dialog'));
+// Equivalent to: browser.find('[role="dialog"]')
+```
+
+### By.dataAttr(name, value)
+
+Locate by a `data-*` attribute. Pass the suffix only — `data-` is added
+for you.
+
+```typescript
+browser.find(By.dataAttr('state', 'open'));
+// Equivalent to: browser.find('[data-state="open"]')
+```
+
+### By.aria(name, value)
+
+Locate by an `aria-*` attribute. Pass the suffix only — `aria-` is added
+for you. Use `By.role()` / `getByRole()` for role + accessible-name
+matching; use this helper when you need a specific ARIA state or
+property.
+
+```typescript
+browser.find(By.aria('expanded', 'true'));
+// Equivalent to: browser.find('[aria-expanded="true"]')
+```
+
+### By.testId(value)
+
+Locate by `data-testid` attribute.
+
+```typescript
+browser.find(By.testId('submit-button'));
+// Equivalent to: browser.find('[data-testid="submit-button"]')
+```
+
+### By.text(text, options?)
+
+Locate by visible text content. Defaults: `exact: true`,
+`caseSensitive: true`, `trim: true`.
+
+```typescript
+// Exact match (whitespace-normalised)
 browser.find(By.text('Submit Order'));
 
-// Partial match
+// Substring match — equivalent to By.partialText('Submit')
 browser.find(By.text('Submit', { exact: false }));
+
+// Case-insensitive
+browser.find(By.text('submit order', { caseSensitive: false }));
+```
+
+> **`By.text` and `getByText` are the same vocabulary.**
+> `getByText(text, opts)` is just `By.text(text, opts)`. Pass
+> `{ exact: false }` on either to get substring matching;
+> `By.partialText` remains as the lower-level entry point if you prefer
+> to be explicit.
+
+### By.partialText(substring, options?)
+
+Locate the innermost element whose visible text contains `substring`.
+Equivalent to `By.text(substring, { exact: false })`. Defaults:
+`caseSensitive: true`, `trim: true`.
+
+```typescript
+browser.find(By.partialText('Submit'));
+browser.find(By.partialText('error', { caseSensitive: false }));
+```
+
+### By.altText(text, options?)
+
+Locate `<img>`, `<area>`, or `<input type="image">` by `alt` text.
+Defaults: `exact: true`.
+
+```typescript
+browser.find(By.altText('Company logo'));
+browser.find(By.altText('logo', { exact: false }));
+```
+
+### By.title(text, options?)
+
+Locate by the `title` attribute (browser tooltip text). Defaults:
+`exact: true`.
+
+```typescript
+browser.find(By.title('Open in new tab'));
+browser.find(By.title('Open', { exact: false }));
 ```
 
 ### By.xpath(expression)
@@ -109,6 +195,22 @@ browser.getByRole('checkbox', { name: 'Remember me' });
 browser.getByRole('link', { name: 'Learn more' });
 ```
 
+Options:
+
+| Option          | Type      | Default | Description                                           |
+| --------------- | --------- | ------- | ----------------------------------------------------- |
+| `name`          | `string`  | —       | Accessible name (`aria-label` or visible text).       |
+| `exact`         | `boolean` | `true`  | If `false`, substring-match the accessible name.      |
+| `includeHidden` | `boolean` | `false` | Match elements with `hidden` or `aria-hidden="true"`. |
+
+```typescript
+// Default: skip elements marked hidden / aria-hidden
+browser.getByRole('button', { name: 'Close' });
+
+// Include hidden elements (e.g., off-canvas menus, collapsed sections)
+browser.getByRole('button', { name: 'Close', includeHidden: true });
+```
+
 ### getByText(text, options?)
 
 Locate by visible text.
@@ -120,6 +222,10 @@ browser.getByText('Welcome to our site');
 // Partial match
 browser.getByText('Welcome', { exact: false });
 ```
+
+> **Heads-up for Playwright users.** Craftdriver's `getByText` defaults
+> to **exact** matching, while Playwright's defaults to substring. Pass
+> `{ exact: false }` for substring behaviour.
 
 ### getByLabel(text, options?)
 
@@ -198,6 +304,52 @@ await browser.find('.product-card .add-to-cart').click();
 await browser.find('.product-card:nth-child(1) .add-to-cart').click();
 await browser.find('.product-card:nth-child(2) .add-to-cart').click();
 ```
+
+## Locators (lazy & chainable)
+
+`browser.locator(selector)` returns a `Locator` — a lazy, re-resolving handle that
+supports composition, filtering, and indexed access.
+
+Use `find()` for a single one-shot element, `findAll()` for the simple array case,
+and `locator()` when you need composition or want to pick from a list.
+
+```typescript
+import { Browser } from 'craftdriver';
+
+// Count matching elements
+const n = await browser.locator('.product').count();
+
+// Pick by index (0-based)
+await browser.locator('.buy-btn').first().click();
+await browser.locator('.buy-btn').last().click();
+await browser.locator('.buy-btn').nth(2).click();
+
+// Filter by text content
+await browser.locator('.product').filter({ hasText: 'Pro' }).locator('.buy-btn').click();
+
+// Filter by presence of a child locator
+const hasPromo = browser.locator('.badge');
+const promoCards = browser.locator('.card').filter({ has: hasPromo });
+await promoCards.first().click();
+
+// Chain into a child element
+await browser.locator('.card').nth(0).locator('button').click();
+
+// Get all matching elements as snapshot handles
+const handles = await browser.locator('.product').all();
+const texts = await Promise.all(handles.map(h => h.text()));
+
+// Simple array shortcut (no filtering)
+const allButtons = await browser.findAll('.buy-btn');
+```
+
+### Assertions on locators
+
+```typescript
+await browser.locator('#result').expect().toHaveText('Done');
+await browser.locator('.error').expect().not.toBeVisible();
+```
+
 
 ### Form Controls
 

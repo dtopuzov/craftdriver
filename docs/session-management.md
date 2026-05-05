@@ -6,17 +6,6 @@ Craftdriver supports Playwright-style session persistence, allowing you to save 
 - **Sharing auth state** - Generate auth state in setup, use in parallel tests
 - **Debugging** - Capture session state at any point
 
-## Prerequisites
-
-Session management requires BiDi to be enabled:
-
-```typescript
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  enableBiDi: true, // Required for session management
-});
-```
-
 ## Saving Session State
 
 ```typescript
@@ -38,7 +27,7 @@ The saved file contains:
   "cookies": [
     {
       "name": "session",
-      "value": { "type": "string", "value": "abc123" },
+      "value": "abc123",
       "domain": "example.com",
       "path": "/",
       "secure": true,
@@ -69,8 +58,7 @@ The most common pattern - launch a browser with existing session:
 ```typescript
 const browser = await Browser.launch({
   browserName: 'chrome',
-  enableBiDi: true,
-  storageState: './session.json', // Pre-load session on launch
+  storageState: './session.json',
 });
 
 // Navigate directly to authenticated page
@@ -118,10 +106,7 @@ await browser.storage.clearCookies({ domain: 'example.com' });
 import { Browser } from 'craftdriver';
 
 async function generateAuth() {
-  const browser = await Browser.launch({
-    browserName: 'chrome',
-    enableBiDi: true,
-  });
+  const browser = await Browser.launch({ browserName: 'chrome' });
 
   await browser.navigateTo('https://myapp.com/login');
   await browser.fill('#username', process.env.TEST_USER!);
@@ -155,7 +140,6 @@ describe('Dashboard', () => {
     // Launch with saved auth - already logged in!
     browser = await Browser.launch({
       browserName: 'chrome',
-      enableBiDi: true,
       storageState: './auth.json',
     });
   });
@@ -187,10 +171,7 @@ import { Browser } from 'craftdriver';
 
 async function testLoginPersistence() {
   // First browser: Log in and save state
-  let browser = await Browser.launch({
-    browserName: 'chrome',
-    enableBiDi: true,
-  });
+  let browser = await Browser.launch({ browserName: 'chrome' });
 
   await browser.navigateTo('http://localhost:3000/login');
   await browser.fill('#username', 'testuser');
@@ -204,7 +185,6 @@ async function testLoginPersistence() {
   // Second browser: Load state and verify logged in
   browser = await Browser.launch({
     browserName: 'chrome',
-    enableBiDi: true,
     storageState: './session.json',
   });
 

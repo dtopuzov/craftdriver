@@ -95,15 +95,31 @@ await browser.find('#result').expect().toHaveText('Login successful');
 
 ## Waiting Behavior
 
-All assertions automatically wait for the condition to be true, with a configurable timeout:
+All assertions automatically wait for the condition to be true, up to a configurable timeout.
 
 ```typescript
-// Default timeout
+// Uses the browser-level default (5000 ms unless changed)
 await browser.expect('#loading').not.toBeVisible();
 
-// Custom timeout (coming soon)
-// await browser.expect('#data').toHaveText('Loaded', { timeout: 10000 });
+// Per-call timeout override
+await browser.expect('#data').toHaveText('Loaded', { timeout: 10000 });
+await browser.expect('#modal').toBeVisible({ timeout: 2000 });
+await browser.expect('#result').toContainText('success', { timeout: 8000 });
 ```
+
+### Changing the default timeout
+
+Use `browser.setDefaultTimeout()` to raise or lower the default for **all**
+subsequent assertions (and actions) on that browser instance:
+
+```typescript
+browser.setDefaultTimeout(10000); // all assertions now wait up to 10 s by default
+
+await browser.expect('#slow-widget').toBeVisible(); // uses 10 s
+await browser.expect('#fast-check').toHaveText('ok', { timeout: 500 }); // per-call wins
+```
+
+See [Browser API — Configuring timeouts](./browser-api.md#configuring-timeouts) for full details.
 
 ## Examples
 
