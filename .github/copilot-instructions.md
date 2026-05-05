@@ -1,195 +1,120 @@
-# Copilot usage guidelines for this repo
+# Copilot guidelines for craftdriver
 
-These conventions help keep tests and API consistent. Please follow them when generating code in this repository.
+Principles for working in this repo. Sources of truth (the API, the file
+layout) live in the code itself — read it before assuming.
 
-## Test Conventions
+---
 
-- Vitest timeouts: do not set per-test timeouts in `it()` or hooks. The global defaults are configured in `vitest.config.ts` (testTimeout, hookTimeout, teardownTimeout).
-- Test names: do not prefix test names with numbers. Use descriptive, human-readable names.
-- Cleanup: do not wrap `await browser.quit()` in try/catch in tests. Let failures surface.
-- Base URL constant: use `EXAMPLES_BASE_URL` and `BROWSER_NAME` from `tests/utils.ts` instead of reading `process.env` in each test file.
+## What this project is
 
-## Browser API - Complete Reference
+A pragmatic, BiDi-first WebDriver automation library for Node.js.
+Vision: **Playwright's ergonomics, WebDriver's standards-compliance, only
+the API users actually need.** Minimal surface, powerful internals.
 
-IMPORTANT: Only use the APIs listed below. Do NOT invent or assume APIs exist.
+When implementing a feature, use the current code in `src/`, the public
+exports in `src/index.ts`, the tests in `tests/`, and the user docs in
+`docs/` as the source of truth.
 
-### Browser Launch and Lifecycle
+## How to find your way around
 
-```typescript
-const browser = await Browser.launch({ browserName: BROWSER_NAME });
-const browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: true });
-const browser = await Browser.launch({ browserName: BROWSER_NAME, storageState: './auth.json' });
-await browser.quit();
+Don't take a stale repo map's word for it — these are the only stable rules:
+
+- **Public API:** what `src/index.ts` exports. If it isn't exported there,
+  it isn't public.
+- **Source:** all library code lives under `src/lib/`. BiDi-specific code
+  in `src/lib/bidi/`.
+- **Tests:** `tests/*.test.ts`, one file per feature. Conventions in
+  `.github/instructions/tests.instructions.md`.
+- **Test fixtures:** static HTML pages in `examples/`, served by
+  `npm run examples:start` on `127.0.0.1:8080`.
+- **User docs:** `docs/*.md`. Each doc page maps to a feature area.
+  Only document **shipped** features here.
+- **Research / future-work plans:** `research/*.md`. Forward-looking
+  proposals, gap analyses, and design notes for unimplemented features
+  live here, not in `docs/`. Promote a research note to `docs/` only
+  when the feature ships.
+
+When in doubt about the API surface, run `cat src/index.ts` — never
+trust documentation that contradicts it.
+
+## Dev workflow
+
+```bash
+npm run examples:start   # terminal 1 — keep running before any test
+npm test                 # terminal 2
+npm run lint
 ```
 
-### Navigation
+The examples server **must be running** before `npm test`. Tests fetch
+HTML pages from `127.0.0.1:8080`; without the server you get
+`ECONNREFUSED`, not a useful failure.
 
-```typescript
-await browser.navigateTo(url);
-const currentUrl = await browser.url();
-const pageTitle = await browser.title();
-```
+## Adding a feature — the only checklist that matters
 
-### Element Interaction (Direct Browser Methods)
+A change is not done until **all** of these are true:
 
-```typescript
-await browser.click('#selector');
-await browser.fill('#selector', 'text');
-await browser.clear('#selector');
-const value = await browser.getValue('#selector');
-const attr = await browser.getAttribute('#selector', 'attributeName');
-```
+- [ ] Code lives under `src/lib/`; new public symbols re-exported from `src/index.ts`.
+- [ ] Tests in `tests/<feature>.test.ts` cover happy path, options, and error paths.
+- [ ] If tests need a target page, the HTML fixture exists in `examples/`.
+- [ ] User-facing docs in `docs/` updated with a working snippet.
+- [ ] `npm run lint` passes with zero errors.
+- [ ] `npm test` passes with the examples server running.
+- [ ] An `Unreleased` line was added to `CHANGELOG.md`.
 
-### Element Handle (via browser.find())
+## Design principles
 
-```typescript
-const element = browser.find('#selector');
-await element.click();
-await element.fill('text');
-await element.clear();
-await element.press('Enter'); // Key names: 'Enter', 'Tab', 'Escape', 'Backspace', etc.
-await element.hover(); // Move mouse to element center
-await element.select('value'); // Select option by value (only for <select> elements)
-const text = await element.text();
-const value = await element.value();
-const attr = await element.getAttribute('name');
-const visible = await element.isVisible();
-const enabled = await element.isEnabled();
-const checked = await element.isChecked();
-const box = await element.boundingBox();
-await element.screenshot('element.png');
-element.expect().toHaveText('...'); // Element-scoped assertion
-```
+These survive refactors. Honour them when adding *or* changing code.
 
-⚠️ ElementHandle methods:
+1. **Pragmatic minimalism.** Before adding a public symbol, check whether
+   an existing one can be extended. One good concept beats three ad-hoc
+   helpers. Don't grow the API just because Playwright has the feature.
 
-- `hover()` - Moves mouse to element center (works on any element)
-- `select(value)` - Only for `<select>` elements. Throws error if used on other elements.
-- No `findParent()` or `findChild()` - use direct CSS selectors instead
+2. **BiDi-first, Classic as fallback.** New capabilities (network, logs,
+   downloads, init scripts, real load events) belong on BiDi. Use Classic
+   WebDriver only when BiDi can't do the thing, and isolate the fallback
+   behind the same public method.
 
-### Playwright-style Locators
+3. **Auto-waiting is the default.** Every action and assertion waits up
+   to a configurable timeout. Never expose a "non-waiting" variant of a
+   user-facing API; that's a footgun.
 
-```typescript
-browser.getByRole('button', { name: 'Submit' });
-browser.getByText('Hello World');
-browser.getByText('partial', { exact: false });
-browser.getByLabel('Username');
-browser.getByPlaceholder('Enter email');
-browser.getByTestId('submit-btn');
-```
+4. **The user-facing API is the contract.** Internals can be rewritten
+   freely. Public methods, options, and exported types must not break
+   without a major-version bump.
 
-### Assertions (via browser.expect())
+5. **Errors are signposts.** Every thrown `Error` should say what was
+   expected, what was found, and (if useful) how to fix it. No silent
+   fallbacks; warn loudly when degrading to a fallback path.
 
-```typescript
-await browser.expect('#selector').toHaveText('exact text');
-await browser.expect('#selector').toContainText('partial');
-await browser.expect('#selector').toHaveValue('input value');
-await browser.expect('#selector').toBeVisible();
-await browser.expect('#selector').not.toBeVisible();
-await browser.expect('#selector').toHaveAttribute('href', '/path');
-```
+## Working with refactors
 
-### Waiting
+- Treat one-line "we always do X" claims with skepticism. Verify against
+  the current code (`src/`) before relying on them.
+- Update docs and tests as part of the same change. Stale docs are worse
+  than missing docs.
+- Prefer small, API-preserving refactors unless a breaking change is
+  explicitly intended and documented.
 
-```typescript
-await browser.waitForVisible('#selector');
-await browser.waitForHidden('#selector');
-await browser.waitForAttached('#selector');
-await browser.waitForDetached('#selector');
-await browser.pause(1000); // pause for 1 second
-await browser.waitFor(async () => someCondition);
-```
+## Scoped instructions
 
-### Keyboard
+More specific rules live in `.github/instructions/*.instructions.md`,
+auto-attached by VS Code when you edit matching files:
 
-```typescript
-await browser.keyboard.press('Enter');
-await browser.keyboard.type('text to type');
-await browser.keyboard.down('Shift');
-await browser.keyboard.up('Shift');
-```
+- `tests/**` → test conventions and the testing philosophy.
+- `examples/**` → fixture HTML conventions.
+- `src/**` → source-code conventions.
 
-### Mouse
+Read the scoped file when working in that area. Don't duplicate its
+content here.
 
-```typescript
-await browser.mouse.click(100, 200);
-await browser.mouse.move(100, 200);
-await browser.mouse.down();
-await browser.mouse.up();
-await browser.mouse.wheel(0, 100); // scroll
-await browser.mouse.dragAndDrop({ x: 0, y: 0 }, { x: 100, y: 100 });
-```
+## Self-verification before reporting done
 
-### Screenshots
+Before saying a task is complete:
 
-```typescript
-const buffer = await browser.screenshot();
-const elementBuffer = await browser.screenshot('#selector');
-await browser.saveScreenshot('page.png');
-await browser.saveScreenshot('element.png', '#selector');
-```
+1. `npm run lint` — must exit 0.
+2. `npm test` with the examples server running — must exit 0.
+3. Re-read the changed docs/tests/API surface and confirm they still match.
+4. List the exact files changed in the response.
 
-### Session State (Playwright-style)
+If any step fails, fix it. Don't mark the task complete on green CI alone.
 
-```typescript
-await browser.saveState('./session.json');
-await browser.saveState('./session.json', { includeLocalStorage: false });
-await browser.saveState('./session.json', { includeCookies: false });
-await browser.loadState('./session.json');
-```
-
-### BiDi Features (when enableBiDi: true)
-
-```typescript
-// Network mocking
-await browser.network.mock('**/api/users', { status: 200, body: { users: [] } });
-await browser.network.intercept('**/api/**', async (request) => modifiedRequest);
-browser.network.removeIntercept('**/api/users');
-
-// Console/Error logs
-const messages = browser.logs.getMessages(); // Returns: { level, text, timestamp }[]
-const errors = browser.logs.getErrors(); // Returns: { message, type, stack, timestamp }[]
-browser.logs.clearMessages();
-browser.logs.clearErrors();
-```
-
-## Best Practices
-
-1. **Prefer exact CSS selectors over chaining**: Use `browser.click('#specific-button-id')` instead of chaining methods.
-
-2. **Add IDs to test HTML elements**: When creating example HTML pages, add unique IDs to buttons and interactive elements for easy test targeting.
-
-3. **Use browser methods for simple interactions**: Prefer `browser.click()`, `browser.fill()` over `browser.find().click()` for single operations.
-
-4. **Use ElementHandle for multi-step element operations**: When you need to perform multiple actions on the same element:
-
-   ```typescript
-   await browser.find('#input').fill('text').press('Enter');
-   ```
-
-5. **For native `<select>` dropdowns**: Use the `select()` method:
-
-   ```typescript
-   await browser.find('#language').select('es');
-   ```
-
-6. **For hover interactions**: Use the `hover()` method on elements:
-
-   ```typescript
-   await browser.find('#menu-item').hover();
-   ```
-
-7. **No legacy Selenium-style APIs**: Don't use `driver.findElement()`, `element.sendKeys()`, etc. Use the simplified Browser API.
-
-## Common Mistakes to Avoid
-
-❌ `browser.find('#el').findParent('.card')` - findParent doesn't exist
-❌ `browser.find('#button').select('option')` - select only works on `<select>` elements
-❌ `browser.wait(5000)` - use browser.pause(5000) instead
-❌ Setting per-test timeouts in it() calls
-❌ `await browser.click('#dropdown option[value="es"]')` when you have a native `<select>`
-
-✅ Use direct CSS selectors: `browser.click('.card button.danger')`
-✅ Use browser.pause() for delays
-✅ Use `element.hover()` for hover interactions
-✅ Use `element.select(value)` for `<select>` elements
