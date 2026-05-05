@@ -32,7 +32,12 @@ jobs:
       - name: Wait for server
         run: timeout 2m bash -c "until curl -I http://127.0.0.1:8080/login.html; do sleep 1; done"
 
-      - name: Run tests
+      - name: Run tests (Chrome)
         run: npm test
+        env:
+          HEADLESS: true
+
+      - name: Run tests (Firefox)
+        run: npm run test:firefox
         env:
           HEADLESS: true
