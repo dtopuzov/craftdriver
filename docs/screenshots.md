@@ -1,164 +1,146 @@
 # Screenshots
 
-CraftDriver provides methods to capture screenshots of the page or individual elements.
+craftdriver exposes a single options-bag `screenshot()` method on both
+`Browser` and `ElementHandle`. PNG bytes are always returned as a
+`Buffer`; pass `path` to also write the file in one step.
 
-## Page Screenshots
+## Page screenshots
 
-### screenshot()
+### `browser.screenshot(opts?)`
 
-Capture the visible viewport and return as a Buffer.
+| Option     | Type                | Default      | Notes                                            |
+| ---------- | ------------------- | ------------ | ------------------------------------------------ |
+| `path`     | `string`            | —            | Write the PNG to this file path.                 |
+| `selector` | `string \| By`      | full viewport| If set, capture only the matching element.       |
+| `fullPage` | `boolean`           | `false`      | Capture the entire scrollable document. Requires BiDi. |
+| `timeout`  | `number` (ms)       | default      | Wait timeout when locating `selector`.           |
+
+`fullPage` and `selector` are mutually exclusive.
 
 ```typescript
+// Viewport only (default), buffer
 const buffer = await browser.screenshot();
+
+// Viewport, written to disk
+await browser.screenshot({ path: 'screenshots/homepage.png' });
+
+// Whole scrollable document (BiDi `browsingContext.captureScreenshot`
+// with `origin: "document"`).
+await browser.screenshot({ fullPage: true, path: 'screenshots/full.png' });
+
+// One element by CSS selector
+const chart = await browser.screenshot({ selector: '#sales-chart' });
+
+// One element, written to disk
+await browser.screenshot({
+  selector: '#sales-chart',
+  path: 'screenshots/chart.png',
+});
 ```
 
-### saveScreenshot(path)
+#### Full-page vs viewport
 
-Capture the viewport and save directly to a file.
+Viewport capture (`fullPage: false`, the default) uses the W3C Classic
+`Take Screenshot` endpoint and is bounded by the visible viewport.
+Full-page capture uses BiDi `browsingContext.captureScreenshot` with
+`origin: "document"` and produces a PNG sized to the full scrollable
+content — useful for visual diffs of long pages and for archiving the
+complete rendered output. Full-page capture requires `enableBiDi: true`
+(the default); on Classic-only sessions it throws.
+
+## Element screenshots
+
+### `element.screenshot(opts?)`
+
+| Option    | Type        | Default | Notes                              |
+| --------- | ----------- | ------- | ---------------------------------- |
+| `path`    | `string`    | —       | Write the PNG to this file path.   |
+| `timeout` | `number`    | default | Element resolution timeout.        |
 
 ```typescript
-await browser.saveScreenshot('screenshots/homepage.png');
+const buffer = await browser.find('#product-image').screenshot();
+await browser.find('#logo').screenshot({ path: 'logo.png' });
 ```
 
-## Element Screenshots
+## Use cases
 
-### screenshot(selector)
-
-Capture a specific element as a Buffer.
+### Test failure documentation
 
 ```typescript
-const chartBuffer = await browser.screenshot('#sales-chart');
-```
-
-### saveScreenshot(path, selector)
-
-Capture a specific element and save to file.
-
-```typescript
-await browser.saveScreenshot('screenshots/chart.png', '#sales-chart');
-```
-
-### Element Handle Screenshot
-
-Use the `screenshot()` method on an ElementHandle:
-
-```typescript
-await browser.find('#product-image').screenshot('product.png');
-```
-
-## Use Cases
-
-### Test Failure Documentation
-
-Capture screenshots when tests fail:
-
-```typescript
-import { Browser } from 'craftdriver';
-import { test, expect, afterEach } from 'vitest';
-
-let browser: Browser;
-
 afterEach(async (context) => {
   if (context.task.result?.state === 'fail') {
     const name = context.task.name.replace(/\s+/g, '-');
-    await browser.saveScreenshot(`screenshots/${name}.png`);
+    await browser.screenshot({ path: `screenshots/${name}.png` });
   }
   await browser.quit();
 });
-
-test('login flow', async () => {
-  browser = await Browser.launch({ browserName: 'chrome' });
-  // ... test code
-});
 ```
 
-### Visual Comparison Baseline
-
-Capture baseline images for visual regression testing:
+### Visual comparison baseline
 
 ```typescript
 await browser.navigateTo('https://example.com');
-await browser.saveScreenshot('baseline/homepage.png');
+await browser.screenshot({ path: 'baseline/homepage.png' });
 
-// Later, compare with:
+// Later, capture the candidate and diff with an image library:
 await browser.navigateTo('https://example.com');
-await browser.saveScreenshot('current/homepage.png');
-// Use image comparison library to diff
+await browser.screenshot({ path: 'current/homepage.png' });
 ```
 
-### Component Screenshots
-
-Capture individual components for documentation or review:
+### Component screenshots
 
 ```typescript
-// Capture each component
-await browser.saveScreenshot('components/header.png', 'header');
-await browser.saveScreenshot('components/sidebar.png', '.sidebar');
-await browser.saveScreenshot('components/footer.png', 'footer');
+await browser.screenshot({ selector: 'header',   path: 'components/header.png' });
+await browser.screenshot({ selector: '.sidebar', path: 'components/sidebar.png' });
+await browser.screenshot({ selector: 'footer',   path: 'components/footer.png' });
 ```
 
-### Screenshot Before Action
-
-Document state before critical actions:
+### Before / after an action
 
 ```typescript
-// Before submitting
-await browser.saveScreenshot('before-submit.png', '#order-form');
-
+await browser.screenshot({ selector: '#order-form', path: 'before-submit.png' });
 await browser.find('#submit-order').click();
-
-// After submission
-await browser.waitForVisible('#confirmation');
-await browser.saveScreenshot('after-submit.png', '#confirmation');
+await browser.expect('#confirmation').toBeVisible();
+await browser.screenshot({ selector: '#confirmation', path: 'after-submit.png' });
 ```
 
 ## Tips
 
-### Create Screenshot Directory
+### Create the screenshot directory
 
-Ensure the target directory exists:
+`screenshot({ path })` writes through `fs.writeFile`; the parent
+directory must already exist:
 
 ```typescript
 import { mkdir } from 'fs/promises';
-
 await mkdir('screenshots', { recursive: true });
-await browser.saveScreenshot('screenshots/test.png');
+await browser.screenshot({ path: 'screenshots/test.png' });
 ```
 
-### Timestamp Screenshots
-
-Include timestamps for unique filenames:
+### Timestamped filenames
 
 ```typescript
-const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-await browser.saveScreenshot(`screenshots/page-${timestamp}.png`);
+const ts = new Date().toISOString().replace(/[:.]/g, '-');
+await browser.screenshot({ path: `screenshots/page-${ts}.png` });
 ```
 
-### Wait for Stability
-
-Wait for animations or loading to complete before capturing:
+### Wait for stability
 
 ```typescript
 await browser.navigateTo('https://example.com');
-await browser.waitForVisible('#main-content');
-await browser.pause(500); // Wait for animations
-await browser.saveScreenshot('stable-page.png');
+await browser.expect('#main-content').toBeVisible();
+await browser.screenshot({ path: 'stable-page.png' });
 ```
 
-## Buffer Usage
+## Buffer usage
 
-When you get a screenshot as a Buffer, you can:
+When you only need bytes (uploading, image diffing), omit `path`:
 
 ```typescript
 const buffer = await browser.screenshot();
 
-// Save manually
 import { writeFile } from 'fs/promises';
 await writeFile('screenshot.png', buffer);
 
-// Upload to a service
 await uploadToS3(buffer, 'screenshots/latest.png');
-
-// Base64 encode
-const base64 = buffer.toString('base64');
 ```

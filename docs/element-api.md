@@ -13,6 +13,10 @@ const button = browser.find(By.text('Submit'));
 await browser.find('#input').fill('text').press('Enter');
 ```
 
+> **Tip:** Use `browser.locator(selector)` instead of `find()` when you need
+> composition, filtering, or indexed access (`.nth()`, `.filter()`, `.all()`).
+> See [Selectors & Locators](./selectors.md#locators-lazy--chainable).
+
 ## Methods
 
 ### click()
@@ -140,16 +144,17 @@ const box = await browser.find('#target').boundingBox();
 // { x: 100, y: 200, width: 300, height: 50 }
 ```
 
-### screenshot(path?)
+### screenshot(opts?)
 
-Take a screenshot of just this element.
+Take a screenshot of just this element. Returns the PNG bytes as a
+`Buffer`; pass `path` to also write the file in one step.
 
 ```typescript
 // Get as buffer
 const buffer = await browser.find('#chart').screenshot();
 
 // Save to file
-await browser.find('#logo').screenshot('logo.png');
+await browser.find('#logo').screenshot({ path: 'logo.png' });
 ```
 
 ### expect()

@@ -2,6 +2,14 @@
 
 CraftDriver supports mobile device emulation using Chrome's built-in mobile emulation feature. This allows you to test responsive designs and mobile-specific behavior.
 
+> **Chrome / Chromium only.** Mobile emulation maps to the
+> `goog:chromeOptions.mobileEmulation` capability — a Chromium-specific
+> extension to WebDriver. Firefox / geckodriver expose no equivalent
+> API, so passing `mobileEmulation` together with
+> `browserName: 'firefox'` throws a clear error at launch. For mobile
+> testing on Firefox, use a real device or Firefox's responsive design
+> mode manually.
+
 ## Quick Start
 
 ```typescript
@@ -128,7 +136,7 @@ for (const vp of viewports) {
   });
 
   await browser.navigateTo('https://example.com');
-  await browser.saveScreenshot(`screenshot-${vp.name}.png`);
+  await browser.screenshot({ path: `screenshot-${vp.name}.png` });
   await browser.quit();
 }
 ```
@@ -162,7 +170,6 @@ Mobile emulation works alongside BiDi features:
 ```typescript
 const browser = await Browser.launch({
   browserName: 'chrome',
-  enableBiDi: true,
   mobileEmulation: 'Pixel 7',
 });
 

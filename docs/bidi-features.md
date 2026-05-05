@@ -1,19 +1,35 @@
 # BiDi Features
 
-CraftDriver supports the WebDriver BiDi protocol for advanced browser control including network interception and browser logs.
+CraftDriver is built on the WebDriver BiDi protocol, giving you network interception, browser log capture, and precise load-state detection out of the box.
 
-## Enabling BiDi
+> **Browser support in craftdriver:** Chrome, Chromium, and Firefox.
 
-Enable BiDi when launching the browser:
+---
 
-```typescript
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  enableBiDi: true,
-});
-```
+## Feature matrix
 
-> **Note:** BiDi requires a browser with WebDriver BiDi support. Chrome 115+ and Firefox 121+ support BiDi.
+Most of craftdriver works against both BiDi and Classic WebDriver. The
+features below are **BiDi-only** — they require `enableBiDi: true`
+(the default) and a browser that successfully negotiates a BiDi
+WebSocket. Calling them after BiDi negotiation failed throws a clear
+error; gate them with `browser.isBiDiEnabled()` if your code may run
+in Classic mode.
+
+| Capability | API | BiDi-only? |
+|---|---|---|
+| Network mocking / interception | [`browser.network.*`](#network-mocking) | yes |
+| Console & error log capture | [`browser.logs.*`](#console--error-logs) | yes |
+| `waitForLoadState('load' \| 'domcontentloaded' \| 'networkidle')` | `browser.waitForLoadState()` | yes |
+| `navigateTo(..., { waitUntil })` real load events | `browser.navigateTo()` | yes |
+| `waitForRequest()` / `waitForResponse()` | `browser.waitForRequest()` / `waitForResponse()` | yes |
+| Init scripts (run before any page script) | `browser.addInitScript()` | yes |
+| Open new tab / popup | `browser.openPage()` | yes |
+| Capture popup opened by an action | `browser.waitForPage()` | yes |
+| Isolated user contexts (incognito profiles) | `browser.newContext()` / `browser.contexts()` | yes |
+| Downloads | `browser.waitForDownload()` | yes |
+| Tracing | `browser.startTrace()` / `browser.stopTrace()` | yes |
+| Storage state (cookies + localStorage) | `browser.storage.*`, `saveState()`, `loadState()` | no — works in Classic too |
+| Element actions, locators, assertions, frames, dialogs, screenshots, keyboard/mouse, mobile emulation | rest of the API | no — works in Classic too |
 
 ---
 
@@ -141,16 +157,84 @@ await browser.expect('#loading-spinner').toBeVisible();
 
 ---
 
+## Waiting for Network
+
+`browser.waitForRequest` and `browser.waitForResponse` let you observe real network
+traffic without intercepting it. Register them **before** the action that triggers
+the request — the canonical pattern is `Promise.all`:
+
+```typescript
+const [response] = await Promise.all([
+  browser.waitForResponse('**/api/users'),
+  browser.click('#load-users'),
+]);
+expect(response.status).toBe(200);
+```
+
+Both accept a URL **glob** (same `**` syntax as `network.mock`) or a **predicate**:
+
+```typescript
+// Glob — matches by pathname
+const [res] = await Promise.all([
+  browser.waitForResponse('**/api/users'),
+  browser.click('#load-users'),
+]);
+
+// Predicate — full control over matching
+const [res2] = await Promise.all([
+  browser.waitForResponse(r => r.url.includes('/api/users') && r.status === 200),
+  browser.click('#load-users'),
+]);
+```
+
+### waitForResponse(pattern, opts?)
+
+Resolves with an `InterceptedResponse` once a matching completed response arrives.
+
+| Property    | Type                       | Description                           |
+| ----------- | -------------------------- | ------------------------------------- |
+| `url`       | `string`                   | Full request URL                      |
+| `status`    | `number`                   | HTTP status code                      |
+| `statusText`| `string`                   | E.g. `"OK"`                           |
+| `headers`   | `Record<string, string>`   | Response headers                      |
+| `mimeType`  | `string`                   | E.g. `"application/json"`             |
+| `fromCache` | `boolean`                  | Whether served from browser cache     |
+| `request`   | `{ id, url, method, headers }` | Matching request info             |
+
+### waitForRequest(pattern, opts?)
+
+Resolves with an `InterceptedRequest` as soon as the browser sends the request
+(before a response arrives). Useful for asserting that a request was made with
+the right method/headers without waiting for the response.
+
+| Property  | Type                     | Description            |
+| --------- | ------------------------ | ---------------------- |
+| `id`      | `string`                 | BiDi request id        |
+| `url`     | `string`                 | Full URL               |
+| `method`  | `string`                 | `"GET"`, `"POST"`, …   |
+| `headers` | `Record<string, string>` | Request headers        |
+
+### Timeout
+
+Both methods accept `{ timeout?: number }` (defaults to the browser navigation
+timeout, 30 s). On timeout a clear error is thrown:
+
+```
+waitForResponse("**/api/users") timed out after 30000ms
+```
+
+---
+
 ## Console & Error Logs
 
 Access browser console output and JavaScript errors via `browser.logs`.
 
-### getConsoleLogs()
+### getMessages()
 
 Get all console messages.
 
 ```typescript
-const messages = browser.logs.getConsoleLogs();
+const messages = browser.logs.getMessages();
 
 for (const msg of messages) {
   console.log(`[${msg.level}] ${msg.text}`);
@@ -263,7 +347,7 @@ expect(errors).toHaveLength(0);
 ```typescript
 await browser.find('#track-event').click();
 
-const messages = browser.logs.getConsoleLogs();
+const messages = browser.logs.getMessages();
 const trackingLogs = messages.filter((m) => m.text.includes('Analytics event:'));
 
 expect(trackingLogs.length).toBeGreaterThan(0);
@@ -273,10 +357,7 @@ expect(trackingLogs.length).toBeGreaterThan(0);
 
 ```typescript
 test('form submission', async () => {
-  const browser = await Browser.launch({
-    browserName: 'chrome',
-    enableBiDi: true,
-  });
+  const browser = await Browser.launch({ browserName: 'chrome' });
 
   try {
     await browser.navigateTo('https://example.com/form');
@@ -284,7 +365,7 @@ test('form submission', async () => {
     await browser.expect('#success').toBeVisible();
   } catch (error) {
     // On failure, log browser console output
-    console.log('Console messages:', browser.logs.getConsoleLogs());
+    console.log('Console messages:', browser.logs.getMessages());
     console.log('JS errors:', browser.logs.getErrors());
     throw error;
   } finally {
@@ -297,7 +378,7 @@ test('form submission', async () => {
 
 ## Session Storage
 
-Manage cookies and browser storage via `browser.storage`. Works with both BiDi (preferred) and Classic WebDriver.
+Manage cookies and browser storage via `browser.storage`.
 
 ### addCookie(cookie)
 
@@ -327,9 +408,9 @@ const cookies = await browser.storage.getCookies();
 // Filter by domain
 const sessionCookies = await browser.storage.getCookies({ domain: 'example.com' });
 
-// Cookie value is a BytesValue object
+// Cookie value is a plain string
 for (const cookie of cookies) {
-  console.log(`${cookie.name}=${cookie.value.value}`);
+  console.log(`${cookie.name}=${cookie.value}`);
 }
 ```
 
@@ -360,8 +441,7 @@ await browser.saveState('./auth.json');
 // Later: restore session in new browser
 const browser2 = await Browser.launch({
   browserName: 'chrome',
-  enableBiDi: true,
-  storageState: './auth.json', // Auto-load on launch
+  storageState: './auth.json',
 });
 // Or manually:
 await browser2.loadState('./auth.json');
@@ -380,17 +460,3 @@ await browser.saveState('./state.json', {
 
 ---
 
-## BiDi vs Classic WebDriver
-
-| Feature             | Classic | BiDi           |
-| ------------------- | ------- | -------------- |
-| Navigation          | ✅      | ✅             |
-| Element interaction | ✅      | ✅             |
-| Network mocking     | ❌      | ✅             |
-| Request blocking    | ❌      | ✅             |
-| Console logs        | ❌      | ✅             |
-| JS error capture    | ❌      | ✅             |
-| Cookie management   | ✅      | ✅ (preferred) |
-| Session persistence | ✅      | ✅ (preferred) |
-
-When BiDi is enabled, CraftDriver uses BiDi for features like cookie management (which provides real-time updates) and falls back to Classic WebDriver for other operations.
