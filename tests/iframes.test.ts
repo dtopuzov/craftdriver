@@ -1,0 +1,57 @@
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
+import { Browser } from '../src';
+import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
+
+describe('Iframes', () => {
+  let browser: Browser;
+  const baseUrl = EXAMPLES_BASE_URL;
+
+  beforeAll(async () => {
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
+  });
+
+  afterAll(async () => {
+    await browser.quit();
+  });
+
+  beforeEach(async () => {
+    await browser.navigateTo(`${baseUrl}/iframes.html`);
+  });
+
+  it('can click a button inside an iframe', async () => {
+    const frame = await browser.frame('#my-frame');
+    await frame.click('#child-btn');
+    await frame.expect('#child-result').toHaveText('clicked');
+  });
+
+  it('can fill an input inside an iframe', async () => {
+    const frame = await browser.frame('#my-frame');
+    await frame.fill('#child-input', 'hello from test');
+    await frame.expect('#child-value').toHaveText('hello from test');
+  });
+
+  it('can read text from an element inside an iframe', async () => {
+    const frame = await browser.frame('#my-frame');
+    const handle = frame.find('h2');
+    const text = await handle.text();
+    expect(text).toBe('Child Frame');
+  });
+
+  it('returns all iframes via browser.frames()', async () => {
+    const frames = await browser.frames();
+    expect(frames.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('can evaluate JavaScript inside a frame', async () => {
+    const frame = await browser.frame('#my-frame');
+    const result = await frame.evaluate(() => document.title);
+    expect(typeof result).toBe('string');
+    expect(result).toBeTruthy();
+  });
+
+  it('can use frame.locator() to interact with elements', async () => {
+    const frame = await browser.frame('#my-frame');
+    await frame.locator('#child-btn').click();
+    await frame.locator('#child-result').expect().toHaveText('clicked');
+  });
+});

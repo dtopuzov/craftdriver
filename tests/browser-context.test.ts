@@ -1,0 +1,113 @@
+import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import { Browser, BrowserContext, Page } from '../src';
+import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
+
+describe('BrowserContext (BiDi user contexts)', () => {
+  let browser: Browser;
+  const baseUrl = EXAMPLES_BASE_URL;
+
+  beforeAll(async () => {
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
+  });
+
+  afterAll(async () => {
+    await browser.quit();
+  });
+
+  it('defaultContext is a BrowserContext with id "default"', () => {
+    const ctx = browser.defaultContext;
+    expect(ctx).toBeInstanceOf(BrowserContext);
+    expect(ctx.id).toBe('default');
+  });
+
+  it('contexts() always includes the default context', async () => {
+    const ctxs = await browser.contexts();
+    expect(ctxs.length).toBeGreaterThanOrEqual(1);
+    expect(ctxs.some((c) => c.id === 'default')).toBe(true);
+  });
+
+  it('newContext() creates an isolated context with a new id', async () => {
+    const ctx = await browser.newContext();
+    try {
+      expect(ctx).toBeInstanceOf(BrowserContext);
+      expect(ctx.id).not.toBe('default');
+      const all = await browser.contexts();
+      expect(all.some((c) => c.id === ctx.id)).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it('newPage() opens a page bound to the context', async () => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
+      expect(page).toBeInstanceOf(Page);
+      await page.waitForLoadState('load');
+      expect(await page.title()).toContain('Login');
+
+      const pages = await ctx.pages();
+      expect(pages.some((p) => p.id() === page.id())).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it('two contexts isolate cookies (multi-user login)', async () => {
+    const alice = await browser.newContext();
+    const bob = await browser.newContext();
+    try {
+      const aPage = await alice.newPage({ url: `${baseUrl}/login.html` });
+      await aPage.waitForLoadState('load');
+      await aPage.find('#username').fill('alice');
+      await aPage.find('#password').fill('secret');
+      await aPage.find('#submit').click();
+      await aPage.expect('#welcome').toContainText('alice');
+
+      const bPage = await bob.newPage({ url: `${baseUrl}/login.html` });
+      await bPage.waitForLoadState('load');
+      // Bob's context must NOT see Alice's session cookie.
+      const bobCookies = await bPage.evaluate<string>(() => document.cookie);
+      expect(bobCookies).not.toContain('alice');
+
+      await bPage.find('#username').fill('bob');
+      await bPage.find('#password').fill('secret');
+      await bPage.find('#submit').click();
+      await bPage.expect('#welcome').toContainText('bob');
+
+      // Alice's page is unaffected by Bob's login.
+      const aliceWelcome = await aPage.find('#welcome').text();
+      expect(aliceWelcome).toContain('alice');
+    } finally {
+      await alice.close();
+      await bob.close();
+    }
+  });
+
+  it('close() removes the context and subsequent ops throw', async () => {
+    const ctx = await browser.newContext();
+    await ctx.close();
+    expect(ctx.isClosed).toBe(true);
+    await expect(ctx.newPage()).rejects.toThrow(/closed/);
+
+    const all = await browser.contexts();
+    expect(all.some((c) => c.id === ctx.id)).toBe(false);
+  });
+
+  it('defaultContext.close() throws (cannot remove default)', async () => {
+    await expect(browser.defaultContext.close()).rejects.toThrow(/default/);
+  });
+});
+
+describe('BrowserContext in Classic mode', () => {
+  it('newContext() throws a clear error when BiDi is disabled', async () => {
+    const browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: false });
+    try {
+      await expect(browser.newContext()).rejects.toThrow(/newContext\(\) requires BiDi/);
+      expect(() => browser.defaultContext).toThrow(/requires BiDi/);
+      await expect(browser.contexts()).rejects.toThrow(/requires BiDi/);
+    } finally {
+      await browser.quit();
+    }
+  });
+});

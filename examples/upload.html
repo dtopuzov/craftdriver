@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>File Upload Example</title>
+</head>
+
+<body>
+  <h1>File Upload</h1>
+
+  <!-- single file input -->
+  <input id="file-input" type="file">
+  <div id="result"></div>
+
+  <!-- multiple file input -->
+  <input id="multi-input" type="file" multiple>
+  <div id="multi-result"></div>
+
+  <!-- non-file input for error-path test -->
+  <input id="text-input" type="text">
+
+  <script>
+    document.getElementById('file-input').addEventListener('change', function () {
+      const f = this.files[0];
+      document.getElementById('result').textContent = f ? f.name : '';
+    });
+
+    document.getElementById('multi-input').addEventListener('change', function () {
+      const names = Array.from(this.files).map(f => f.name).join(', ');
+      document.getElementById('multi-result').textContent = names;
+    });
+  </script>
+</body>
+
+</html>

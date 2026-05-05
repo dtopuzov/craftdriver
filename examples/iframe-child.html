@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Iframe Child Page</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 1rem;
+    }
+
+    button {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    #child-result {
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Child Frame</h2>
+  <button id="child-btn">Click Me</button>
+  <p id="child-result"></p>
+  <input id="child-input" type="text" placeholder="type here" />
+  <p id="child-value"></p>
+  <script>
+    document.getElementById('child-btn').addEventListener('click', function () {
+      document.getElementById('child-result').textContent = 'clicked';
+    });
+    document.getElementById('child-input').addEventListener('input', function () {
+      document.getElementById('child-value').textContent = this.value;
+    });
+  </script>
+</body>
+
+</html>

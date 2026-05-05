@@ -1,65 +1,301 @@
 import { By } from './by.js';
 import type { Driver } from './driver.js';
+import type { WebElement } from './webelement.js';
 import { until } from './wait.js';
+import { ElementHandle, type ContextSwitcher } from './elementHandle.js';
+import { expectSelector } from './expect.js';
+import type { ExpectApi } from './expect.js';
 
 export interface ActionOptions {
   timeout?: number;
 }
 
 export class Locator {
+  private _index: number | null = null;        // null=first, -1=last, >=0 = nth(index)
+  private _filterText: string | RegExp | null = null;
+  private _filterHas: Locator | null = null;
+  private _parent: Locator | null = null;
+  private _contextSwitcher?: ContextSwitcher;
+
   constructor(
     private driver: Driver,
-    private by: By
-  ) {}
+    private by: By,
+    private getDefaultTimeout: () => number = () => 5000
+  ) { }
 
+  /** Bind this locator to a browsing context (iframe/tab) for frame-scoped element resolution. */
+  withContext(switcher: ContextSwitcher): this {
+    this._contextSwitcher = switcher;
+    return this;
+  }
+
+  private async _withContext<T>(fn: () => Promise<T>): Promise<T> {
+    if (this._contextSwitcher) {
+      await this._contextSwitcher.in();
+      try {
+        return await fn();
+      } finally {
+        await this._contextSwitcher.out();
+      }
+    }
+    return fn();
+  }
+
+  /** Return a new child Locator whose search is scoped within this locator's first match. */
   locator(selector: string | By): Locator {
-    const next = typeof selector === 'string' ? By.css(selector) : selector;
-    return new Locator(this.driver, next);
+    const childBy = typeof selector === 'string' ? By.css(selector) : selector;
+    const child = new Locator(this.driver, childBy, this.getDefaultTimeout);
+    child._parent = this;
+    return child;
   }
 
-  async click(options: ActionOptions = {}): Promise<void> {
-    const el = await this.driver.wait(until.elementIsVisible(this.by), {
-      timeout: options.timeout ?? 5000,
-    });
-    await el.click();
+  /** Return a new Locator targeting the element at position `index` (0-based). */
+  nth(index: number): Locator {
+    const l = this._clone();
+    l._index = index;
+    return l;
   }
 
-  async fill(text: string, options: ActionOptions = {}): Promise<void> {
-    const el = await this.driver.wait(until.elementIsVisible(this.by), {
-      timeout: options.timeout ?? 5000,
-    });
-    await el.click();
-    await el.sendKeys(text);
+  /** Return a new Locator targeting the first match. */
+  first(): Locator {
+    return this.nth(0);
   }
 
-  async textContent(options: ActionOptions = {}): Promise<string> {
-    const el = await this.driver.wait(until.elementExists(this.by), {
-      timeout: options.timeout ?? 5000,
-    });
-    return (await el.getText()) ?? '';
+  /** Return a new Locator targeting the last match. */
+  last(): Locator {
+    const l = this._clone();
+    l._index = -1;
+    return l;
   }
 
-  async isVisible(options: ActionOptions = {}): Promise<boolean> {
-    try {
-      const el = await this.driver.wait(until.elementExists(this.by), {
-        timeout: options.timeout ?? 5000,
+  /** Return a new Locator that narrows matches by text or child-locator presence. */
+  filter(opts: { hasText?: string | RegExp; has?: Locator }): Locator {
+    const l = this._clone();
+    if (opts.hasText !== undefined) l._filterText = opts.hasText;
+    if (opts.has !== undefined) l._filterHas = opts.has;
+    return l;
+  }
+
+  private _clone(): Locator {
+    const l = new Locator(this.driver, this.by, this.getDefaultTimeout);
+    l._index = this._index;
+    l._filterText = this._filterText;
+    l._filterHas = this._filterHas;
+    l._parent = this._parent;
+    l._contextSwitcher = this._contextSwitcher;
+    return l;
+  }
+
+  /** True when no parent/index/filter — enables the fast driver.wait() path. */
+  private _isSimple(): boolean {
+    return (
+      this._parent === null &&
+      this._index === null &&
+      this._filterText === null &&
+      this._filterHas === null
+    );
+  }
+
+  /** Resolve all raw WebElements for this.by, scoped to the parent if set. */
+  private async _findRaw(): Promise<WebElement[]> {
+    if (this._parent) {
+      const parentEls = await this._parent._findFinal();
+      if (parentEls.length === 0) return [];
+      return parentEls[0].findElements(this.by);
+    }
+    return this.driver.findElements(this.by);
+  }
+
+  /** Apply text / has filters to the raw result set. */
+  private async _findFiltered(): Promise<WebElement[]> {
+    let elements = await this._findRaw();
+
+    if (this._filterText !== null) {
+      const pattern = this._filterText;
+      const texts = await Promise.all(elements.map((el) => el.getText()));
+      elements = elements.filter((_, i) => {
+        const t = texts[i];
+        return pattern instanceof RegExp ? pattern.test(t) : t.includes(String(pattern));
       });
-      return await el.isDisplayed();
+    }
+
+    if (this._filterHas !== null) {
+      const hasBy = this._filterHas.by;
+      const kept: WebElement[] = [];
+      for (const el of elements) {
+        const children = await el.findElements(hasBy);
+        if (children.length > 0) kept.push(el);
+      }
+      elements = kept;
+    }
+
+    return elements;
+  }
+
+  /** Apply index on top of the filtered result set. */
+  private async _findFinal(): Promise<WebElement[]> {
+    const els = await this._findFiltered();
+    const idx = this._index;
+    if (idx === -1) return els.length > 0 ? [els[els.length - 1]] : [];
+    if (idx !== null) return els.length > idx ? [els[idx]] : [];
+    return els;
+  }
+
+  /** Poll until a visible element is available in the final result set. */
+  private async _waitForVisible(timeout: number): Promise<WebElement> {
+    const deadline = Date.now() + timeout;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        const els = await this._findFinal();
+        for (const el of els) {
+          if (await el.isDisplayed()) return el;
+        }
+      } catch (e) {
+        lastError = e;
+      }
+      await new Promise<void>((r) => setTimeout(r, 100));
+    }
+    throw (
+      lastError ??
+      new Error(
+        `Timed out after ${timeout}ms waiting for locator "${this.by.using}=${this.by.value}" to be visible`
+      )
+    );
+  }
+
+  /** Poll until any element is present in the final result set (need not be visible). */
+  private async _waitForAny(timeout: number): Promise<WebElement> {
+    const deadline = Date.now() + timeout;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        const els = await this._findFinal();
+        if (els.length > 0) return els[0];
+      } catch (e) {
+        lastError = e;
+      }
+      await new Promise<void>((r) => setTimeout(r, 100));
+    }
+    throw (
+      lastError ??
+      new Error(
+        `Timed out after ${timeout}ms waiting for locator "${this.by.using}=${this.by.value}"`
+      )
+    );
+  }
+
+  private async _resolve(options?: ActionOptions): Promise<WebElement> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
+    if (this._isSimple()) {
+      return this.driver.wait(until.elementIsVisible(this.by), { timeout });
+    }
+    return this._waitForVisible(timeout);
+  }
+
+  private async _resolveExisting(options?: ActionOptions): Promise<WebElement> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
+    if (this._isSimple()) {
+      return this.driver.wait(until.elementExists(this.by), { timeout });
+    }
+    return this._waitForAny(timeout);
+  }
+
+  /**
+   * Resolve to a visible element WITHOUT applying context switching (used inside _withContext blocks).
+   * The caller is responsible for switching context before calling this.
+   */
+  private async _waitForVisibleOrSimple(options?: ActionOptions): Promise<WebElement> {
+    return this._resolve(options);
+  }
+
+  /**
+   * Resolve to an existing element WITHOUT applying context switching (used inside _withContext blocks).
+   * The caller is responsible for switching context before calling this.
+   */
+  private async _waitForAnyOrSimple(options?: ActionOptions): Promise<WebElement> {
+    return this._resolveExisting(options);
+  }
+
+  async click(options?: ActionOptions): Promise<void> {
+    return this._withContext(async () => {
+      const el = await this._waitForVisibleOrSimple(options);
+      await el.click();
+    });
+  }
+
+  async fill(text: string, options?: ActionOptions): Promise<void> {
+    return this._withContext(async () => {
+      const el = await this._waitForVisibleOrSimple(options);
+      await el.click();
+      await el.clear();
+      await el.sendKeys(text);
+    });
+  }
+
+  async text(options?: ActionOptions): Promise<string> {
+    return this._withContext(async () => {
+      const el = await this._waitForAnyOrSimple(options);
+      return (await el.getText()) ?? '';
+    });
+  }
+
+  /** Alias for text(). */
+  async textContent(options?: ActionOptions): Promise<string> {
+    return this.text(options);
+  }
+
+  async isVisible(options?: ActionOptions): Promise<boolean> {
+    try {
+      return await this._withContext(async () => {
+        const timeout = options?.timeout ?? Math.min(this.getDefaultTimeout(), 1000);
+        const el = await this._waitForAnyOrSimple({ timeout });
+        return el.isDisplayed();
+      });
     } catch {
       return false;
     }
   }
 
+  /**
+   * Returns the number of currently matching elements in the DOM (no auto-wait).
+   * Use `waitFor` if you need to wait for a specific count.
+   */
+  async count(): Promise<number> {
+    return this._withContext(async () => {
+      const els = await this._findFinal();
+      return els.length;
+    });
+  }
+
+  /**
+   * Returns snapshot `ElementHandle`s for all currently matching elements.
+   * Each handle is bound to the element resolved at call time.
+   */
+  async all(): Promise<ElementHandle[]> {
+    return this._withContext(async () => {
+      const els = await this._findFinal();
+      return els.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
+    });
+  }
+
   waitFor(options: {
     state: 'attached' | 'detached' | 'visible' | 'hidden';
     timeout?: number;
-  }): Promise<any> {
-    const { state, timeout } = options;
-    if (state === 'attached') return this.driver.wait(until.elementExists(this.by), { timeout });
-    if (state === 'detached') return this.driver.wait(until.elementNotExists(this.by), { timeout });
-    if (state === 'visible') return this.driver.wait(until.elementIsVisible(this.by), { timeout });
-    if (state === 'hidden')
-      return this.driver.wait(until.elementIsNotVisible(this.by), { timeout });
-    return Promise.reject(new Error(`Unknown state: ${state}`));
+  }): Promise<unknown> {
+    return this._withContext(() => {
+      const { state, timeout } = options;
+      const to = { timeout: timeout ?? this.getDefaultTimeout() };
+      if (state === 'attached') return this.driver.wait(until.elementExists(this.by), to);
+      if (state === 'detached') return this.driver.wait(until.elementNotExists(this.by), to);
+      if (state === 'visible') return this.driver.wait(until.elementIsVisible(this.by), to);
+      if (state === 'hidden') return this.driver.wait(until.elementIsNotVisible(this.by), to);
+      return Promise.reject(new Error(`Unknown waitFor state: "${state}"`));
+    });
+  }
+
+  /** Returns an assertion API scoped to this locator's selector. */
+  expect(): ExpectApi {
+    return expectSelector(this.driver, this.by, this.getDefaultTimeout, this._contextSwitcher);
   }
 }

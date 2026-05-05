@@ -46,6 +46,24 @@ export class Driver {
     await client.send({ method: 'POST', path: `/session/${this.sessionId}/url`, body: { url } });
   }
 
+  /** W3C `POST /session/{id}/back` — navigate the current top-level browsing context back one step. */
+  async back(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/back`, body: {} });
+  }
+
+  /** W3C `POST /session/{id}/forward` — navigate forward one step in the joint session history. */
+  async forward(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/forward`, body: {} });
+  }
+
+  /** W3C `POST /session/{id}/refresh` — reload the current top-level browsing context. */
+  async refresh(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/refresh`, body: {} });
+  }
+
   async quit(): Promise<void> {
     const client = new HttpClient(this.endpoint);
     await client.send({ method: 'DELETE', path: `/session/${this.sessionId}` });
@@ -405,6 +423,54 @@ export class Driver {
     return String((res as any)?.value ?? res ?? '');
   }
 
+  /**
+   * W3C `POST /session/{id}/window/rect` — resize / reposition the
+   * current top-level browsing context's window. Approximates a
+   * viewport resize when BiDi's `browsingContext.setViewport` is not
+   * available.
+   */
+  async setWindowRect(rect: { width: number; height: number; x?: number; y?: number }): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    const body: Record<string, number> = { width: rect.width, height: rect.height };
+    if (rect.x !== undefined) body.x = rect.x;
+    if (rect.y !== undefined) body.y = rect.y;
+    await client.send({
+      method: 'POST',
+      path: `/session/${this.sessionId}/window/rect`,
+      body,
+    });
+  }
+
+  // --- Alert / dialog endpoints (W3C Classic WebDriver) ---
+
+  async getAlertText(): Promise<string> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/alert/text`,
+    });
+    return String((res as any)?.value ?? res ?? '');
+  }
+
+  async acceptAlert(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/alert/accept`, body: {} });
+  }
+
+  async dismissAlert(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/alert/dismiss`, body: {} });
+  }
+
+  async sendAlertText(text: string): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'POST',
+      path: `/session/${this.sessionId}/alert/text`,
+      body: { text },
+    });
+  }
+
   // Internal helper for ActionsBuilder to send combined payloads
   async __sendActions(actions: any[]): Promise<void> {
     const client = new HttpClient(this.endpoint);
@@ -413,5 +479,46 @@ export class Driver {
       path: `/session/${this.sessionId}/actions`,
       body: { actions },
     });
+  }
+
+  // --- Frame / window switching (W3C Classic WebDriver) ---
+
+  /**
+   * Switch to an iframe by null (top-level), numeric index, or element reference.
+   * Pass `null` to switch back to the top-level browsing context.
+   */
+  async switchToFrame(id: null | number | { elementId: string }): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    let bodyId: unknown;
+    if (id === null) {
+      bodyId = null;
+    } else if (typeof id === 'number') {
+      bodyId = id;
+    } else {
+      bodyId = { [W3C_ELEMENT_KEY]: id.elementId, [LEGACY_ELEMENT_KEY]: id.elementId };
+    }
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/frame`, body: { id: bodyId } });
+  }
+
+  /** Return all window handles for the current session. */
+  async getWindowHandles(): Promise<string[]> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string[]>({ method: 'GET', path: `/session/${this.sessionId}/window/handles` });
+    const v = (res as CommandResponse<string[]>)?.value ?? (res as unknown as string[]);
+    return Array.isArray(v) ? v : [];
+  }
+
+  /** Switch focus to the window with the given handle. */
+  async switchToWindow(handle: string): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({ method: 'POST', path: `/session/${this.sessionId}/window`, body: { handle } });
+  }
+
+  /** Return the handle for the currently focused window. */
+  async getCurrentWindowHandle(): Promise<string> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string>({ method: 'GET', path: `/session/${this.sessionId}/window` });
+    const v = (res as CommandResponse<string>)?.value ?? (res as unknown as string);
+    return String(v ?? '');
   }
 }

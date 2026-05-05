@@ -1,5 +1,6 @@
 import { HttpClient } from './http.js';
 import type { CommandResponse, WebDriverEndpoint } from './types.js';
+import { By } from './by.js';
 
 export const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
 export const LEGACY_ELEMENT_KEY = 'ELEMENT';
@@ -135,5 +136,23 @@ export class WebElement {
     });
     const value = (res as CommandResponse<{ x: number; y: number; width: number; height: number }>)?.value ?? res;
     return value as { x: number; y: number; width: number; height: number };
+  }
+
+  async findElements(locator: By): Promise<WebElement[]> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<Array<Record<string, string>>>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/element/${this.elementId}/elements`,
+      body: { using: locator.using, value: locator.value },
+    });
+    const arr = ((res as CommandResponse<Array<Record<string, string>>>)?.value ??
+      (res as unknown as Array<Record<string, string>>)) as Array<Record<string, string>>;
+    return (arr || [])
+      .map((v) => {
+        const elId = (v as any)?.[W3C_ELEMENT_KEY] || (v as any)?.[LEGACY_ELEMENT_KEY];
+        if (!elId) return undefined;
+        return new WebElement(this.endpoint, this.sessionId, elId);
+      })
+      .filter(Boolean) as WebElement[];
   }
 }

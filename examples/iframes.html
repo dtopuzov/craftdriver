@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Craftdriver Iframes</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 1rem;
+    }
+
+    iframe {
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      width: 480px;
+      height: 200px;
+    }
+
+    #parent-status {
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Iframe Test Page</h1>
+  <p>Parent page content.</p>
+  <p id="parent-status"></p>
+  <iframe id="my-frame" src="/iframe-child.html"></iframe>
+</body>
+
+</html>

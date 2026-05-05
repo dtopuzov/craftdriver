@@ -1,16 +1,22 @@
 import { Builder } from './builder.js';
 import { ChromeService } from './chrome.js';
+import { FirefoxService } from './firefox.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
 import { ElementHandle } from './elementHandle.js';
+import { Locator } from './locator.js';
 import { expectSelector } from './expect.js';
 import fs from 'fs/promises';
-import { KeyboardController } from './keyboard.js';
+import fsSync from 'fs';
+import os from 'os';
+import path from 'path';
+import { Keyboard } from './keyboard.js';
 import { Key } from './keys.js';
-import { MouseController } from './mouse.js';
+import { Mouse } from './mouse.js';
 import { ActionsBuilder } from './actions.js';
 import { Capabilities } from './types.js';
+import type { RemoteValue, ScriptEvaluateResult } from './bidi/types.js';
 import {
   BiDiSession,
   NetworkInterceptor,
@@ -18,7 +24,13 @@ import {
   SessionStateManager,
   type SessionState,
   type StorageStateOptions,
+  type InterceptedRequest,
+  type InterceptedResponse,
 } from './bidi/index.js';
+import { Frame } from './frame.js';
+import { Page } from './page.js';
+import { BrowserContext } from './browserContext.js';
+import { Tracer, type TraceStartOptions, type TraceBundle } from './tracing.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -78,90 +90,308 @@ export const devices = {
 export type DeviceName = keyof typeof devices;
 
 export interface LaunchOptions {
-  browserName?: 'chrome' | 'chromium' | 'firefox' | 'edge' | 'safari';
+  browserName?: 'chrome' | 'chromium' | 'firefox';
   chromeService?: ChromeService;
-  /** Enable BiDi features (network interception, logs, etc.) */
+  firefoxService?: FirefoxService;
+  /**
+   * Enable WebDriver BiDi for network interception, logs, load events, etc.
+   * **Defaults to `true`** — BiDi is the primary protocol; Classic WebDriver
+   * is used only as a fallback when a capability is not yet available via BiDi.
+   * Set `false` only if your environment cannot negotiate a BiDi WebSocket.
+   */
   enableBiDi?: boolean;
-  /** Load session state from file on launch */
+  /** Load session state from file on launch. BiDi is always used when this is set. */
   storageState?: string;
   /** Enable mobile device emulation (Chrome/Chromium only) */
   mobileEmulation?: MobileEmulation | DeviceName;
+  /**
+   * Directory where downloaded files are saved.
+   * Defaults to a temporary directory unique to this browser session.
+   */
+  downloadsDir?: string;
+}
+
+/**
+ * When to consider a navigation complete.
+ * - `'load'` — page `load` event has fired (default)
+ * - `'domcontentloaded'` — `DOMContentLoaded` has fired (faster, no waiting for images/fonts)
+ * - `'networkidle'` — `load` + no in-flight requests for 500 ms
+ * - `'none'` — do not wait; return as soon as the navigation is initiated
+ */
+export type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
+
+/** The type of a browser dialog. */
+export type DialogType = 'alert' | 'confirm' | 'prompt' | 'beforeunload';
+
+/**
+ * Represents an open browser dialog (alert / confirm / prompt).
+ * Passed to handlers registered with `browser.onDialog()`.
+ */
+export interface Dialog {
+  /** Returns the dialog type: `'alert'`, `'confirm'`, `'prompt'`, or `'beforeunload'`. */
+  type(): DialogType;
+  /** Returns the message text shown in the dialog. */
+  message(): string;
+  /** Returns the default text pre-filled in a prompt dialog (empty string for non-prompt dialogs). */
+  defaultValue(): string;
+  /** Accept the dialog (OK button). For prompts, optionally pass `text` to fill the input first. */
+  accept(text?: string): Promise<void>;
+  /** Dismiss the dialog (Cancel button / close). */
+  dismiss(): Promise<void>;
+}
+
+/** A file downloaded during a `waitForDownload()` call. */
+export interface Download {
+  /** Absolute path to the downloaded file on disk. */
+  path: string;
+  /** The filename as suggested by the server (from Content-Disposition or URL). */
+  suggestedFilename: string;
+  /** Copy the file to `targetPath`. */
+  saveAs(targetPath: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// BiDi value helpers — used only by Browser.evaluate()
+// ---------------------------------------------------------------------------
+
+function serializeLocalValue(v: unknown): Record<string, unknown> {
+  if (v === undefined) return { type: 'undefined' };
+  if (v === null) return { type: 'null' };
+  if (typeof v === 'string') return { type: 'string', value: v };
+  if (typeof v === 'boolean') return { type: 'boolean', value: v };
+  if (typeof v === 'bigint') return { type: 'bigint', value: String(v) };
+  if (typeof v === 'number') {
+    if (Number.isNaN(v)) return { type: 'number', value: 'NaN' };
+    if (v === Infinity) return { type: 'number', value: 'Infinity' };
+    if (v === -Infinity) return { type: 'number', value: '-Infinity' };
+    if (Object.is(v, -0)) return { type: 'number', value: '-0' };
+    return { type: 'number', value: v };
+  }
+  if (Array.isArray(v)) return { type: 'array', value: v.map(serializeLocalValue) };
+  if (typeof v === 'object') {
+    return {
+      type: 'object',
+      value: Object.entries(v as Record<string, unknown>).map(
+        ([k, val]) => [k, serializeLocalValue(val)]
+      ),
+    };
+  }
+  throw new Error(
+    `evaluate() argument of type "${typeof v}" is not JSON-serializable. ` +
+    `Only primitive types, arrays, and plain objects are supported.`
+  );
+}
+
+function unwrapRemoteValue(v: RemoteValue): unknown {
+  switch (v.type) {
+    case 'undefined': return undefined;
+    case 'null': return null;
+    case 'string': return v.value;
+    case 'boolean': return v.value;
+    case 'bigint': return BigInt(v.value);
+    case 'number': {
+      if (v.value === 'NaN') return NaN;
+      if (v.value === 'Infinity') return Infinity;
+      if (v.value === '-Infinity') return -Infinity;
+      if (v.value === '-0') return -0;
+      return v.value;
+    }
+    case 'array': return (v.value ?? []).map(unwrapRemoteValue);
+    case 'object':
+      return Object.fromEntries(
+        (v.value ?? []).map(([k, val]) => [
+          typeof k === 'string' ? k : String(unwrapRemoteValue(k as RemoteValue)),
+          unwrapRemoteValue(val),
+        ])
+      );
+    case 'date': return new Date(v.value);
+    case 'function':
+      throw new Error(
+        'evaluate() returned a function, which is not JSON-serializable. ' +
+        'Return a primitive, array, or plain object instead.'
+      );
+    case 'node':
+    case 'window':
+      throw new Error(
+        `evaluate() returned a ${v.type} reference, which is not JSON-serializable. ` +
+        'Return a primitive, array, or plain object instead.'
+      );
+    default:
+      return null;
+  }
+}
+
+/** Shape of a BiDi `browsingContext.getTree` entry. */
+interface BidiContextInfo {
+  context: string;
+  url: string;
+  parent?: string;
+  userContext?: string;
+  children?: BidiContextInfo[];
+}
+
+/** Recursively find the child context that matches an iframe's src URL. */
+function findIframeContext(
+  ctx: BidiContextInfo,
+  iframeSrc: string | null
+): string | undefined {
+  if (!ctx.children) return undefined;
+  for (const child of ctx.children) {
+    if (!iframeSrc || (child.url && child.url.startsWith(iframeSrc.replace(/\/$/, '')))) {
+      return child.context;
+    }
+    const nested = findIframeContext(child, iframeSrc);
+    if (nested) return nested;
+  }
+  // If src matching fails, return the first child context
+  if (ctx.children.length > 0) return ctx.children[0].context;
+  return undefined;
 }
 
 export class Browser {
   private bidiSession?: BiDiSession;
   private _network?: NetworkInterceptor;
   private _logs?: LogMonitor;
+  private _tracer?: Tracer;
   private _storage?: SessionStateManager;
+  private _downloadsDir?: string;
+  private _driverService?: { stop: () => Promise<void> };
+
+  /** Mutable browser-level defaults. Use setDefaultTimeout() / setDefaultNavigationTimeout() to change. */
+  private defaults = { timeout: 5000, navigationTimeout: 30000 };
 
   private constructor(private driver: Driver) {
-    this.keyboard = new KeyboardController(this.driver);
-    this.mouse = new MouseController(this.driver);
+    this.keyboard = new Keyboard(this.driver);
+    this.mouse = new Mouse(this.driver);
   }
+
+  /**
+   * Set the default timeout (ms) used by all element actions, waits, and assertions
+   * when no per-call `{ timeout }` option is provided. Default: 5000.
+   */
+  setDefaultTimeout(ms: number): void {
+    this.defaults.timeout = ms;
+  }
+
+  /**
+   * Set the default navigation timeout (ms) used by navigateTo and load-state waits.
+   * Default: 30000.
+   */
+  setDefaultNavigationTimeout(ms: number): void {
+    this.defaults.navigationTimeout = ms;
+  }
+
+  /** Returns the current default timeout. Used as a live getter passed to ElementHandle / expectSelector. */
+  private getDefaultTimeout = (): number => this.defaults.timeout;
 
   static async launch(options: LaunchOptions = {}): Promise<Browser> {
     const name = options.browserName ?? 'chrome';
-    let chromeService: ChromeService;
-    if (options.chromeService) {
-      chromeService = options.chromeService;
-    } else {
-      chromeService = new ChromeService();
+    const isFirefox = name === 'firefox';
+    const isChromeFamily = name === 'chrome' || name === 'chromium';
+
+    if (options.mobileEmulation && !isChromeFamily) {
+      throw new Error(
+        `mobileEmulation is only supported on Chrome/Chromium (got "${name}"). ` +
+        `Firefox does not expose a device-emulation API equivalent to goog:chromeOptions.mobileEmulation.`
+      );
     }
 
     // Handle headless mode via env var
     const headlessEnv = process.env.HEADLESS;
     const isHeadless = headlessEnv === 'true' || headlessEnv === '1';
 
-    // Base capabilities
-    const chromeOptions: Record<string, unknown> = {
-      args: isHeadless ? ['--headless=new'] : [],
-    };
+    // Set up downloads directory
+    const downloadsDir = options.downloadsDir ?? path.join(
+      os.tmpdir(), 'craftdriver-downloads', `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    await fs.mkdir(downloadsDir, { recursive: true });
 
-    // Add mobile emulation if specified
-    if (options.mobileEmulation) {
-      const emulation = typeof options.mobileEmulation === 'string'
-        ? devices[options.mobileEmulation]
-        : options.mobileEmulation;
+    let caps: Capabilities = {};
 
-      if ('deviceName' in emulation && emulation.deviceName) {
-        // Use Chrome's built-in device name
-        chromeOptions.mobileEmulation = { deviceName: emulation.deviceName };
-      } else {
-        // Build custom mobile emulation config
-        const mobileConfig: Record<string, unknown> = {};
+    if (isChromeFamily) {
+      const chromeOptions: Record<string, unknown> = {
+        args: isHeadless ? ['--headless=new'] : [],
+        prefs: {
+          'download.default_directory': downloadsDir,
+          'download.prompt_for_download': false,
+          'safebrowsing.enabled': true,
+        },
+      };
 
-        if (emulation.deviceMetrics) {
-          mobileConfig.deviceMetrics = {
-            width: emulation.deviceMetrics.width,
-            height: emulation.deviceMetrics.height,
-            pixelRatio: emulation.deviceMetrics.pixelRatio,
-            mobile: emulation.deviceMetrics.mobile ?? true,
-            touch: emulation.deviceMetrics.touch ?? true,
-          };
+      // Add mobile emulation if specified
+      if (options.mobileEmulation) {
+        const emulation = typeof options.mobileEmulation === 'string'
+          ? devices[options.mobileEmulation]
+          : options.mobileEmulation;
+
+        if ('deviceName' in emulation && emulation.deviceName) {
+          // Use Chrome's built-in device name
+          chromeOptions.mobileEmulation = { deviceName: emulation.deviceName };
+        } else {
+          // Build custom mobile emulation config
+          const mobileConfig: Record<string, unknown> = {};
+
+          if (emulation.deviceMetrics) {
+            mobileConfig.deviceMetrics = {
+              width: emulation.deviceMetrics.width,
+              height: emulation.deviceMetrics.height,
+              pixelRatio: emulation.deviceMetrics.pixelRatio,
+              mobile: emulation.deviceMetrics.mobile ?? true,
+              touch: emulation.deviceMetrics.touch ?? true,
+            };
+          }
+
+          if (emulation.userAgent) {
+            mobileConfig.userAgent = emulation.userAgent;
+          }
+
+          chromeOptions.mobileEmulation = mobileConfig;
         }
-
-        if (emulation.userAgent) {
-          mobileConfig.userAgent = emulation.userAgent;
-        }
-
-        chromeOptions.mobileEmulation = mobileConfig;
       }
-    }
 
-    // Request webSocketUrl for BiDi if enabled
-    let caps: Capabilities = {
-      'goog:chromeOptions': chromeOptions,
-    };
+      caps['goog:chromeOptions'] = chromeOptions;
+    } else if (isFirefox) {
+      const firefoxArgs: string[] = [];
+      if (isHeadless) firefoxArgs.push('-headless');
+      caps['moz:firefoxOptions'] = {
+        args: firefoxArgs,
+        prefs: {
+          'browser.download.folderList': 2,
+          'browser.download.dir': downloadsDir,
+          'browser.download.useDownloadDir': true,
+          'browser.helperApps.neverAsk.saveToDisk':
+            'application/octet-stream,application/pdf,text/plain,text/csv,application/zip',
+          'pdfjs.disabled': true,
+        },
+      };
+    }
 
     if (options.enableBiDi !== false) {
       // Request BiDi WebSocket URL
       caps.webSocketUrl = true;
+      // Set all prompt types to 'ignore' so BiDi events fire and we can handle them
+      caps.unhandledPromptBehavior = {
+        alert: 'ignore',
+        confirm: 'ignore',
+        prompt: 'ignore',
+        beforeUnload: 'ignore',
+      };
     }
 
-    const builder = new Builder().forBrowser(name).setChromeService(chromeService);
+    const builder = new Builder().forBrowser(name);
+    let driverService: ChromeService | FirefoxService;
+    if (isChromeFamily) {
+      driverService = options.chromeService ?? new ChromeService();
+      builder.setChromeService(driverService as ChromeService);
+    } else {
+      driverService = options.firefoxService ?? new FirefoxService();
+      builder.setFirefoxService(driverService as FirefoxService);
+    }
     builder.withCapabilities(caps);
     const driver = await builder.build();
     const browser = new Browser(driver);
+    browser._downloadsDir = downloadsDir;
+    browser._driverService = driverService;
 
     // Initialize BiDi session if WebSocket URL available
     const wsUrl = (driver as any).__wsUrl;
@@ -181,13 +411,26 @@ export class Browser {
    * Initialize BiDi WebSocket connection
    */
   private async initBiDi(wsUrl: string): Promise<void> {
-    this.bidiSession = new BiDiSession(this.driver);
-    try {
-      await this.bidiSession.connect(wsUrl);
-    } catch (err) {
-      // BiDi connection failed, continue with Classic-only mode
-      console.warn('BiDi connection failed, using Classic WebDriver only:', err);
-      this.bidiSession = undefined;
+    const session = new BiDiSession(this.driver);
+    this.bidiSession = session;
+    // Retry up to 8 times with increasing delays — Firefox may not have finished
+    // binding its BiDi WebSocket yet (especially when a previous session just closed
+    // on the same port, or the profile is still initialising).
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await session.connect(wsUrl);
+        return; // success
+      } catch (err) {
+        if (attempt < maxAttempts) {
+          // Back-off: 300ms, 600ms, 900ms, 1200ms …
+          await new Promise((r) => setTimeout(r, 300 * attempt));
+        } else {
+          // All attempts failed; fall back to Classic-only mode.
+          console.warn('BiDi connection failed after retries, using Classic WebDriver only:', err);
+          this.bidiSession = undefined;
+        }
+      }
     }
   }
 
@@ -207,7 +450,10 @@ export class Browser {
   get network(): NetworkInterceptor {
     if (!this._network) {
       if (!this.bidiSession?.isConnected()) {
-        throw new Error('Network interception requires BiDi. Launch with enableBiDi: true');
+        throw new Error(
+          'Network interception requires BiDi. ' +
+          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+        );
       }
       this._network = this.bidiSession.network;
     }
@@ -220,7 +466,10 @@ export class Browser {
   get logs(): LogMonitor {
     if (!this._logs) {
       if (!this.bidiSession?.isConnected()) {
-        throw new Error('Log monitoring requires BiDi. Launch with enableBiDi: true');
+        throw new Error(
+          'Log monitoring requires BiDi. ' +
+          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+        );
       }
       this._logs = this.bidiSession.logs;
     }
@@ -255,8 +504,324 @@ export class Browser {
     return this.storage.loadState(path);
   }
 
-  async navigateTo(url: string): Promise<void> {
-    return this.driver.navigateTo(url);
+  async navigateTo(url: string, opts?: { waitUntil?: LoadState }): Promise<void> {
+    const waitUntil: LoadState = opts?.waitUntil ?? 'load';
+
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const context = this.bidiSession.getContext();
+      if (!context) {
+        // No context yet — fall through to Classic
+      } else {
+        // BiDi path: browsingContext.navigate with the appropriate wait
+        // 'networkidle' uses 'complete' (load) then waits for network silence
+        const bidiWait =
+          waitUntil === 'none' ? 'none'
+            : waitUntil === 'domcontentloaded' ? 'interactive'
+              : 'complete'; // 'load' and 'networkidle'
+
+        await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
+
+        if (waitUntil === 'networkidle') {
+          await this.bidiSession.network.waitForNetworkIdle({
+            timeout: this.defaults.navigationTimeout,
+          });
+        }
+        return;
+      }
+    }
+
+    // Classic fallback (already waits for document.readyState === 'complete')
+    await this.driver.navigateTo(url);
+    if (waitUntil === 'networkidle') {
+      // Best-effort: Classic can't track network events; give it a short settle time
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
+  /**
+   * Navigate the active page back one step in its session history.
+   * Proxies to {@link Page.goBack} on {@link activePage}.
+   */
+  async goBack(): Promise<void> {
+    const page = await this.activePage();
+    await page.goBack();
+  }
+
+  /**
+   * Navigate the active page forward one step in its session history.
+   * Proxies to {@link Page.goForward} on {@link activePage}.
+   */
+  async goForward(): Promise<void> {
+    const page = await this.activePage();
+    await page.goForward();
+  }
+
+  /**
+   * Reload the active page. Proxies to {@link Page.reload} on
+   * {@link activePage}.
+   */
+  async reload(): Promise<void> {
+    const page = await this.activePage();
+    await page.reload();
+  }
+
+  /**
+   * Return the full HTML serialization of the active page.
+   * Proxies to {@link Page.content}.
+   */
+  async content(): Promise<string> {
+    const page = await this.activePage();
+    return page.content();
+  }
+
+  /**
+   * Replace the active page contents with the given HTML.
+   * Proxies to {@link Page.setContent}.
+   */
+  async setContent(
+    html: string,
+    opts?: { waitUntil?: Exclude<LoadState, 'networkidle'> }
+  ): Promise<void> {
+    const page = await this.activePage();
+    await page.setContent(html, opts);
+  }
+
+  /**
+   * Resize the viewport at runtime.
+   *
+   * - **BiDi** path uses `browsingContext.setViewport` on the active page,
+   *   which resizes the *layout* viewport without changing the OS window.
+   * - **Classic** fallback uses `POST /session/{id}/window/rect`, which
+   *   resizes the OS window — the inner viewport may end up a few pixels
+   *   smaller than `width`/`height` because of browser chrome.
+   *
+   * For full mobile emulation (DPR, user-agent, touch), pass
+   * `mobileEmulation` to {@link Browser.launch}; this method only changes
+   * the viewport box.
+   */
+  async setViewportSize(size: { width: number; height: number }): Promise<void> {
+    if (size.width <= 0 || size.height <= 0) {
+      throw new Error(
+        `setViewportSize: width and height must be positive integers (got ${size.width}x${size.height}).`
+      );
+    }
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const page = await this.activePage();
+      await conn.send('browsingContext.setViewport', {
+        context: page.id(),
+        viewport: {
+          width: Math.round(size.width),
+          height: Math.round(size.height),
+        },
+      });
+      return;
+    }
+    // Classic fallback: resize the OS window. Best-effort approximation.
+    await this.driver.setWindowRect({
+      width: Math.round(size.width),
+      height: Math.round(size.height),
+    });
+  }
+
+  /**
+   * Override one or more permissions for an origin (or for every origin
+   * if `origin` is omitted).
+   *
+   * Uses BiDi `permissions.setPermission` (W3C Permissions module).
+   * Each name in `permissions` corresponds to a `PermissionDescriptor.name`,
+   * for example: `'geolocation'`, `'notifications'`, `'clipboard-read'`,
+   * `'clipboard-write'`, `'camera'`, `'microphone'`, `'midi'`,
+   * `'background-sync'`, `'persistent-storage'`.
+   *
+   * @example
+   * await browser.grantPermissions(['geolocation', 'notifications']);
+   * await browser.grantPermissions(['clipboard-read'], { origin: 'https://example.com' });
+   */
+  async grantPermissions(
+    permissions: string[],
+    opts?: { origin?: string; state?: 'granted' | 'denied' | 'prompt' }
+  ): Promise<void> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'grantPermissions() requires BiDi (enableBiDi: true). ' +
+        'Permission overrides use the W3C BiDi `permissions.setPermission` command, ' +
+        'which has no Classic-WebDriver equivalent.'
+      );
+    }
+    if (!Array.isArray(permissions) || permissions.length === 0) {
+      throw new Error('grantPermissions: pass a non-empty array of permission names.');
+    }
+    const conn = this.bidiSession.getConnection();
+    const state = opts?.state ?? 'granted';
+    const origin = opts?.origin ?? (await this._currentOrigin());
+    if (!origin) {
+      throw new Error(
+        'grantPermissions: cannot infer origin from the current page. ' +
+        'Navigate to a page first, or pass `{ origin }` explicitly.'
+      );
+    }
+    for (const name of permissions) {
+      await conn.send('permissions.setPermission', {
+        descriptor: { name },
+        state,
+        origin,
+      });
+    }
+  }
+
+  /**
+   * Reset all permissions for an origin (or every origin) back to the
+   * browser default of `'prompt'`. Convenience wrapper around
+   * {@link grantPermissions} with `state: 'prompt'`.
+   */
+  async clearPermissions(
+    permissions: string[],
+    opts?: { origin?: string }
+  ): Promise<void> {
+    await this.grantPermissions(permissions, { ...opts, state: 'prompt' });
+  }
+
+  /**
+   * Override the geolocation reported by `navigator.geolocation`.
+   *
+   * Uses BiDi `emulation.setGeolocationOverride` (W3C BiDi
+   * `emulation` module). Pass `null` to clear the override and return
+   * to the real device location.
+   *
+   * @example
+   * await browser.setGeolocation({ latitude: 51.5074, longitude: -0.1278 });
+   * await browser.setGeolocation(null); // clear
+   */
+  async setGeolocation(
+    coords: { latitude: number; longitude: number; accuracy?: number } | null
+  ): Promise<void> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'setGeolocation() requires BiDi (enableBiDi: true). ' +
+        'Geolocation overrides use the W3C BiDi `emulation.setGeolocationOverride` ' +
+        'command, which has no Classic-WebDriver equivalent.'
+      );
+    }
+    const conn = this.bidiSession.getConnection();
+    // Apply across all top-level contexts in the default user context.
+    const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
+      'browsingContext.getTree',
+      {}
+    );
+    const tops = (tree.contexts ?? []).filter((c) => !c.parent);
+    const contexts = tops.map((c) => c.context);
+    const params: Record<string, unknown> = { contexts };
+    if (coords === null) {
+      params.coordinates = null;
+    } else {
+      if (
+        typeof coords.latitude !== 'number' ||
+        typeof coords.longitude !== 'number' ||
+        coords.latitude < -90 || coords.latitude > 90 ||
+        coords.longitude < -180 || coords.longitude > 180
+      ) {
+        throw new Error(
+          `setGeolocation: invalid coordinates ${JSON.stringify(coords)}. ` +
+          'latitude must be in [-90, 90] and longitude in [-180, 180].'
+        );
+      }
+      params.coordinates = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy ?? 1,
+      };
+    }
+    await conn.send('emulation.setGeolocationOverride', params);
+  }
+
+  /** Best-effort: derive the active page's origin (`scheme://host[:port]`). */
+  private async _currentOrigin(): Promise<string | undefined> {
+    try {
+      const u = await this.url();
+      if (!u || u === 'about:blank' || u.startsWith('data:')) return undefined;
+      const parsed = new URL(u);
+      return parsed.origin;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Wait for the page to reach a given load state.
+   * Call this after an action that triggers navigation (clicking a link, submitting a form).
+   *
+   * - `'load'` — page `load` event (default)
+   * - `'domcontentloaded'` — DOMContentLoaded (faster)
+   * - `'networkidle'` — load + no in-flight requests for 500 ms
+   *
+   * Uses BiDi events when available, falls back to polling `document.readyState`.
+   */
+  async waitForLoadState(
+    state: Exclude<LoadState, 'none'> = 'load',
+    opts?: { timeout?: number }
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
+
+    if (state === 'networkidle') {
+      if (this.bidiSession?.isConnected()) {
+        await this.bidiSession.network.waitForNetworkIdle({ timeout });
+      }
+      // Classic fallback: best-effort 500ms settle
+      else { await new Promise(r => setTimeout(r, 500)); }
+      return;
+    }
+
+    // --- 'load' or 'domcontentloaded' ---
+
+    if (this.bidiSession?.isConnected()) {
+      const context = this.bidiSession.getContext();
+
+      // Check readyState first. If already satisfied, return immediately —
+      // this avoids creating a timeout-Promise that could reject before the
+      // caller attaches a handler (unhandled-rejection warning).
+      const readyState = await this.driver.executeScript<string>('return document.readyState', []);
+      const satisfied = state === 'load'
+        ? readyState === 'complete'
+        : readyState === 'interactive' || readyState === 'complete';
+
+      if (satisfied) return;
+
+      // Not yet in the required state — register the BiDi event listener and
+      // wait. The risk window between the executeScript above and the listener
+      // registration below is a single synchronous turn of the event loop
+      // (no await), so in practice the event cannot be missed.
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          unsubscribe();
+          reject(new Error(`waitForLoadState('${state}') timed out after ${timeout}ms`));
+        }, timeout);
+
+        const handler = (params: Record<string, unknown>) => {
+          if (!context || params.context === context) {
+            clearTimeout(timer);
+            unsubscribe();
+            resolve();
+          }
+        };
+
+        // unsubscribe is assigned synchronously before any await
+        let unsubscribe = state === 'load'
+          ? this.bidiSession!.onLoad(handler)
+          : this.bidiSession!.onDomContentLoaded(handler);
+      });
+    }
+
+    // Classic fallback: poll document.readyState
+    const target = state === 'load' ? 'complete' : 'interactive';
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const readyState = await this.driver.executeScript<string>('return document.readyState', []);
+      if (readyState === 'complete' || (target === 'interactive' && readyState === 'interactive')) return;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    throw new Error(`waitForLoadState('${state}') timed out after ${timeout}ms`);
   }
 
   async url(): Promise<string> {
@@ -279,16 +844,738 @@ export class Browser {
   }
 
   async quit(): Promise<void> {
+    // Silently abort any running trace so we don't leak the timer.
+    if (this._tracer?.isRunning) this._tracer.abort();
     // Close BiDi connection first
     if (this.bidiSession) {
       await this.bidiSession.close().catch(() => { });
     }
-    await this.driver.quit();
+    // DELETE the WebDriver session — this tells the driver service to close the browser.
+    await this.driver.quit().catch(() => { });
+    // Give the browser process a moment to fully release any ports (e.g. Firefox BiDi
+    // WebSocket port 9222) before we kill the driver service. Without this pause, a
+    // subsequent launch may see a 404 when connecting to the new session's WebSocket.
+    await new Promise((r) => setTimeout(r, 500));
+    // Stop the underlying driver service (chromedriver / geckodriver)
+    // so we don't leak processes between sessions.
+    if (this._driverService) {
+      await this._driverService.stop().catch(() => { });
+      this._driverService = undefined;
+    }
   }
 
-  async click(selector: string | By): Promise<void> {
+  // ─── Tracing ─────────────────────────────────────────────────────────────
+
+  /**
+   * Start a tracing session. Captures console, errors, network requests
+   * and responses, and navigations. Optionally takes periodic screenshots.
+   *
+   * **BiDi-only.** Call `stopTrace(path)` to flush the bundle to disk.
+   *
+   * @example
+   * await browser.startTrace({ screenshots: true });
+   * await browser.navigateTo('/checkout');
+   * await browser.click('#pay');
+   * await browser.stopTrace('./traces/checkout.json');
+   */
+  async startTrace(opts?: TraceStartOptions): Promise<void> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'startTrace() requires BiDi (enableBiDi: true). ' +
+        'Tracing relies on BiDi events; Classic WebDriver does not expose them.'
+      );
+    }
+    if (!this._tracer) {
+      this._tracer = new Tracer(this, this.bidiSession.getConnection());
+    }
+    await this._tracer.start(opts);
+  }
+
+  /**
+   * Stop the active trace and write the JSON bundle to `path`.
+   * Screenshots, if any, are written to a sibling `screenshots/` folder.
+   * Returns the in-memory bundle.
+   */
+  async stopTrace(path: string): Promise<TraceBundle> {
+    if (!this._tracer || !this._tracer.isRunning) {
+      throw new Error('stopTrace(): no trace is running. Call startTrace() first.');
+    }
+    return this._tracer.stop(path);
+  }
+
+  /**
+   * Execute JavaScript in the page and return the result.
+   *
+   * Accepts a function (with optional args) or a script string:
+   * ```ts
+   * await browser.evaluate(() => document.title);
+   * await browser.evaluate((a, b) => a + b, 2, 3); // 5
+   * await browser.evaluate('return document.title');
+   * ```
+   *
+   * Uses BiDi `script.callFunction` / `script.evaluate` when available,
+   * falls back to Classic WebDriver `executeScript`.
+   * Only JSON-serializable return values are supported.
+   */
+  async evaluate<T = unknown>(
+    fn: ((...args: unknown[]) => T) | string,
+    ...args: unknown[]
+  ): Promise<T> {
+    const fnSrc = typeof fn === 'function' ? fn.toString() : fn;
+
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const context = this.bidiSession.getContext();
+      const target: Record<string, unknown> = context ? { context } : {};
+
+      let result: ScriptEvaluateResult;
+      if (typeof fn === 'function') {
+        result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
+          functionDeclaration: fnSrc,
+          target,
+          arguments: args.map(serializeLocalValue),
+          awaitPromise: true,
+        });
+      } else {
+        // String form: wrap in a function so `return` statements are valid,
+        // matching the behaviour of Classic WebDriver executeScript.
+        result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
+          functionDeclaration: `function() { ${fnSrc} }`,
+          target,
+          arguments: [],
+          awaitPromise: true,
+        });
+      }
+
+      if (result.type === 'exception') {
+        throw new Error(
+          `evaluate() threw an exception in the page: ${result.exceptionDetails?.text ?? 'unknown error'}`
+        );
+      }
+      if (!result.result) return undefined as T;
+      return unwrapRemoteValue(result.result) as T;
+    }
+
+    // Classic fallback
+    if (typeof fn === 'function') {
+      return this.driver.executeScript<T>(
+        `return (${fnSrc}).apply(null, Array.from(arguments))`,
+        args
+      );
+    }
+    return this.driver.executeScript<T>(fn, args);
+  }
+
+  /**
+   * Register a script that runs before any page script on every navigation.
+   * Returns a handle with a `remove()` method to unregister it.
+   *
+   * Requires BiDi (enabled by default). Throws a clear error otherwise.
+   *
+   * ```ts
+   * const script = await browser.addInitScript(() => {
+   *   window.__flags = { darkMode: true };
+   * });
+   * await browser.navigateTo(url); // __flags is available
+   * await script.remove();         // unregister
+   * ```
+   */
+  async addInitScript(
+    fnOrSrc: ((...args: unknown[]) => unknown) | string
+  ): Promise<{ remove(): Promise<void> }> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'addInitScript() requires BiDi. ' +
+        'BiDi is enabled by default — check that your browser supports it.'
+      );
+    }
+
+    const conn = this.bidiSession.getConnection();
+    const fnSrc =
+      typeof fnOrSrc === 'function'
+        ? fnOrSrc.toString()
+        : `() => { ${fnOrSrc} }`;
+
+    const result = await conn.send<{ script: string }>('script.addPreloadScript', {
+      functionDeclaration: fnSrc,
+    });
+
+    const scriptId = result.script;
+    return {
+      remove: async () => {
+        await conn.send('script.removePreloadScript', { script: scriptId });
+      },
+    };
+  }
+
+  /**
+   * Wait for the first network request matching a URL glob or predicate.
+   * Register **before** the action that triggers the request.
+   */
+  waitForRequest(
+    pattern: string | ((req: InterceptedRequest) => boolean),
+    opts?: { timeout?: number }
+  ): Promise<InterceptedRequest> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'waitForRequest() requires BiDi. BiDi is enabled by default — check your browser supports it.'
+      );
+    }
+    return this.network.waitForRequest(pattern, { timeout: opts?.timeout ?? this.defaults.navigationTimeout });
+  }
+
+  /**
+   * Wait for the first completed response matching a URL glob or predicate.
+   * Register **before** the action that triggers the request.
+   *
+   * @example
+   * ```ts
+   * const [res] = await Promise.all([
+   *   browser.waitForResponse('/api/users'),
+   *   browser.click('#load-btn'),
+   * ]);
+   * expect(res.status).toBe(200);
+   * ```
+   */
+  waitForResponse(
+    pattern: string | ((res: InterceptedResponse) => boolean),
+    opts?: { timeout?: number }
+  ): Promise<InterceptedResponse> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'waitForResponse() requires BiDi. BiDi is enabled by default \u2014 check your browser supports it.'
+      );
+    }
+    return this.network.waitForResponse(pattern, { timeout: opts?.timeout ?? this.defaults.navigationTimeout });
+  }
+
+  /**
+   * Subscribe to **every** network request or response. Returns an
+   * `off()` function that unsubscribes the listener.
+   *
+   * Use this for fire-and-forget logging, tracing, or assertion-on-every
+   * patterns where you do not know in advance which request you care
+   * about. For one-shot waits prefer {@link waitForRequest} /
+   * {@link waitForResponse}.
+   *
+   * @example
+   * ```ts
+   * const off = browser.on('response', (res) => {
+   *   console.log(res.status, res.url);
+   * });
+   * await browser.click('#load');
+   * off();
+   * ```
+   */
+  on(event: 'request', listener: (req: InterceptedRequest) => void): () => void;
+  on(event: 'response', listener: (res: InterceptedResponse) => void): () => void;
+  on(
+    event: 'request' | 'response',
+    listener: ((req: InterceptedRequest) => void) | ((res: InterceptedResponse) => void)
+  ): () => void {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        `browser.on('${event}') requires BiDi (enableBiDi: true). ` +
+        'Network event listeners use the W3C BiDi `network` module, which has no Classic-WebDriver equivalent.'
+      );
+    }
+    if (event === 'request') {
+      return this.network.on('request', listener as (req: InterceptedRequest) => void);
+    }
+    return this.network.on('response', listener as (res: InterceptedResponse) => void);
+  }
+
+  /**
+   * Run `action`, then wait until a new file appears in the downloads directory.
+   * Returns a `Download` handle with `path`, `suggestedFilename`, and `saveAs()`.
+   *
+   * @example
+   * const dl = await browser.waitForDownload(() => browser.click('#download-btn'));
+   * expect(dl.suggestedFilename).toBe('report.csv');
+   * await dl.saveAs('/tmp/report.csv');
+   */
+  async waitForDownload(
+    action: () => Promise<void> | void,
+    opts?: { timeout?: number }
+  ): Promise<Download> {
+    const dir = this._downloadsDir;
+    if (!dir) {
+      throw new Error('waitForDownload() requires a downloads directory. Browser was not launched correctly.');
+    }
+    const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
+
+    // Snapshot existing files before action
+    const before = new Set(fsSync.readdirSync(dir));
+
+    await action();
+
+    // Poll for a new non-.crdownload file
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const after = fsSync.readdirSync(dir);
+      const newFiles = after.filter(f => !before.has(f) && !f.endsWith('.crdownload'));
+      if (newFiles.length > 0) {
+        const filename = newFiles[0];
+        const filePath = path.join(dir, filename);
+        return {
+          path: filePath,
+          suggestedFilename: filename,
+          saveAs: async (targetPath: string) => {
+            await fs.copyFile(filePath, targetPath);
+          },
+        };
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    throw new Error(`waitForDownload() timed out after ${timeout}ms — no file appeared in ${dir}`);
+  }
+
+  // ─── Dialog handling ──────────────────────────────────────────────────────
+
+  /**
+   * Register a handler called every time a browser dialog opens (alert / confirm / prompt).
+   * The handler receives a `Dialog` object with `accept()` and `dismiss()` methods.
+   * Returns an unsubscribe function — call it to stop listening.
+   *
+   * If no handler is registered, dialogs are auto-dismissed so they don't hang the test.
+   *
+   * @example
+   * const off = browser.onDialog(async dialog => {
+   *   expect(dialog.message).toBe('Are you sure?');
+   *   await dialog.accept();
+   * });
+   * await browser.click('#confirm-btn');
+   * off(); // stop listening
+   */
+  onDialog(handler: (dialog: Dialog) => Promise<void> | void): () => void {
+    if (this.bidiSession?.isConnected()) {
+      return this.bidiSession.onDialog(async (params) => {
+        const dialog = this._buildDialog(params);
+        await handler(dialog);
+      });
+    }
+    // Classic: no push events — callers must use the imperative API below
+    // Return a no-op unsubscribe
+    return () => { /* no-op */ };
+  }
+
+  /**
+   * Accept the currently open dialog (OK / confirm).
+   * For prompt dialogs, pass `text` to type into the input first.
+   * Uses BiDi when available, Classic WebDriver otherwise.
+   */
+  async acceptDialog(text?: string): Promise<void> {
+    if (this.bidiSession?.isConnected()) {
+      await this.bidiSession.handleUserPrompt(true, text);
+      return;
+    }
+    if (text !== undefined) await this.driver.sendAlertText(text);
+    await this.driver.acceptAlert();
+  }
+
+  /**
+   * Dismiss the currently open dialog (Cancel / close).
+   * Uses BiDi when available, Classic WebDriver otherwise.
+   */
+  async dismissDialog(): Promise<void> {
+    if (this.bidiSession?.isConnected()) {
+      await this.bidiSession.handleUserPrompt(false);
+      return;
+    }
+    await this.driver.dismissAlert();
+  }
+
+  /**
+   * Get the message text of the currently open dialog.
+   * Uses BiDi when available, Classic WebDriver otherwise.
+   */
+  async getDialogMessage(): Promise<string> {
+    // BiDi surfaces the message in the userPromptOpened event, not via a query.
+    // For the imperative (non-event) case we fall through to Classic.
+    return this.driver.getAlertText();
+  }
+
+  /**
+   * Wait for the next dialog (alert / confirm / prompt) to open and return it.
+   * The dialog object has `accept()` and `dismiss()` methods — call one of them
+   * or the page will be frozen waiting for the dialog.
+   *
+   * Matches Playwright's `page.waitForEvent('dialog')` pattern:
+   * ```ts
+   * const [, dialog] = await Promise.all([
+   *   browser.click('#confirm-btn'),
+   *   browser.waitForDialog(),
+   * ]);
+   * await dialog.accept();
+   * ```
+   */
+  waitForDialog(opts?: { timeout?: number }): Promise<Dialog> {
+    const timeout = opts?.timeout ?? this.defaults.timeout;
+    return new Promise<Dialog>((resolve, reject) => {
+      const tid = timeout > 0
+        ? setTimeout(() => { off(); reject(new Error(`waitForDialog timed out after ${timeout}ms`)); }, timeout)
+        : undefined;
+
+      const off = this.onDialog((dialog) => {
+        if (tid !== undefined) clearTimeout(tid);
+        off();
+        resolve(dialog);
+      });
+    });
+  }
+
+  private _buildDialog(params: Record<string, unknown>): Dialog {
+    const _type = (params.type as DialogType) ?? 'alert';
+    const _message = String(params.message ?? '');
+    const _defaultValue = String(params.defaultValue ?? '');
+
+    return {
+      type: () => _type,
+      message: () => _message,
+      defaultValue: () => _defaultValue,
+      accept: async (text?: string) => { await this.acceptDialog(text); },
+      dismiss: async () => { await this.dismissDialog(); },
+    };
+  }
+
+  // ─── Frames ───────────────────────────────────────────────────────────────
+
+  /**
+   * Return a `Frame` object scoped to the first iframe matching `selector`.
+   * All element methods on the returned `Frame` are automatically targeted
+   * inside that iframe's browsing context.
+   *
+   * @example
+   * const frame = await browser.frame('#stripe-iframe');
+   * await frame.fill('#card-number', '4242 4242 4242 4242');
+   */
+  async frame(selector: string | By, opts?: { timeout?: number }): Promise<Frame> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: 5000 });
+    const el = await this.driver.wait(until.elementLocated(by), {
+      timeout: opts?.timeout ?? this.defaults.timeout,
+    });
+    const frameElementId = el.getId();
+
+    // Attempt to find the BiDi context id for this iframe
+    let bidiContextId: string | undefined;
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const topContextId = this.bidiSession.getContext();
+      if (topContextId) {
+        try {
+          const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
+            'browsingContext.getTree',
+            { root: topContextId }
+          );
+          // The BiDi context for the iframe has the top-level context as ancestor.
+          // We find the first child context (iframes appear as children).
+          const iframeSrc = await el.getAttribute('src');
+          bidiContextId = findIframeContext(tree.contexts[0], iframeSrc);
+        } catch {
+          // BiDi tree not available — fall back to Classic
+        }
+      }
+      return new Frame(this.driver, frameElementId, this.getDefaultTimeout, {
+        bidiContextId,
+        conn,
+      });
+    }
+
+    return new Frame(this.driver, frameElementId, this.getDefaultTimeout);
+  }
+
+  /**
+   * Return `Frame` objects for all iframes on the current page.
+   */
+  async frames(opts?: { timeout?: number }): Promise<Frame[]> {
+    const iframes = await this.driver.findElements(By.css('iframe'));
+    const result: Frame[] = [];
+    const conn = this.bidiSession?.isConnected() ? this.bidiSession.getConnection() : undefined;
+    const topContextId = conn ? this.bidiSession!.getContext() : undefined;
+
+    let tree: { contexts: BidiContextInfo[] } | undefined;
+    if (conn && topContextId) {
+      try {
+        tree = await conn.send<{ contexts: BidiContextInfo[] }>(
+          'browsingContext.getTree',
+          { root: topContextId }
+        );
+      } catch {
+        tree = undefined;
+      }
+    }
+
+    for (const iframe of iframes) {
+      let bidiContextId: string | undefined;
+      if (tree) {
+        const src = await iframe.getAttribute('src');
+        bidiContextId = findIframeContext(tree.contexts[0], src);
+      }
+      result.push(
+        new Frame(this.driver, iframe.getId(), this.getDefaultTimeout,
+          conn ? { bidiContextId, conn } : undefined)
+      );
+    }
+    return result;
+  }
+
+  // ─── Pages (top-level browsing contexts: tabs & popups) ──────────────────
+
+  /**
+   * Return `Page` objects for all open top-level browsing contexts
+   * (tabs and popup windows).
+   */
+  async pages(): Promise<Page[]> {
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
+        'browsingContext.getTree',
+        {}
+      );
+      return (tree.contexts ?? []).map(
+        (ctx) => new Page(this.driver, ctx.context, this.getDefaultTimeout, conn)
+      );
+    }
+
+    // Classic fallback: use window handles
+    const handles = await this.driver.getWindowHandles();
+    const pages: Page[] = [];
+    for (const handle of handles) {
+      pages.push(new Page(this.driver, handle, this.getDefaultTimeout));
+    }
+    return pages;
+  }
+
+  /**
+   * Open a new top-level browsing context (a tab or a window).
+   *
+   * Maps to BiDi `browsingContext.create`. **BiDi-only** — throws in Classic
+   * mode because WebDriver Classic has no spec-level command for creating
+   * top-level browsing contexts.
+   *
+   * @example
+   * const page = await browser.openPage({ url: 'https://example.com', type: 'tab' });
+   * await page.waitForLoadState();
+   */
+  async openPage(opts?: { url?: string; type?: 'tab' | 'window' }): Promise<Page> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'openPage() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic cannot create top-level browsing contexts.'
+      );
+    }
+    const conn = this.bidiSession.getConnection();
+    const created = await conn.send<{ context: string }>('browsingContext.create', {
+      type: opts?.type ?? 'tab',
+    });
+    const page = new Page(this.driver, created.context, this.getDefaultTimeout, conn);
+    if (opts?.url) {
+      await page.navigateTo(opts.url);
+    }
+    return page;
+  }
+
+  /**
+   * Run `action` and wait for a new top-level browsing context (tab / popup)
+   * to open. Returns a `Page` bound to the new context.
+   *
+   * @example
+   * const popup = await browser.waitForPage(() => browser.click('#open-popup'));
+   * await popup.waitForLoadState();
+   * const title = await popup.title();
+   */
+  async waitForPage(
+    action: () => Promise<void>,
+    opts?: { timeout?: number }
+  ): Promise<Page> {
+    const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
+
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+
+      // Subscribe to contextCreated if not already subscribed
+      await conn.subscribe(['browsingContext.contextCreated']).catch(() => {/* already subscribed */ });
+
+      return new Promise<Page>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          off();
+          reject(new Error(`waitForPage() timed out after ${timeout}ms`));
+        }, timeout);
+
+        const off = conn.on('browsingContext.contextCreated', (params: Record<string, unknown>) => {
+          // Only top-level contexts have no parent
+          if (!params.parent) {
+            clearTimeout(timer);
+            off();
+            resolve(new Page(
+              this.driver,
+              params.context as string,
+              this.getDefaultTimeout,
+              conn
+            ));
+          }
+        });
+
+        action().catch((err) => {
+          clearTimeout(timer);
+          off();
+          reject(err);
+        });
+      });
+    }
+
+    // Classic fallback: snapshot existing handles, run action, poll for new one
+    const before = new Set(await this.driver.getWindowHandles());
+    await action();
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const after = await this.driver.getWindowHandles();
+      const newHandles = after.filter(h => !before.has(h));
+      if (newHandles.length > 0) {
+        const handle = newHandles[0];
+        return new Page(
+          this.driver,
+          handle,
+          this.getDefaultTimeout
+        );
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+    throw new Error(`waitForPage() timed out after ${timeout}ms — no new tab or popup appeared`);
+  }
+
+  // ─── User contexts (isolated profiles, BiDi-only) ────────────────────────
+
+  /**
+   * Create a new isolated user context (an "incognito profile"). Each
+   * context has its own cookies, localStorage, and IndexedDB.
+   *
+   * Maps to BiDi `browser.createUserContext`. **BiDi-only** — throws in
+   * Classic mode because WebDriver Classic has no equivalent.
+   *
+   * @example
+   * const alice = await browser.newContext();
+   * const bob = await browser.newContext();
+   * const aPage = await alice.newPage({ url: 'https://app.example.com/login' });
+   * const bPage = await bob.newPage({ url: 'https://app.example.com/login' });
+   * // logging in as Alice in aPage does not leak into bPage.
+   */
+  async newContext(): Promise<BrowserContext> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'newContext() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts.'
+      );
+    }
+    const conn = this.bidiSession.getConnection();
+    const created = await conn.send<{ userContext: string }>('browser.createUserContext', {});
+    return new BrowserContext(
+      this.driver,
+      conn,
+      created.userContext,
+      this.getDefaultTimeout,
+      () => this.defaults.navigationTimeout
+    );
+  }
+
+  /**
+   * Return all open user contexts, including the default one.
+   *
+   * Maps to BiDi `browser.getUserContexts`. **BiDi-only.**
+   */
+  async contexts(): Promise<BrowserContext[]> {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'contexts() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts. ' +
+        'Use browser.pages() to list tabs instead.'
+      );
+    }
+    const conn = this.bidiSession.getConnection();
+    const result = await conn.send<{ userContexts: Array<{ userContext: string }> }>(
+      'browser.getUserContexts',
+      {}
+    );
+    return (result.userContexts ?? []).map(
+      (uc) => new BrowserContext(
+        this.driver,
+        conn,
+        uc.userContext,
+        this.getDefaultTimeout,
+        () => this.defaults.navigationTimeout
+      )
+    );
+  }
+
+  /**
+   * The implicit default user context the browser started in (id `'default'`).
+   * Pages opened via `browser.openPage()` / `browser.waitForPage()` belong
+   * to this context. **BiDi-only.**
+   */
+  get defaultContext(): BrowserContext {
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'defaultContext requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts.'
+      );
+    }
+    const conn = this.bidiSession.getConnection();
+    return new BrowserContext(
+      this.driver,
+      conn,
+      'default',
+      this.getDefaultTimeout,
+      () => this.defaults.navigationTimeout
+    );
+  }
+
+  /**
+   * Return the currently focused top-level page in `defaultContext`.
+   *
+   * This is the page that `browser.click()`, `browser.find()`,
+   * `browser.evaluate()` and the other `Browser`-level DOM shortcuts
+   * implicitly target. It **never** crosses into pages inside a
+   * non-default `BrowserContext`.
+   *
+   * Use it to make multi-tab tests explicit:
+   *
+   * @example
+   * const page = await browser.activePage();
+   * await page.click('#submit');   // identical to browser.click('#submit')
+   *
+   * @example
+   * const popup = await browser.openPage({ url: '/help' });
+   * // browser.activePage() still returns the original page —
+   * // openPage() does not steal focus.
+   */
+  async activePage(): Promise<Page> {
+    if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
+        'browsingContext.getTree',
+        {}
+      );
+      const tops = (tree.contexts ?? []).filter(
+        (c) => !c.parent && c.userContext === 'default'
+      );
+      if (tops.length === 0) {
+        throw new Error('activePage(): no top-level page in the default context.');
+      }
+      // Match the Classic-driver focus to disambiguate when multiple top-level
+      // pages exist in the default context (e.g. after browser.openPage()).
+      const handle = await this.driver.getCurrentWindowHandle().catch(() => '');
+      const focused = tops.find((c) => c.context === handle) ?? tops[0];
+      return new Page(this.driver, focused.context, this.getDefaultTimeout, conn);
+    }
+    // Classic mode: no user-context concept; just wrap the current window.
+    const handle = await this.driver.getCurrentWindowHandle();
+    return new Page(this.driver, handle, this.getDefaultTimeout);
+  }
+
+  async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
     await el.click();
   }
 
@@ -299,7 +1586,7 @@ export class Browser {
   ): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), {
-      timeout: opts?.timeout ?? 5000,
+      timeout: opts?.timeout ?? this.defaults.timeout,
     });
     await el.click();
     await el.clear();
@@ -309,7 +1596,7 @@ export class Browser {
   async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), {
-      timeout: opts?.timeout ?? 5000,
+      timeout: opts?.timeout ?? this.defaults.timeout,
     });
     await el.clear();
   }
@@ -317,7 +1604,7 @@ export class Browser {
   async getValue(selector: string | By, opts?: { timeout?: number }): Promise<string> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementLocated(by), {
-      timeout: opts?.timeout ?? 5000,
+      timeout: opts?.timeout ?? this.defaults.timeout,
     });
     const val = await el.getProperty('value');
     return String(val ?? '');
@@ -326,7 +1613,7 @@ export class Browser {
   async getAttribute(selector: string | By, name: string, opts?: { timeout?: number }): Promise<string | null> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementLocated(by), {
-      timeout: opts?.timeout ?? 5000,
+      timeout: opts?.timeout ?? this.defaults.timeout,
     });
     return await el.getAttribute(name);
   }
@@ -358,101 +1645,163 @@ export class Browser {
     },
   };
 
-  // Capture a screenshot. If selectorOrBy provided, capture element; else full page. Returns raw buffer.
-  async screenshot(selectorOrBy?: string | By): Promise<Buffer> {
-    if (selectorOrBy) {
-      const by = typeof selectorOrBy === 'string' ? By.css(selectorOrBy) : selectorOrBy;
-      const el = await this.driver.wait(until.elementIsVisible(by), { timeout: 5000 });
-      const b64 = await el.screenshotBase64();
-      return Buffer.from(b64, 'base64');
+  /**
+   * Capture a screenshot of the active page (viewport by default), the
+   * full scrollable document (`fullPage: true`), or an element matching
+   * `selector`. Optionally write the PNG to `path`. Returns the raw PNG
+   * buffer.
+   *
+   * Full-page capture uses BiDi `browsingContext.captureScreenshot` with
+   * `origin: 'document'` and therefore requires `enableBiDi: true`
+   * (the default). Element capture composes auto-waiting via the same
+   * resolution as `find()`.
+   *
+   * @example
+   * const buf = await browser.screenshot();
+   * await browser.screenshot({ path: 'viewport.png' });
+   * await browser.screenshot({ fullPage: true, path: 'full.png' });
+   * await browser.screenshot({ selector: '#chart', path: 'chart.png' });
+   */
+  async screenshot(opts?: {
+    path?: string;
+    selector?: string | By;
+    fullPage?: boolean;
+    timeout?: number;
+  }): Promise<Buffer> {
+    if (opts?.fullPage && opts?.selector !== undefined) {
+      throw new Error(
+        'screenshot: `fullPage` and `selector` are mutually exclusive. ' +
+        'Use `selector` to capture an element, or `fullPage` to capture the whole document.'
+      );
     }
-    const b64 = await this.driver.screenshotBase64();
-    return Buffer.from(b64, 'base64');
-  }
-
-  // Convenience: capture (optionally element) screenshot and save to file, returning buffer.
-  async saveScreenshot(path: string, selectorOrBy?: string | By): Promise<Buffer> {
-    const buf = await this.screenshot(selectorOrBy);
-    await fs.writeFile(path, buf);
+    let buf: Buffer;
+    if (opts?.selector !== undefined) {
+      const by = typeof opts.selector === 'string' ? By.css(opts.selector) : opts.selector;
+      const el = await this.driver.wait(until.elementIsVisible(by), {
+        timeout: opts.timeout ?? this.defaults.timeout,
+      });
+      const b64 = await el.screenshotBase64();
+      buf = Buffer.from(b64, 'base64');
+    } else if (opts?.fullPage) {
+      if (!this.bidiSession?.isConnected()) {
+        throw new Error(
+          'screenshot({ fullPage: true }) requires BiDi (enableBiDi: true). ' +
+          'Full-page screenshots use the W3C BiDi `browsingContext.captureScreenshot` ' +
+          'command with `origin: "document"`, which has no Classic-WebDriver equivalent.'
+        );
+      }
+      const conn = this.bidiSession.getConnection();
+      const page = await this.activePage();
+      const result = await conn.send<{ data: string }>('browsingContext.captureScreenshot', {
+        context: page.id(),
+        origin: 'document',
+      });
+      buf = Buffer.from(result.data, 'base64');
+    } else {
+      const b64 = await this.driver.screenshotBase64();
+      buf = Buffer.from(b64, 'base64');
+    }
+    if (opts?.path) await fs.writeFile(opts.path, buf);
     return buf;
   }
 
   expect(selector: string | By) {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    return expectSelector(this.driver, by);
+    return expectSelector(this.driver, by, this.getDefaultTimeout);
   }
 
   find(selector: string | By): ElementHandle {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    return new ElementHandle(this.driver, by);
+    return new ElementHandle(this.driver, by, this.getDefaultTimeout);
+  }
+
+  /**
+   * Return a lazy, chainable `Locator` for the given selector.
+   * Prefer `locator()` over `find()` when you need composition, filtering, or indexed access.
+   */
+  locator(selector: string | By): Locator {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    return new Locator(this.driver, by, this.getDefaultTimeout);
+  }
+
+  /**
+   * Return snapshot `ElementHandle`s for all elements matching `selector` at call time.
+   * Use `locator().all()` when you need filtering; use `findAll()` for the simple array case.
+   */
+  async findAll(selector: string | By): Promise<ElementHandle[]> {
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const webElements = await this.driver.findElements(by);
+    return webElements.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
   }
 
   getByRole(role: string, opts?: { name?: string; exact?: boolean; includeHidden?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.role(role, opts));
+    return new ElementHandle(this.driver, By.role(role, opts), this.getDefaultTimeout);
   }
 
   getByText(text: string, opts?: { exact?: boolean }): ElementHandle {
-    if (opts?.exact === false) {
-      return new ElementHandle(this.driver, By.partialText(text));
-    }
-    return new ElementHandle(this.driver, By.text(text));
+    return new ElementHandle(this.driver, By.text(text, opts), this.getDefaultTimeout);
   }
 
   getByLabel(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.labelText(text, opts));
+    return new ElementHandle(this.driver, By.labelText(text, opts), this.getDefaultTimeout);
   }
 
   getByPlaceholder(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.placeholder(text, opts));
+    return new ElementHandle(this.driver, By.placeholder(text, opts), this.getDefaultTimeout);
   }
 
   getByTestId(id: string): ElementHandle {
-    return new ElementHandle(this.driver, By.testId(id));
+    return new ElementHandle(this.driver, By.testId(id), this.getDefaultTimeout);
   }
 
   // Keyboard controller and enum for nicer usage: browser.keyboard.press(Key.Enter)
-  keyboard: KeyboardController;
+  keyboard: Keyboard;
 
   // Mouse controller: browser.mouse.click(...), move, down, up, wheel, dragAndDrop
-  mouse: MouseController;
+  mouse: Mouse;
 
   static Key = Key;
 
-  async waitFor(
-    check: ((driver: Driver) => Promise<any> | any) | (() => Promise<any> | any),
-    options?: WaitOptions & { message?: string }
-  ) {
-    const cond: Condition<any> = async (d: Driver) => {
-      try {
-        const r = await (check.length > 0
-          ? (check as (d: Driver) => any)(d)
-          : (check as () => any)());
-        return r;
-      } catch {
-        return undefined as any;
-      }
-    };
-    return this.wait(cond, options as any);
-  }
-
   async waitForVisible(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? 5000 });
+    await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
   }
 
   async waitForHidden(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementIsNotVisible(by), { timeout: opts?.timeout ?? 5000 });
+    await this.driver.wait(until.elementIsNotVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
   }
 
   async waitForAttached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementExists(by), { timeout: opts?.timeout ?? 5000 });
+    await this.driver.wait(until.elementExists(by), { timeout: opts?.timeout ?? this.defaults.timeout });
   }
 
   async waitForDetached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementNotExists(by), { timeout: opts?.timeout ?? 5000 });
+    await this.driver.wait(until.elementNotExists(by), { timeout: opts?.timeout ?? this.defaults.timeout });
+  }
+
+  /**
+   * Wait for an element to reach the given state.
+   *
+   * Canonical wait API; the four `waitForVisible/Hidden/Attached/Detached`
+   * methods are kept as one-line shortcuts.
+   *
+   * @example
+   * await browser.waitFor('#spinner', { state: 'hidden' });
+   * await browser.waitFor('#toast', { state: 'visible', timeout: 2000 });
+   */
+  async waitFor(
+    selector: string | By,
+    opts: { state: 'visible' | 'hidden' | 'attached' | 'detached'; timeout?: number }
+  ): Promise<void> {
+    switch (opts.state) {
+      case 'visible': return this.waitForVisible(selector, opts);
+      case 'hidden': return this.waitForHidden(selector, opts);
+      case 'attached': return this.waitForAttached(selector, opts);
+      case 'detached': return this.waitForDetached(selector, opts);
+    }
   }
 
   actions() {

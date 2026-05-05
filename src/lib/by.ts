@@ -18,13 +18,13 @@ export class By {
   static id(id: string): By {
     return new By('css selector', `#${cssEscape(id)}`);
   }
-  static nameAttr(name: string): By {
+  static name(name: string): By {
     return new By('css selector', `[name="${cssEscape(name)}"]`);
   }
   static className(cls: string): By {
     return new By('css selector', `.${cssEscape(cls)}`);
   }
-  static tag(tag: string): By {
+  static tagName(tag: string): By {
     return new By('css selector', tag);
   }
   static attr(name: string, value: string): By {
@@ -41,7 +41,23 @@ export class By {
   }
 
   // Text-based locators (XPath)
-  static text(text: string, opts?: { caseSensitive?: boolean; trim?: boolean }): By {
+  /**
+   * Match elements by their normalized visible text.
+   *
+   * - `{ exact: true }` (default) — full-text equality.
+   * - `{ exact: false }` — substring match; equivalent to `By.partialText()`.
+   *
+   * Other options:
+   * - `caseSensitive` — defaults to `true`.
+   * - `trim` — collapse whitespace via `normalize-space()`. Defaults to `true`.
+   */
+  static text(
+    text: string,
+    opts?: { exact?: boolean; caseSensitive?: boolean; trim?: boolean }
+  ): By {
+    if (opts?.exact === false) {
+      return By.partialText(text, opts);
+    }
     const cs = opts?.caseSensitive !== false; // default true
     const trim = opts?.trim !== false; // default true
     const nodeExpr = trim ? 'normalize-space(.)' : 'string(.)';
@@ -52,6 +68,11 @@ export class By {
     return By.xpath(xpath);
   }
 
+  /**
+   * Match elements whose normalized text contains `substring`. Prefer
+   * `By.text(s, { exact: false })` for symmetry with the other locators;
+   * this lower-level entry point is kept for explicit use.
+   */
   static partialText(substring: string, opts?: { caseSensitive?: boolean; trim?: boolean }): By {
     const cs = opts?.caseSensitive !== false; // default true
     const trim = opts?.trim !== false; // default true

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Screenshot Fixture</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #ffffff;
+    }
+
+    /* A predictable, very tall document so a full-page screenshot
+       must be taller than the viewport. Each section is exactly
+       600px tall; ten sections = 6000px total height. */
+    .section {
+      height: 600px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    #s1 {
+      background: #ef4444;
+    }
+
+    #s2 {
+      background: #f97316;
+    }
+
+    #s3 {
+      background: #eab308;
+    }
+
+    #s4 {
+      background: #22c55e;
+    }
+
+    #s5 {
+      background: #14b8a6;
+    }
+
+    #s6 {
+      background: #0ea5e9;
+    }
+
+    #s7 {
+      background: #6366f1;
+    }
+
+    #s8 {
+      background: #a855f7;
+    }
+
+    #s9 {
+      background: #ec4899;
+    }
+
+    #s10 {
+      background: #111827;
+    }
+
+    #marker-bottom {
+      position: absolute;
+      bottom: 0;
+      width: 100%;
+      text-align: center;
+      padding: 8px 0;
+      background: #000;
+      color: #fff;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="s1" class="section">Section 1</div>
+  <div id="s2" class="section">Section 2</div>
+  <div id="s3" class="section">Section 3</div>
+  <div id="s4" class="section">Section 4</div>
+  <div id="s5" class="section">Section 5</div>
+  <div id="s6" class="section">Section 6</div>
+  <div id="s7" class="section">Section 7</div>
+  <div id="s8" class="section">Section 8</div>
+  <div id="s9" class="section">Section 9</div>
+  <div id="s10" class="section">Section 10</div>
+  <div id="marker-bottom">bottom-of-document</div>
+</body>
+
+</html>

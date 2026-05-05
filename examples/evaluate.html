@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Evaluate Playground</title>
+</head>
+
+<body>
+  <h1>Evaluate Playground</h1>
+
+  <!-- target element for element.evaluate() tests -->
+  <button id="action-btn" class="primary active">Click me</button>
+
+  <!-- state exposed on window.__state for evaluate() tests -->
+  <script>
+    window.__state = {
+      count: 0,
+      name: 'craftdriver',
+    };
+
+    document.getElementById('action-btn').addEventListener('click', function () {
+      window.__state.count++;
+    });
+  </script>
+</body>
+
+</html>

@@ -1,8 +1,8 @@
 import type { Driver } from './driver.js';
 import { getKeyValue, type KeyValue } from './keys.js';
 
-export class KeyboardController {
-  constructor(private driver: Driver) {}
+export class Keyboard {
+  constructor(private driver: Driver) { }
 
   async type(text: string): Promise<void> {
     await this.driver.typeText(text);

@@ -8,10 +8,13 @@ import type { BiDiConnection } from './connection.js';
 import type { Driver } from '../driver.js';
 import type {
   BrowsingContext,
-  NetworkCookie,
+  Cookie,
+  CookieInput,
   SessionState,
-  PartialCookie,
+  RawPartialCookie,
+  RawNetworkCookie,
   GetCookiesResult,
+  BytesValue,
 } from './types.js';
 
 export interface StorageStateOptions {
@@ -110,7 +113,7 @@ export class SessionStateManager {
   /**
    * Get all cookies using BiDi or fallback to Classic
    */
-  async getCookies(filter?: { domain?: string; name?: string }): Promise<NetworkCookie[]> {
+  async getCookies(filter?: { domain?: string; name?: string }): Promise<Cookie[]> {
     if (this.connection?.isConnected()) {
       return this.getCookiesBiDi(filter);
     }
@@ -120,7 +123,7 @@ export class SessionStateManager {
   /**
    * Set cookies using BiDi or fallback to Classic
    */
-  async setCookies(cookies: NetworkCookie[] | PartialCookie[]): Promise<void> {
+  async setCookies(cookies: Cookie[] | CookieInput[]): Promise<void> {
     if (this.connection?.isConnected()) {
       await this.setCookiesBiDi(cookies);
     } else {
@@ -168,9 +171,9 @@ export class SessionStateManager {
         ? Math.floor(cookie.expiry.getTime() / 1000)
         : cookie.expiry;
 
-    const partialCookie: PartialCookie = {
+    const partialCookie: CookieInput = {
       name: cookie.name,
-      value: { type: 'string', value: cookie.value },
+      value: cookie.value,
       domain: cookie.domain || (await this.getCurrentDomain()),
       path: cookie.path,
       secure: cookie.secure,
@@ -187,7 +190,7 @@ export class SessionStateManager {
   private async getCookiesBiDi(filter?: {
     domain?: string;
     name?: string;
-  }): Promise<NetworkCookie[]> {
+  }): Promise<Cookie[]> {
     const params: Record<string, unknown> = {};
     if (filter) {
       params.filter = filter;
@@ -197,10 +200,10 @@ export class SessionStateManager {
     }
 
     const result = await this.connection!.send<GetCookiesResult>('storage.getCookies', params);
-    return result.cookies;
+    return result.cookies.map((cookie) => this.normalizeCookie(cookie));
   }
 
-  private async getCookiesClassic(): Promise<NetworkCookie[]> {
+  private async getCookiesClassic(): Promise<Cookie[]> {
     const cookies = await this.driver.executeScript<
       Array<{
         name: string;
@@ -230,7 +233,7 @@ export class SessionStateManager {
 
     return (cookies || []).map((c) => ({
       name: c.name,
-      value: { type: 'string' as const, value: c.value },
+      value: c.value,
       domain: c.domain,
       path: c.path || '/',
       size: (c.name + c.value).length,
@@ -241,9 +244,8 @@ export class SessionStateManager {
     }));
   }
 
-  private async setCookiesBiDi(cookies: NetworkCookie[] | PartialCookie[]): Promise<void> {
+  private async setCookiesBiDi(cookies: Cookie[] | CookieInput[]): Promise<void> {
     for (const cookie of cookies) {
-      // Both NetworkCookie and PartialCookie now have value as BytesValue
       // Note: sameSite: 'none' requires secure: true, so adjust if needed
       let sameSite = cookie.sameSite;
       let secure = cookie.secure;
@@ -252,9 +254,9 @@ export class SessionStateManager {
         sameSite = 'lax'; // Default to lax for non-secure cookies
       }
 
-      const partialCookie: PartialCookie = {
+      const partialCookie: RawPartialCookie = {
         name: cookie.name,
-        value: cookie.value,
+        value: { type: 'string', value: this.normalizeCookieValue(cookie.value) },
         domain: cookie.domain,
         path: cookie.path,
         httpOnly: cookie.httpOnly,
@@ -275,10 +277,9 @@ export class SessionStateManager {
     }
   }
 
-  private async setCookiesClassic(cookies: NetworkCookie[] | PartialCookie[]): Promise<void> {
+  private async setCookiesClassic(cookies: Cookie[] | CookieInput[]): Promise<void> {
     for (const cookie of cookies) {
-      // Extract string value from BytesValue
-      const value = cookie.value.value;
+      const value = this.normalizeCookieValue(cookie.value);
 
       let cookieStr = `${cookie.name}=${encodeURIComponent(value)}`;
       if (cookie.path) cookieStr += `; path=${cookie.path}`;
@@ -292,6 +293,17 @@ export class SessionStateManager {
 
       await this.driver.executeScript(`document.cookie = ${JSON.stringify(cookieStr)}`);
     }
+  }
+
+  private normalizeCookie(cookie: RawNetworkCookie): Cookie {
+    return {
+      ...cookie,
+      value: this.normalizeCookieValue(cookie.value),
+    };
+  }
+
+  private normalizeCookieValue(value: string | BytesValue): string {
+    return typeof value === 'string' ? value : value.value;
   }
 
   private async getLocalStorage(origins?: string[]): Promise<Record<string, Record<string, string>>> {

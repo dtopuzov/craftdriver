@@ -2,6 +2,9 @@ import type { By } from './by.js';
 import type { Driver } from './driver.js';
 import { until } from './wait.js';
 
+/** Context switcher for frame/window scoping — used by Frame and Page. */
+export type ContextSwitcher = { in: () => Promise<void>; out: () => Promise<void> };
+
 export interface ExpectApi {
   toHaveText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
   toContainText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
@@ -32,7 +35,7 @@ function matchValue(actual: string, expected: string | RegExp): boolean {
   return actual === expected;
 }
 
-export function expectSelector(driver: Driver, by: By): ExpectApi {
+export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => number = () => 5000, contextSwitcher?: ContextSwitcher): ExpectApi {
   function fail(message: string, callerFn?: Function): never {
     const error = new Error(message);
     // Remove internal expect.ts frames from stack trace so test file line shows first
@@ -46,7 +49,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     let last = '';
     while (Date.now() < deadline) {
@@ -69,7 +72,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     let last = '';
     while (Date.now() < deadline) {
@@ -92,7 +95,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     let last = '';
     while (Date.now() < deadline) {
@@ -116,7 +119,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     value?: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     let last: string | null = null;
     while (Date.now() < deadline) {
@@ -146,7 +149,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     className: string,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     let last = '';
     while (Date.now() < deadline) {
@@ -166,7 +169,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeVisible = async function toBeVisible(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     try {
       await driver.wait(until.elementIsVisible(by), { timeout });
     } catch {
@@ -175,7 +178,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeNotVisible = async function toBeNotVisible(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     try {
       await driver.wait(until.elementIsNotVisible(by), { timeout });
     } catch {
@@ -184,7 +187,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeEnabled = async function toBeEnabled(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -200,7 +203,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeDisabled = async function toBeDisabled(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -216,7 +219,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeChecked = async function toBeChecked(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -232,7 +235,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
   };
 
   const toBeNotChecked = async function toBeNotChecked(opts?: { timeout?: number }) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -251,7 +254,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -272,7 +275,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -293,7 +296,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -315,7 +318,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     value?: string | RegExp,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -343,7 +346,7 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     className: string,
     opts?: { timeout?: number }
   ) {
-    const timeout = opts?.timeout ?? 5000;
+    const timeout = opts?.timeout ?? getDefaultTimeout();
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
@@ -360,26 +363,40 @@ export function expectSelector(driver: Driver, by: By): ExpectApi {
     fail(`Expected element ${by.using}(${by.value}) to NOT have class "${className}"`, notToHaveClass);
   };
 
+  // Wrap all methods with context switching if a switcher is provided
+  function wrapCtx<T extends (...args: any[]) => Promise<any>>(fn: T): T {
+    if (!contextSwitcher) return fn;
+    const sw = contextSwitcher;
+    return (async (...args: Parameters<T>) => {
+      await sw.in();
+      try {
+        return await (fn as any)(...args);
+      } finally {
+        await sw.out();
+      }
+    }) as T;
+  }
+
   return {
-    toHaveText,
-    toContainText,
-    toHaveValue,
-    toHaveAttribute,
-    toHaveClass,
-    toBeVisible,
-    toBeEnabled,
-    toBeDisabled,
-    toBeChecked,
+    toHaveText: wrapCtx(toHaveText),
+    toContainText: wrapCtx(toContainText),
+    toHaveValue: wrapCtx(toHaveValue),
+    toHaveAttribute: wrapCtx(toHaveAttribute),
+    toHaveClass: wrapCtx(toHaveClass),
+    toBeVisible: wrapCtx(toBeVisible),
+    toBeEnabled: wrapCtx(toBeEnabled),
+    toBeDisabled: wrapCtx(toBeDisabled),
+    toBeChecked: wrapCtx(toBeChecked),
     not: {
-      toBeVisible: toBeNotVisible,
-      toBeEnabled: toBeDisabled, // not enabled = disabled
-      toBeDisabled: toBeEnabled, // not disabled = enabled
-      toBeChecked: toBeNotChecked,
-      toHaveText: notToHaveText,
-      toContainText: notToContainText,
-      toHaveValue: notToHaveValue,
-      toHaveAttribute: notToHaveAttribute,
-      toHaveClass: notToHaveClass,
+      toBeVisible: wrapCtx(toBeNotVisible),
+      toBeEnabled: wrapCtx(toBeDisabled), // not enabled = disabled
+      toBeDisabled: wrapCtx(toBeEnabled), // not disabled = enabled
+      toBeChecked: wrapCtx(toBeNotChecked),
+      toHaveText: wrapCtx(notToHaveText),
+      toContainText: wrapCtx(notToContainText),
+      toHaveValue: wrapCtx(notToHaveValue),
+      toHaveAttribute: wrapCtx(notToHaveAttribute),
+      toHaveClass: wrapCtx(notToHaveClass),
     },
   };
 }

@@ -21,8 +21,8 @@ describe('By locator strategies (selectors.html)', () => {
     await browser.expect('#status').toHaveText('by-id');
   });
 
-  it('By.nameAttr', async () => {
-    await browser.click(By.nameAttr('by-name'));
+  it('By.name', async () => {
+    await browser.click(By.name('by-name'));
     await browser.expect('#status').toHaveText('by-name');
   });
 
@@ -31,8 +31,8 @@ describe('By locator strategies (selectors.html)', () => {
     await browser.expect('#status').toHaveText('by-class');
   });
 
-  it('By.tag', async () => {
-    await browser.click(By.tag('img'));
+  it('By.tagName', async () => {
+    await browser.click(By.tagName('img'));
     await browser.expect('#status').toHaveText('by-alt');
   });
 
@@ -102,7 +102,7 @@ describe('By locator strategies (selectors.html)', () => {
 
     it('getByText() finds element by text content', async () => {
       await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
-      const tagName = await browser.getByText('Login').tag();
+      const tagName = await browser.getByText('Login').tagName();
       expect(tagName).toBe('h1');
     });
   });

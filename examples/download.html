@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>File Download Example</title>
+</head>
+
+<body>
+  <h1>File Download</h1>
+
+  <!-- clicking this triggers a download of a small text file -->
+  <button id="download-btn" onclick="downloadFile()">Download report.txt</button>
+
+  <script>
+    function downloadFile() {
+      const content = 'craftdriver download test\nline 2\nline 3\n';
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'report.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+
+</html>
