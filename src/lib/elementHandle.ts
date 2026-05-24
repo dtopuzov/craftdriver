@@ -5,6 +5,7 @@ import { until } from './wait.js';
 import fs from 'fs/promises';
 import { expectSelector } from './expect.js';
 import { getKeyValue, type KeyValue } from './keys.js';
+import { A11y } from './a11y.js';
 
 export interface ElementOptions {
   timeout?: number;
@@ -287,5 +288,21 @@ export class ElementHandle {
         [el, ...args]
       );
     });
+  }
+
+  private _a11y?: A11y;
+  /**
+   * Element-scoped accessibility audit via axe-core.
+   * The audit is restricted to this element and its descendants.
+   */
+  get a11y(): A11y {
+    if (!this._a11y) {
+      this._a11y = new A11y({
+        driver: this.driver,
+        resolveTarget: () => this._resolveLocated(),
+        withContext: (fn) => this._withContext(fn),
+      });
+    }
+    return this._a11y;
   }
 }

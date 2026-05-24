@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: accessibility audits — `browser.a11y.audit()` / `check()` plus element-scoped `element.a11y.*` and `locator.a11y.*` wrap axe-core (shipped as a direct dependency — works out of the box). Ergonomic `disableRules: string[]` shorthand, `rules` whitelist, `minImpact` filter, and `axeOptions` escape hatch. `check()` throws an `A11yError` listing every violation with its help URL. See [docs/accessibility.md](docs/accessibility.md).
 - feat: full-page screenshots — `browser.screenshot({ fullPage: true })` captures the entire scrollable document via BiDi `browsingContext.captureScreenshot` with `origin: 'document'`. Viewport remains the default. `fullPage` and `selector` are mutually exclusive. See [docs/screenshots.md](docs/screenshots.md).
 - feat: history navigation — `browser.goBack()` / `goForward()` / `reload()`, mirrored on `Page`. BiDi `browsingContext.traverseHistory` / `reload` with Classic `/back`, `/forward`, `/refresh` fallback.
 - feat: `page.content()` and `browser.content()` return the full document HTML; `page.setContent(html, { waitUntil })` and `browser.setContent(...)` replace the document via a `data:text/html` navigation.

@@ -2,6 +2,8 @@
 
 CraftDriver provides a fluent assertion API via `browser.expect()` for testing element states.
 
+> For accessibility assertions, see [docs/accessibility.md](./accessibility.md) — `browser.a11y.check()` is the assertion form of the axe-core wrapper.
+
 ## Basic Usage
 
 ```typescript

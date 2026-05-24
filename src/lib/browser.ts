@@ -31,6 +31,7 @@ import { Frame } from './frame.js';
 import { Page } from './page.js';
 import { BrowserContext } from './browserContext.js';
 import { Tracer, type TraceStartOptions, type TraceBundle } from './tracing.js';
+import { A11y } from './a11y.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -254,6 +255,7 @@ export class Browser {
   private _logs?: LogMonitor;
   private _tracer?: Tracer;
   private _storage?: SessionStateManager;
+  private _a11y?: A11y;
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
 
@@ -488,6 +490,22 @@ export class Browser {
       );
     }
     return this._storage;
+  }
+
+  /**
+   * Accessibility audits via axe-core (optional peer dependency).
+   *
+   * ```ts
+   * await browser.a11y.check({ disableRules: ['color-contrast'] });
+   * ```
+   *
+   * Requires `axe-core` to be installed: `npm install --save-dev axe-core`.
+   */
+  get a11y(): A11y {
+    if (!this._a11y) {
+      this._a11y = new A11y({ driver: this.driver });
+    }
+    return this._a11y;
   }
 
   /**
