@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Emulation fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; background: #fff; color: #111; }
+    #scheme-readout { padding: 8px; border: 1px solid #ccc; }
+    /* prefers-color-scheme observable via CSS */
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      #scheme-readout { border-color: #555; }
+    }
+    /* prefers-reduced-motion observable via CSS */
+    .spinner { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; }
+    }
+    /* forced-colors observable via CSS */
+    #fc-readout { background: canvas; color: canvastext; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Emulation fixture</h1>
+
+  <!-- prefers-color-scheme -->
+  <section>
+    <h2>Color scheme</h2>
+    <div id="scheme-readout">readout</div>
+    <script>
+      (function () {
+        var el = document.getElementById('scheme-readout');
+        function update() {
+          var dark = matchMedia('(prefers-color-scheme: dark)').matches;
+          var light = matchMedia('(prefers-color-scheme: light)').matches;
+          el.textContent = dark ? 'dark' : light ? 'light' : 'no-preference';
+        }
+        update();
+        matchMedia('(prefers-color-scheme: dark)').addEventListener('change', update);
+      })();
+    </script>
+  </section>
+
+  <!-- prefers-reduced-motion -->
+  <section>
+    <h2>Reduced motion</h2>
+    <span id="spinner" class="spinner">*</span>
+    <div id="rm-readout"></div>
+    <script>
+      (function () {
+        var el = document.getElementById('rm-readout');
+        function update() {
+          el.textContent = matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? 'reduce' : 'no-preference';
+        }
+        update();
+        matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', update);
+      })();
+    </script>
+  </section>
+
+  <!-- forced-colors -->
+  <section>
+    <h2>Forced colors</h2>
+    <div id="fc-readout"></div>
+    <script>
+      (function () {
+        var el = document.getElementById('fc-readout');
+        function update() {
+          el.textContent = matchMedia('(forced-colors: active)').matches
+            ? 'active' : 'none';
+        }
+        update();
+      })();
+    </script>
+  </section>
+
+  <!-- locale -->
+  <section>
+    <h2>Locale</h2>
+    <div id="lang-readout"></div>
+    <div id="number-readout"></div>
+    <script>
+      document.getElementById('lang-readout').textContent = navigator.language;
+      // 1234.5 in en-US -> "1,234.5", in de-DE -> "1.234,5"
+      document.getElementById('number-readout').textContent =
+        new Intl.NumberFormat().format(1234.5);
+    </script>
+  </section>
+
+  <!-- timezone -->
+  <section>
+    <h2>Timezone</h2>
+    <div id="tz-readout"></div>
+    <script>
+      // Resolved IANA zone, e.g. "Europe/Berlin"
+      document.getElementById('tz-readout').textContent =
+        Intl.DateTimeFormat().resolvedOptions().timeZone;
+    </script>
+  </section>
+
+  <!-- offline -->
+  <section>
+    <h2>Network</h2>
+    <div id="online-readout"></div>
+    <button id="fetch-btn" type="button">fetch /</button>
+    <div id="fetch-readout"></div>
+    <script>
+      var online = document.getElementById('online-readout');
+      function syncOnline() { online.textContent = navigator.onLine ? 'online' : 'offline'; }
+      syncOnline();
+      window.addEventListener('online', syncOnline);
+      window.addEventListener('offline', syncOnline);
+
+      document.getElementById('fetch-btn').addEventListener('click', function () {
+        var out = document.getElementById('fetch-readout');
+        out.textContent = '';
+        fetch('/').then(
+          function (r) { out.textContent = 'ok:' + r.status; },
+          function (e) { out.textContent = 'error:' + (e && e.message || e); }
+        );
+      });
+    </script>
+  </section>
+</body>
+</html>

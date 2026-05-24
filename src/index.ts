@@ -10,6 +10,7 @@ export {
   type DeviceMetrics,
   type DeviceName,
   type Download,
+  type EmulateOptions,
 } from './lib/browser.js';
 export { Key } from './lib/keys.js';
 export { By } from './lib/by.js';

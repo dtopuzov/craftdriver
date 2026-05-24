@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: `browser.emulate({...})` — override `prefers-color-scheme`, `prefers-reduced-motion`, `forced-colors`, `locale`, `timezoneId`, and `offline` for the current session. `locale` and `timezoneId` use BiDi `emulation.setLocaleOverride` / `setTimezoneOverride` and work cross-browser; media features and `offline` use the BiDi+CDP bridge and are Chromium-only with a clear error on Firefox. See [docs/emulation.md](docs/emulation.md).
+
 - feat: virtual clock — `browser.clock.install()`, `tick()`, `fastForward()`, `setFixedTime()`, `setSystemTime()`, `runFor()`, `uninstall()`. Fakes `Date`, `performance.now`, `setTimeout`, `setInterval`, and `requestAnimationFrame` via an injected shim. Persists across navigations via BiDi preload script. See [docs/clock.md](docs/clock.md).
 
 - feat: accessibility audits — `browser.a11y.audit()` / `check()` plus element-scoped `element.a11y.*` and `locator.a11y.*` wrap axe-core (shipped as a direct dependency — works out of the box). Ergonomic `disableRules: string[]` shorthand, `rules` whitelist, `minImpact` filter, and `axeOptions` escape hatch. `check()` throws an `A11yError` listing every violation with its help URL. See [docs/accessibility.md](docs/accessibility.md).
