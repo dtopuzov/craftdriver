@@ -116,6 +116,7 @@ const browser2 = await Browser.launch({
 - **Network mocking & listeners** — Intercept, mock, or observe traffic with `network.mock()` and `network.on('request' | 'response')`
 - **Console & error logs** — Capture browser console messages and JS errors
 - **Permissions & geolocation** — `grantPermissions()`, `setGeolocation()`
+- **Emulation** — dark mode, locale, timezone, offline, reduced motion via `browser.emulate({...})`. See [docs/emulation.md](./docs/emulation.md).
 - **Tracing** — Record network, console, and navigation events to a JSON bundle
 - **Accessibility audits** — Run axe-core against any page, element, or locator. WCAG violations come back with rule IDs, impact, and help URLs — with a one-line `disableRules` escape hatch for rules your project knowingly skips. Works out of the box; no extra install. See [docs/accessibility.md](./docs/accessibility.md).
 
@@ -133,6 +134,7 @@ const browser2 = await Browser.launch({
 | [Session Management](./docs/session-management.md) | Cookies, localStorage, and session persistence              |
 | [Screenshots](./docs/screenshots.md)               | Capturing page and element screenshots                      |
 | [Mobile Emulation](./docs/mobile-emulation.md)     | Test with mobile device viewports and touch events          |
+| [Emulation](./docs/emulation.md)                   | Dark mode, locale, timezone, offline, reduced motion        |
 | [Browser Contexts](./docs/browser-context.md)      | Isolated user profiles for multi-user testing               |
 | [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture                     |
 | [Tracing](./docs/tracing.md)                       | Record events and screenshots to a JSON trace bundle        |

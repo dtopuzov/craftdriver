@@ -53,6 +53,26 @@ export interface MobileEmulation {
   userAgent?: string;
 }
 
+/**
+ * Options for {@link Browser.emulate}. Every field is independent; only the
+ * keys you pass are applied, others stay at their previous value. Passing
+ * `null` for a field clears the override for that field.
+ */
+export interface EmulateOptions {
+  /** `prefers-color-scheme` media query value. Chromium only. */
+  colorScheme?: 'light' | 'dark' | 'no-preference' | null;
+  /** `prefers-reduced-motion` media query value. Chromium only. */
+  reducedMotion?: 'reduce' | 'no-preference' | null;
+  /** `forced-colors` media query value. Chromium only. */
+  forcedColors?: 'active' | 'none' | null;
+  /** BCP-47 language tag, e.g. `'de-DE'`. Affects `navigator.language` and `Intl.*`. */
+  locale?: string | null;
+  /** IANA timezone, e.g. `'Europe/Berlin'`. Affects `Intl.DateTimeFormat` and `Date`. */
+  timezoneId?: string | null;
+  /** When `true`, network requests fail and `navigator.onLine === false`. Chromium only. */
+  offline?: boolean;
+}
+
 /** Common mobile device presets */
 export const devices = {
   'iPhone 14': {
@@ -260,6 +280,9 @@ export class Browser {
   private _clock?: Clock;
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
+  private _browserName: 'chrome' | 'chromium' | 'firefox' = 'chrome';
+  /** Active emulation overrides, re-applied to new top-level contexts. */
+  private _emulation: EmulateOptions = {};
 
   /** Mutable browser-level defaults. Use setDefaultTimeout() / setDefaultNavigationTimeout() to change. */
   private defaults = { timeout: 5000, navigationTimeout: 30000 };
@@ -396,6 +419,7 @@ export class Browser {
     const browser = new Browser(driver);
     browser._downloadsDir = downloadsDir;
     browser._driverService = driverService;
+    browser._browserName = name;
 
     // Initialize BiDi session if WebSocket URL available
     const wsUrl = (driver as any).__wsUrl;
@@ -770,6 +794,150 @@ export class Browser {
       };
     }
     await conn.send('emulation.setGeolocationOverride', params);
+  }
+
+  /**
+   * Override what the page sees from `matchMedia`, `navigator.language`,
+   * `Intl.*`, and the network stack.
+   *
+   * Pass `null` for any field to clear that override; pass `{}` for a no-op.
+   * Settings persist across navigations and are re-applied to new top-level
+   * pages opened in the same session.
+   *
+   * | Field | Transport | Cross-browser |
+   * |---|---|---|
+   * | `locale` | BiDi `emulation.setLocaleOverride` | yes |
+   * | `timezoneId` | BiDi `emulation.setTimezoneOverride` | yes |
+   * | `colorScheme` / `reducedMotion` / `forcedColors` | CDP `Emulation.setEmulatedMedia` | Chromium only |
+   * | `offline` | CDP `Network.emulateNetworkConditions` | Chromium only |
+   *
+   * Throws with a clear message if a Chromium-only field is requested on
+   * Firefox, or if BiDi negotiation failed at launch.
+   *
+   * @example
+   * ```ts
+   * // Dark mode + German formatting + Berlin time
+   * await browser.emulate({
+   *   colorScheme: 'dark',
+   *   locale: 'de-DE',
+   *   timezoneId: 'Europe/Berlin',
+   * });
+   *
+   * // Offline PWA UI
+   * await browser.emulate({ offline: true });
+   * await browser.click('#refresh');
+   *
+   * // Clear a single override
+   * await browser.emulate({ locale: null });
+   * ```
+   */
+  async emulate(options: EmulateOptions): Promise<void> {
+    if (!options || Object.keys(options).length === 0) return;
+
+    if (!this.bidiSession?.isConnected()) {
+      throw new Error(
+        'emulate() requires BiDi (enableBiDi: true). ' +
+        'Emulation overrides use the W3C BiDi `emulation.*` commands ' +
+        '(and the BiDi+CDP bridge for media features and offline), ' +
+        'which have no Classic-WebDriver equivalent.'
+      );
+    }
+
+    // Validate Chromium-only fields up front so we fail before mutating state.
+    const chromiumOnly = ['colorScheme', 'reducedMotion', 'forcedColors', 'offline'] as const;
+    const isFirefox = this._browserName === 'firefox';
+    if (isFirefox) {
+      for (const k of chromiumOnly) {
+        if (k in options) {
+          throw new Error(
+            `emulate({ ${k} }) is not supported on Firefox yet. ` +
+            'CSS media-feature and offline overrides currently require the ' +
+            'BiDi+CDP bridge, which only Chromium exposes. ' +
+            '`locale` and `timezoneId` work on Firefox.'
+          );
+        }
+      }
+    }
+
+    const conn = this.bidiSession.getConnection();
+    const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
+      'browsingContext.getTree',
+      {}
+    );
+    const contexts = (tree.contexts ?? []).filter((c) => !c.parent).map((c) => c.context);
+
+    // Merge the new options into the persisted state so subsequent pages inherit.
+    this._emulation = { ...this._emulation, ...options };
+
+    // --- locale (BiDi) ---
+    if ('locale' in options) {
+      await conn.send('emulation.setLocaleOverride', {
+        contexts,
+        locale: options.locale ?? null,
+      });
+    }
+
+    // --- timezoneId (BiDi) ---
+    if ('timezoneId' in options) {
+      await conn.send('emulation.setTimezoneOverride', {
+        contexts,
+        timezone: options.timezoneId ?? null,
+      });
+    }
+
+    // --- media features (CDP, Chromium only) ---
+    if ('colorScheme' in options || 'reducedMotion' in options || 'forcedColors' in options) {
+      const features: Array<{ name: string; value: string }> = [];
+      const cs = this._emulation.colorScheme;
+      const rm = this._emulation.reducedMotion;
+      const fc = this._emulation.forcedColors;
+      if (cs != null) features.push({ name: 'prefers-color-scheme', value: cs });
+      if (rm != null) features.push({ name: 'prefers-reduced-motion', value: rm });
+      if (fc != null) features.push({ name: 'forced-colors', value: fc });
+      for (const context of contexts) {
+        await this._cdpForContext(conn, context, 'Emulation.setEmulatedMedia', { features });
+      }
+    }
+
+    // --- offline (CDP, Chromium only) ---
+    if ('offline' in options) {
+      const offline = options.offline === true;
+      for (const context of contexts) {
+        await this._cdpForContext(conn, context, 'Network.emulateNetworkConditions', {
+          offline,
+          latency: 0,
+          downloadThroughput: -1,
+          uploadThroughput: -1,
+        });
+      }
+    }
+  }
+
+  /**
+   * Send a CDP command scoped to a single top-level browsing context.
+   * Uses the chromium-bidi `goog:cdp` vendor extension. Wraps protocol
+   * errors so callers see an actionable message.
+   */
+  private async _cdpForContext(
+    conn: ReturnType<NonNullable<typeof this.bidiSession>['getConnection']>,
+    context: string,
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const sess = await conn.send<{ session: string }>('goog:cdp.getSession', { context });
+      await conn.send('goog:cdp.sendCommand', {
+        session: sess.session,
+        method,
+        params,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `emulate(): CDP command \`${method}\` failed (${msg}). ` +
+        'This path requires Chromium with the BiDi+CDP bridge — confirm you are running Chrome/Chromium.'
+      );
+    }
   }
 
   /** Best-effort: derive the active page's origin (`scheme://host[:port]`). */

@@ -121,6 +121,24 @@ For full mobile emulation (DPR, user-agent, touch), pass
 [Mobile emulation](./mobile-emulation.md). `setViewportSize` only
 changes the viewport box.
 
+### Emulation
+
+`browser.emulate({...})` overrides `prefers-color-scheme`,
+`prefers-reduced-motion`, `forced-colors`, `navigator.language`,
+`Intl.*` timezone, and `navigator.onLine` for the current session.
+
+```typescript
+await browser.emulate({
+  colorScheme: 'dark',
+  locale: 'de-DE',
+  timezoneId: 'Europe/Berlin',
+});
+```
+
+`locale` and `timezoneId` work on Chrome, Chromium and Firefox.
+The CSS-media-feature fields and `offline` are Chromium-only — see
+[Emulation](./emulation.md) for the full option table and use cases.
+
 ## Element Interaction
 
 String selectors are CSS selectors. For semantic selectors, pass a `By.*`

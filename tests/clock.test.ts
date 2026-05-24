@@ -21,8 +21,6 @@ describe('browser.clock', () => {
     await browser.navigateTo(CLOCK_URL);
   });
 
-  // ── install ──────────────────────────────────────────────────────────────
-
   it('install() fakes Date.now(), new Date(), and performance.now()', async () => {
     await browser.clock.install({ time: 1_000_000 });
 
@@ -33,8 +31,6 @@ describe('browser.clock', () => {
     await browser.clock.tick(500);
     expect(await browser.evaluate(() => performance.now())).toBe(500);
   });
-
-  // ── tick ─────────────────────────────────────────────────────────────────
 
   it('tick() fires setTimeout at the exact millisecond boundary, not before', async () => {
     await browser.clock.install({ time: 0 });
@@ -83,8 +79,6 @@ describe('browser.clock', () => {
     expect(await browser.evaluate(() => (window as any).__cancelled)).toBe(false);
   });
 
-  // ── fastForward ──────────────────────────────────────────────────────────
-
   it('fastForward() parses MM:SS and HH:MM:SS duration strings', async () => {
     // MM:SS — fire the 15-minute idle-logout timer built into clock.html
     await browser.clock.install();
@@ -99,8 +93,6 @@ describe('browser.clock', () => {
     await browser.clock.fastForward('01:00:00'); // 1 hour = 3 600 000 ms
     expect(await browser.evaluate(() => Date.now())).toBe(3_600_000);
   });
-
-  // ── setFixedTime ─────────────────────────────────────────────────────────
 
   it('setFixedTime() freezes Date.now() and new Date() — accepts number, string, and Date', async () => {
     // number
@@ -149,8 +141,6 @@ describe('browser.clock', () => {
     expect(await browser.evaluate(() => Date.now())).toBe(frozenMs);
   });
 
-  // ── setSystemTime ────────────────────────────────────────────────────────
-
   it('setSystemTime() moves the virtual clock without firing timers; tick() continues from the new base', async () => {
     await browser.clock.install({ time: 0 });
     await browser.evaluate(() => {
@@ -168,8 +158,6 @@ describe('browser.clock', () => {
     expect(await browser.evaluate(() => Date.now())).toBe(1000);
   });
 
-  // ── runFor ───────────────────────────────────────────────────────────────
-
   it('runFor() fires timers and lets async callbacks settle between frames', async () => {
     await browser.clock.install({ time: 0 });
     await browser.evaluate(() => {
@@ -182,8 +170,6 @@ describe('browser.clock', () => {
     await browser.clock.runFor(100);
     expect(await browser.evaluate(() => (window as any).__done)).toBe(true);
   });
-
-  // ── real-world scenario ──────────────────────────────────────────────────
 
   it('tick() controls a 300 ms debounced input — fires exactly once after the threshold', async () => {
     await browser.clock.install();
@@ -202,9 +188,7 @@ describe('browser.clock', () => {
     )).toBe(1);
   });
 
-  // ── preload & idempotency ────────────────────────────────────────────────
-
-  it('install() preload survives navigations; re-install resets the virtual time', async () => {
+  it('install() preload survives navigation; re-install resets the virtual time', async () => {
     await browser.clock.install({ time: 0 });
 
     await browser.navigateTo(CLOCK_URL);
@@ -218,8 +202,6 @@ describe('browser.clock', () => {
     await browser.clock.install({ time: 99 });
     expect(await browser.evaluate(() => Date.now())).toBe(99);
   });
-
-  // ── uninstall ─────────────────────────────────────────────────────────────
 
   it('uninstall() restores real Date.now() after install() and after setFixedTime()', async () => {
     await browser.clock.install({ time: 0 });
