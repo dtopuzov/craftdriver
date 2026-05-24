@@ -45,3 +45,14 @@ export {
 // Driver services — expose for users who need custom binary paths / ports
 export { ChromeService, type ChromeServiceOptions } from './lib/chrome.js';
 export { FirefoxService, type FirefoxServiceOptions } from './lib/firefox.js';
+
+// Accessibility audits (axe-core wrapper — axe-core ships with craftdriver)
+export {
+  A11y,
+  A11yError,
+  type A11yOptions,
+  type A11yResult,
+  type A11yViolation,
+  type A11yViolationNode,
+  type A11yImpact,
+} from './lib/a11y.js';

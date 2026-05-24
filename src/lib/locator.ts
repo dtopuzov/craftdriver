@@ -5,6 +5,7 @@ import { until } from './wait.js';
 import { ElementHandle, type ContextSwitcher } from './elementHandle.js';
 import { expectSelector } from './expect.js';
 import type { ExpectApi } from './expect.js';
+import { A11y } from './a11y.js';
 
 export interface ActionOptions {
   timeout?: number;
@@ -297,5 +298,21 @@ export class Locator {
   /** Returns an assertion API scoped to this locator's selector. */
   expect(): ExpectApi {
     return expectSelector(this.driver, this.by, this.getDefaultTimeout, this._contextSwitcher);
+  }
+
+  private _a11y?: A11y;
+  /**
+   * Accessibility audit scoped to the resolved element. Re-resolves the
+   * locator on every audit/check call.
+   */
+  get a11y(): A11y {
+    if (!this._a11y) {
+      this._a11y = new A11y({
+        driver: this.driver,
+        resolveTarget: () => this._resolve(),
+        withContext: (fn) => this._withContext(fn),
+      });
+    }
+    return this._a11y;
   }
 }

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>A11y fixture</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; }
+    /* Deliberately low-contrast text — triggers `color-contrast`. */
+    .bad-contrast { color: #bbb; background: #ccc; padding: 8px; }
+    .clean { color: #111; background: #fff; padding: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Accessibility fixture</h1>
+  </header>
+
+  <!-- ============================================================ -->
+  <!-- KNOWN-BAD region: contains seeded a11y violations             -->
+  <!-- ============================================================ -->
+  <section id="bad" aria-label="Known violations">
+    <h2>Bad section</h2>
+
+    <!-- Missing alt: triggers `image-alt` (critical). -->
+    <img id="no-alt" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="1" height="1">
+
+    <!-- Button without an accessible name: triggers `button-name` (critical). -->
+    <button id="nameless"></button>
+
+    <!-- Low-contrast text: triggers `color-contrast` (serious). -->
+    <p class="bad-contrast" id="low-contrast">Hard to read text</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- KNOWN-GOOD region: no violations                              -->
+  <!-- ============================================================ -->
+  <main id="good" aria-label="Clean region">
+    <h2>Good section</h2>
+    <p class="clean">Readable paragraph with sufficient contrast.</p>
+    <button id="named">Click me</button>
+    <img id="with-alt" alt="placeholder pixel" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="1" height="1">
+  </main>
+</body>
+</html>

@@ -132,6 +132,31 @@ export class Driver {
     return ((res as CommandResponse<T>)?.value ?? (res as unknown as T)) as T;
   }
 
+  /**
+   * Execute an asynchronous script. The script receives a callback as its
+   * last argument and must invoke it with the result (or with no argument
+   * for `undefined`). Resolves with the value passed to the callback.
+   */
+  async executeAsyncScript<T = unknown>(script: string, args: unknown[] = []): Promise<T> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<T>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/execute/async`,
+      body: { script, args },
+    });
+    return ((res as CommandResponse<T>)?.value ?? (res as unknown as T)) as T;
+  }
+
+  /** Configure the script (and async-script) timeout in milliseconds. */
+  async setScriptTimeout(ms: number): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'POST',
+      path: `/session/${this.sessionId}/timeouts`,
+      body: { script: ms },
+    });
+  }
+
   wait<T>(condition: Condition<T>, options?: WaitOptions & { message?: string }): Promise<T>;
   wait<T>(
     condition: Condition<T>,
