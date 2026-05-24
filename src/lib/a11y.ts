@@ -1,5 +1,6 @@
 import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 /** Severity buckets reported by axe-core. */
 export type A11yImpact = 'minor' | 'moderate' | 'serious' | 'critical';
@@ -45,11 +46,16 @@ export interface A11yResult {
 }
 
 /** Thrown by `A11y.check()` when violations are found. */
-export class A11yError extends Error {
+export class A11yError extends CraftdriverError {
   readonly violations: A11yViolation[];
   readonly result: A11yResult;
   constructor(message: string, result: A11yResult) {
-    super(message);
+    super(ErrorCode.A11Y_VIOLATIONS, message, {
+      detail: {
+        violationCount: result.violations.length,
+        rules: result.violations.map((v) => v.id),
+      },
+    });
     this.name = 'A11yError';
     this.violations = result.violations;
     this.result = result;

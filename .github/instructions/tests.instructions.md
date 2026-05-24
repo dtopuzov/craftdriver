@@ -143,7 +143,10 @@ npm test                 # terminal 2
 
 - One file per feature: `tests/<feature>.test.ts`.
 - Match the example HTML: `tests/feature.test.ts` ↔ `examples/feature.html`.
-- BiDi-specific tests: `tests/bidi-<feature>.test.ts`.
+- BiDi-ness is an implementation detail of the feature, not a category
+  — do **not** prefix BiDi-only tests with `bidi-`. Name by feature.
+- Non-test files (helpers, fixtures) in `tests/` start with an underscore
+  so they sort to the top and read as "not a test" (e.g. `_auto-trace.ts`).
 
 ## Self-review before committing
 

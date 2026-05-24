@@ -88,6 +88,113 @@ const browser2 = await Browser.launch({
 });
 ```
 
+## Command-line interface
+
+`craftdriver` ships three surfaces for AI agents (Copilot, Claude
+Code, Cursor, Codex, Gemini CLI, …), in addition to the library:
+
+- **CLI** (this section) — a `craftdriver` binary for shell-capable agents.
+- **Skill pack** — ready-to-load rules at [skills/craftdriver/](./skills/craftdriver/),
+  shipped in the npm tarball.
+- **MCP server** — stdio JSON-RPC for sandboxed hosts. See below.
+- **`craftdriver init`** — drop per-project rules files for the popular
+  assistants (Copilot, Claude, Cursor, Gemini, Codex / AGENTS.md).
+
+All four share the same dispatcher, error codes, and selector syntax.
+
+The `craftdriver` binary is for shell scripts, ad-hoc exploration, and
+shell-capable AI agents. It wraps the same Browser API as the library,
+with fail-fast defaults tuned for probing instead of stable test runs.
+
+```bash
+# terminal 1 — keep a long-lived browser around
+npx craftdriver daemon start
+
+# terminal 2 — drive it
+npx craftdriver go http://127.0.0.1:8080/login.html
+npx craftdriver fill '#username' alice
+npx craftdriver fill '#password' hunter2
+npx craftdriver click 'button[type=submit]'
+npx craftdriver wait '#result' --state visible
+npx craftdriver text '#result'
+
+npx craftdriver daemon stop
+```
+
+State (page, cookies, storage) survives between calls — the CLI feels
+like a REPL for the browser. For sandboxed environments that can't keep
+a daemon, pipe a script through `--ephemeral` instead.
+
+Selectors are CSS by default; switch with a `prefix=value` form
+(`role=button[name=Submit]`, `text=Sign In`, `label=Email`,
+`placeholder=...`, `testid=...`, `xpath=...`). Output is pretty on a
+TTY and JSON when piped. Every error carries the same stable `code` and
+`hint:` as the library. See [docs/cli.md](./docs/cli.md) for the full
+command list and selector reference.
+
+### Teach your AI assistant
+
+`craftdriver init <flavor>` writes a short rules file into your project
+so Copilot, Claude, Cursor, Codex, Gemini, OpenCode, Aider, &hellip;
+pick up the right conventions on every turn (selector preference,
+auto-waiting, error codes, CLI usage). Per-project, checked into git,
+zero runtime cost.
+
+```bash
+npx craftdriver init copilot   # .github/copilot-instructions.md
+npx craftdriver init claude    # CLAUDE.md
+npx craftdriver init cursor    # .cursor/rules/craftdriver.mdc
+npx craftdriver init gemini    # GEMINI.md
+npx craftdriver init agents    # AGENTS.md (Codex, OpenCode, Aider, Amp, Cursor)
+npx craftdriver init all       # every file above
+```
+
+Use `--force` to overwrite existing files, `--dry-run` to preview.
+
+### Skill pack
+
+For agents that load skills explicitly (Claude Code's Skills system,
+Copilot agent customization, custom orchestrators), the npm tarball
+ships a tiered skill pack under [skills/craftdriver/](./skills/craftdriver/):
+
+- [`SKILL.md`](./skills/craftdriver/SKILL.md) — always-on, ≤ 500 tokens.
+  Decision rules: selector preference order, error-code-first error
+  handling, the auto-wait contract, when to reach for CLI/MCP.
+- [`cheatsheet.md`](./skills/craftdriver/cheatsheet.md) — command-by-command
+  reference for writing tests.
+- [`patterns.md`](./skills/craftdriver/patterns.md) — worked recipes
+  (login, upload, network-wait, a11y, tracing, virtual clock).
+- [`cli.md`](./skills/craftdriver/cli.md) — agent-facing CLI reference.
+
+Point your agent at `node_modules/craftdriver/skills/craftdriver/SKILL.md`
+(or copy the file into your project) and the rest is loaded on demand.
+
+### MCP server
+
+For agents that talk [Model Context Protocol](https://modelcontextprotocol.io)
+(Claude Desktop / Code, Cursor, Windsurf, Zed, Goose, Gemini CLI, …),
+`craftdriver mcp` exposes the same dispatcher as a stdio JSON-RPC
+server with 14 schema-typed tools. Mutating tools return a **compact
+a11y snapshot diffed from the previous turn** — the agent sees what
+changed on the page without a follow-up read.
+
+```bash
+# Claude Code
+claude mcp add craftdriver -- npx -y craftdriver mcp
+```
+
+```jsonc
+// Cursor / Windsurf / Zed
+{
+  "mcpServers": {
+    "craftdriver": { "command": "npx", "args": ["-y", "craftdriver", "mcp"] }
+  }
+}
+```
+
+See [docs/mcp.md](./docs/mcp.md) for the full tool list, install
+snippets for every host, and the snapshot format.
+
 ## Feature Overview
 
 ### Core Features
@@ -125,6 +232,9 @@ const browser2 = await Browser.launch({
 | Guide                                              | Description                                                 |
 | -------------------------------------------------- | ----------------------------------------------------------- |
 | [Getting Started](./docs/getting-started.md)       | Installation, prerequisites, and first test                 |
+| [CLI](./docs/cli.md)                               | `craftdriver` binary for shell, scripts, and AI agents      |
+| [MCP server](./docs/mcp.md)                        | Stdio JSON-RPC server for MCP-aware AI hosts                |
+| [Skill pack](./skills/craftdriver/SKILL.md)        | Tiered agent rules shipped in the npm tarball               |
 | [Browser API](./docs/browser-api.md)               | Core browser control: navigation, clicks, forms             |
 | [Element API](./docs/element-api.md)               | ElementHandle methods for interacting with elements         |
 | [Selectors](./docs/selectors.md)                   | CSS, XPath, semantic locators, and composable `Locator` API |

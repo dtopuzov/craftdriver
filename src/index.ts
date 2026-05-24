@@ -1,5 +1,12 @@
 // Public entrypoint: expose the simplified Browser API only
 export {
+  CraftdriverError,
+  ErrorCode,
+  type ErrorCodeName,
+  type ErrorCodeValue,
+  type CraftdriverErrorOptions,
+} from './lib/errors.js';
+export {
   Browser,
   devices,
   type LaunchOptions,

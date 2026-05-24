@@ -1,11 +1,11 @@
 import { By } from './by.js';
 import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
-import { until } from './wait.js';
 import { ElementHandle, type ContextSwitcher } from './elementHandle.js';
 import { expectSelector } from './expect.js';
 import type { ExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 export interface ActionOptions {
   timeout?: number;
@@ -87,16 +87,6 @@ export class Locator {
     return l;
   }
 
-  /** True when no parent/index/filter — enables the fast driver.wait() path. */
-  private _isSimple(): boolean {
-    return (
-      this._parent === null &&
-      this._index === null &&
-      this._filterText === null &&
-      this._filterHas === null
-    );
-  }
-
   /** Resolve all raw WebElements for this.by, scoped to the parent if set. */
   private async _findRaw(): Promise<WebElement[]> {
     if (this._parent) {
@@ -146,9 +136,11 @@ export class Locator {
   private async _waitForVisible(timeout: number): Promise<WebElement> {
     const deadline = Date.now() + timeout;
     let lastError: unknown;
+    let everMatched = false;
     while (Date.now() < deadline) {
       try {
         const els = await this._findFinal();
+        if (els.length > 0) everMatched = true;
         for (const el of els) {
           if (await el.isDisplayed()) return el;
         }
@@ -157,11 +149,26 @@ export class Locator {
       }
       await new Promise<void>((r) => setTimeout(r, 100));
     }
-    throw (
-      lastError ??
-      new Error(
-        `Timed out after ${timeout}ms waiting for locator "${this.by.using}=${this.by.value}" to be visible`
-      )
+    const selector = `${this.by.using}=${this.by.value}`;
+    if (everMatched) {
+      throw new CraftdriverError(
+        ErrorCode.TIMEOUT_WAITING_VISIBLE,
+        `Timed out after ${timeout}ms waiting for locator "${selector}" to become visible (element exists but is not displayed)`,
+        {
+          detail: { selector, timeout, using: this.by.using, value: this.by.value },
+          cause: lastError,
+          hint: 'The element matched but never became visible — wait for the containing view (modal, accordion, etc.) to open first.',
+        }
+      );
+    }
+    throw new CraftdriverError(
+      ErrorCode.NO_MATCH,
+      `No element matched locator "${selector}" within ${timeout}ms`,
+      {
+        detail: { selector, timeout, using: this.by.using, value: this.by.value },
+        cause: lastError,
+        hint: 'Selector matched zero elements. Verify the selector against the page; consider By.role / By.testId / By.labelText for resilience.',
+      }
     );
   }
 
@@ -178,27 +185,25 @@ export class Locator {
       }
       await new Promise<void>((r) => setTimeout(r, 100));
     }
-    throw (
-      lastError ??
-      new Error(
-        `Timed out after ${timeout}ms waiting for locator "${this.by.using}=${this.by.value}"`
-      )
+    const selector = `${this.by.using}=${this.by.value}`;
+    throw new CraftdriverError(
+      ErrorCode.NO_MATCH,
+      `No element matched locator "${selector}" within ${timeout}ms`,
+      {
+        detail: { selector, timeout, using: this.by.using, value: this.by.value },
+        cause: lastError,
+        hint: 'Selector matched zero elements. Verify the selector against the page; consider By.role / By.testId / By.labelText for resilience.',
+      }
     );
   }
 
   private async _resolve(options?: ActionOptions): Promise<WebElement> {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
-    if (this._isSimple()) {
-      return this.driver.wait(until.elementIsVisible(this.by), { timeout });
-    }
     return this._waitForVisible(timeout);
   }
 
   private async _resolveExisting(options?: ActionOptions): Promise<WebElement> {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
-    if (this._isSimple()) {
-      return this.driver.wait(until.elementExists(this.by), { timeout });
-    }
     return this._waitForAny(timeout);
   }
 
@@ -284,15 +289,48 @@ export class Locator {
     state: 'attached' | 'detached' | 'visible' | 'hidden';
     timeout?: number;
   }): Promise<unknown> {
-    return this._withContext(() => {
-      const { state, timeout } = options;
-      const to = { timeout: timeout ?? this.getDefaultTimeout() };
-      if (state === 'attached') return this.driver.wait(until.elementExists(this.by), to);
-      if (state === 'detached') return this.driver.wait(until.elementNotExists(this.by), to);
-      if (state === 'visible') return this.driver.wait(until.elementIsVisible(this.by), to);
-      if (state === 'hidden') return this.driver.wait(until.elementIsNotVisible(this.by), to);
-      return Promise.reject(new Error(`Unknown waitFor state: "${state}"`));
+    return this._withContext(async () => {
+      const { state } = options;
+      const timeout = options.timeout ?? this.getDefaultTimeout();
+      if (state === 'visible') return this._waitForVisible(timeout);
+      if (state === 'attached') return this._waitForAny(timeout);
+      if (state === 'detached' || state === 'hidden') {
+        return this._waitForNegativeState(state, timeout);
+      }
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `Unknown waitFor state: "${state}". Expected one of: attached, detached, visible, hidden.`,
+        { detail: { state } }
+      );
     });
+  }
+
+  /** Poll until the element is detached from DOM (`detached`) or no longer visible (`hidden`). */
+  private async _waitForNegativeState(
+    state: 'detached' | 'hidden',
+    timeout: number
+  ): Promise<void> {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const els = await this._findFinal();
+      if (state === 'detached') {
+        if (els.length === 0) return;
+      } else {
+        // 'hidden': pass when nothing matches or no match is displayed.
+        let anyVisible = false;
+        for (const el of els) {
+          if (await el.isDisplayed()) { anyVisible = true; break; }
+        }
+        if (!anyVisible) return;
+      }
+      await new Promise<void>((r) => setTimeout(r, 100));
+    }
+    const selector = `${this.by.using}=${this.by.value}`;
+    throw new CraftdriverError(
+      ErrorCode.TIMEOUT_WAITING_STATE,
+      `Timed out after ${timeout}ms waiting for locator "${selector}" to become ${state}`,
+      { detail: { selector, state, timeout } }
+    );
   }
 
   /** Returns an assertion API scoped to this locator's selector. */

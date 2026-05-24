@@ -1,6 +1,7 @@
 import type { By } from './by.js';
 import type { Driver } from './driver.js';
 import { until } from './wait.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 /** Context switcher for frame/window scoping — used by Frame and Page. */
 export type ContextSwitcher = { in: () => Promise<void>; out: () => Promise<void> };
@@ -36,8 +37,10 @@ function matchValue(actual: string, expected: string | RegExp): boolean {
 }
 
 export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => number = () => 5000, contextSwitcher?: ContextSwitcher): ExpectApi {
-  function fail(message: string, callerFn?: Function): never {
-    const error = new Error(message);
+  function fail(message: string, callerFn?: Function, detail?: Record<string, unknown>): never {
+    const error = new CraftdriverError(ErrorCode.EXPECT_MISMATCH, message, {
+      detail: { selector: `${by.using}=${by.value}`, using: by.using, value: by.value, ...(detail ?? {}) },
+    });
     // Remove internal expect.ts frames from stack trace so test file line shows first
     if (callerFn && Error.captureStackTrace) {
       Error.captureStackTrace(error, callerFn);
