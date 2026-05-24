@@ -4,6 +4,8 @@
  * requestAnimationFrame.
  */
 
+import { CraftdriverError, ErrorCode } from './errors.js';
+
 /** Accepted forms for a point in time. */
 export type ClockTime = number | string | Date;
 
@@ -275,10 +277,12 @@ export class Clock {
     if (time instanceof Date) return time.getTime();
     const ms = new Date(time).getTime();
     if (isNaN(ms)) {
-      throw new Error(
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
         `clock: cannot parse time "${String(time)}". ` +
         'Pass a number (ms since epoch), a Date object, or an ISO date string ' +
-        'like "2026-01-01T00:00:00Z".'
+        'like "2026-01-01T00:00:00Z".',
+        { detail: { time: String(time) } }
       );
     }
     return ms;
@@ -292,9 +296,11 @@ export class Clock {
     if (typeof d === 'number') return d;
     const parts = d.split(':').map(Number);
     if (parts.some(isNaN)) {
-      throw new Error(
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
         `clock.fastForward: cannot parse duration "${d}". ` +
-        'Pass a number (ms), "MM:SS", or "HH:MM:SS".'
+        'Pass a number (ms), "MM:SS", or "HH:MM:SS".',
+        { detail: { duration: d } }
       );
     }
     if (parts.length === 2) {
@@ -305,9 +311,11 @@ export class Clock {
       const [hh, mm, ss] = parts;
       return (hh * 3600 + mm * 60 + ss) * 1000;
     }
-    throw new Error(
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
       `clock.fastForward: cannot parse duration "${d}". ` +
-      'Pass a number (ms), "MM:SS", or "HH:MM:SS".'
+      'Pass a number (ms), "MM:SS", or "HH:MM:SS".',
+      { detail: { duration: d } }
     );
   }
 

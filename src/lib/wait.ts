@@ -1,6 +1,7 @@
 import type { Driver } from './driver.js';
 import { By } from './by.js';
 import { WebElement } from './webelement.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 export type Condition<T = any> = (driver: Driver) => Promise<T>;
 
@@ -46,9 +47,19 @@ export class WebDriverWait {
       await new Promise((r) => setTimeout(r, this.intervalMs));
     }
     const errMsg = message ?? this.timeoutMsg ?? `Wait timed out after ${this.timeoutMs}ms`;
-    throw new Error(
-      lastErr ? `${errMsg}: ${String((lastErr as any)?.message ?? lastErr)}` : errMsg
-    );
+    const full = lastErr ? `${errMsg}: ${String((lastErr as any)?.message ?? lastErr)}` : errMsg;
+    // Preserve a more specific code when the inner condition already raised one.
+    if (CraftdriverError.is(lastErr)) {
+      throw new CraftdriverError(lastErr.code, full, {
+        detail: { ...(lastErr.detail ?? {}), timeout: this.timeoutMs },
+        cause: lastErr,
+        hint: lastErr.hint,
+      });
+    }
+    throw new CraftdriverError(ErrorCode.TIMEOUT, full, {
+      detail: { timeout: this.timeoutMs },
+      cause: lastErr,
+    });
   }
 }
 

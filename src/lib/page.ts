@@ -19,6 +19,7 @@ import { until } from './wait.js';
 import type { WebElement } from './webelement.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
@@ -181,7 +182,11 @@ export class Page {
         if (rs === 'complete' || (state === 'domcontentloaded' && rs === 'interactive')) return;
         await new Promise(r => setTimeout(r, 100));
       }
-      throw new Error(`waitForLoadState timed out after ${timeout}ms`);
+      throw new CraftdriverError(
+        ErrorCode.TIMEOUT_WAITING_LOAD,
+        `waitForLoadState timed out after ${timeout}ms`,
+        { detail: { state, timeout } }
+      );
     });
   }
 
@@ -212,7 +217,11 @@ export class Page {
         });
       }
       if (result.type === 'exception') {
-        throw new Error(`evaluate() threw an exception: ${result.exceptionDetails?.text ?? 'unknown error'}`);
+        throw new CraftdriverError(
+          ErrorCode.EVAL_THREW,
+          `evaluate() threw an exception: ${result.exceptionDetails?.text ?? 'unknown error'}`,
+          { detail: { exception: result.exceptionDetails?.text ?? null } }
+        );
       }
       if (!result.result) return undefined as T;
       return unwrapRemoteValue(result.result) as T;
@@ -363,7 +372,11 @@ function serializeLocalValue(v: unknown): Record<string, unknown> {
       ),
     };
   }
-  throw new Error(`evaluate() argument of type "${typeof v}" is not JSON-serializable.`);
+  throw new CraftdriverError(
+    ErrorCode.EVAL_BAD_ARG,
+    `evaluate() argument of type "${typeof v}" is not JSON-serializable.`,
+    { detail: { argType: typeof v } }
+  );
 }
 
 function unwrapRemoteValue(v: RemoteValue): unknown {

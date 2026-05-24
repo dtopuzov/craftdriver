@@ -33,6 +33,7 @@ import { BrowserContext } from './browserContext.js';
 import { Tracer, type TraceStartOptions } from './tracing.js';
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -198,9 +199,11 @@ function serializeLocalValue(v: unknown): Record<string, unknown> {
       ),
     };
   }
-  throw new Error(
+  throw new CraftdriverError(
+    ErrorCode.EVAL_BAD_ARG,
     `evaluate() argument of type "${typeof v}" is not JSON-serializable. ` +
-    `Only primitive types, arrays, and plain objects are supported.`
+    `Only primitive types, arrays, and plain objects are supported.`,
+    { detail: { argType: typeof v } }
   );
 }
 
@@ -228,15 +231,19 @@ function unwrapRemoteValue(v: RemoteValue): unknown {
       );
     case 'date': return new Date(v.value);
     case 'function':
-      throw new Error(
+      throw new CraftdriverError(
+        ErrorCode.EVAL_BAD_ARG,
         'evaluate() returned a function, which is not JSON-serializable. ' +
-        'Return a primitive, array, or plain object instead.'
+        'Return a primitive, array, or plain object instead.',
+        { detail: { returnedType: 'function' } }
       );
     case 'node':
     case 'window':
-      throw new Error(
+      throw new CraftdriverError(
+        ErrorCode.EVAL_BAD_ARG,
         `evaluate() returned a ${v.type} reference, which is not JSON-serializable. ` +
-        'Return a primitive, array, or plain object instead.'
+        'Return a primitive, array, or plain object instead.',
+        { detail: { returnedType: v.type } }
       );
     default:
       return null;
@@ -1045,7 +1052,11 @@ export class Browser {
       if (readyState === 'complete' || (target === 'interactive' && readyState === 'interactive')) return;
       await new Promise(r => setTimeout(r, 100));
     }
-    throw new Error(`waitForLoadState('${state}') timed out after ${timeout}ms`);
+    throw new CraftdriverError(
+      ErrorCode.TIMEOUT_WAITING_LOAD,
+      `waitForLoadState('${state}') timed out after ${timeout}ms`,
+      { detail: { state, timeout } }
+    );
   }
 
   async url(): Promise<string> {
@@ -1109,9 +1120,11 @@ export class Browser {
    */
   async startTrace(opts: TraceStartOptions): Promise<void> {
     if (!this.bidiSession?.isConnected()) {
-      throw new Error(
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
         'startTrace() requires BiDi (enableBiDi: true). ' +
-        'Tracing relies on BiDi events; Classic WebDriver does not expose them.'
+        'Tracing relies on BiDi events; Classic WebDriver does not expose them.',
+        { detail: { feature: 'startTrace' } }
       );
     }
     if (!this._tracer) {
@@ -1127,7 +1140,11 @@ export class Browser {
    */
   async stopTrace(): Promise<void> {
     if (!this._tracer || !this._tracer.isRunning) {
-      throw new Error('stopTrace(): no trace is running. Call startTrace() first.');
+      throw new CraftdriverError(
+        ErrorCode.STATE_INVALID,
+        'stopTrace(): no trace is running. Call startTrace() first.',
+        { detail: { feature: 'stopTrace' } }
+      );
     }
     await this._tracer.stop();
   }
@@ -1177,8 +1194,10 @@ export class Browser {
       }
 
       if (result.type === 'exception') {
-        throw new Error(
-          `evaluate() threw an exception in the page: ${result.exceptionDetails?.text ?? 'unknown error'}`
+        throw new CraftdriverError(
+          ErrorCode.EVAL_THREW,
+          `evaluate() threw an exception in the page: ${result.exceptionDetails?.text ?? 'unknown error'}`,
+          { detail: { exception: result.exceptionDetails?.text ?? null } }
         );
       }
       if (!result.result) return undefined as T;

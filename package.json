@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "bin": {
+    "craftdriver": "bin/craftdriver.mjs"
+  },
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "tsc -p tsconfig.json",
@@ -17,6 +20,8 @@
     "clean": "rimraf dist",
     "serve": "http-server ./examples -a 127.0.0.1 -p 8080 -c-1 --cors",
     "examples:start": "npm run serve",
+    "docs:api": "node scripts/gen-api-reference.mjs",
+    "docs:api:check": "node scripts/gen-api-reference.mjs --check",
     "prepublishOnly": "npm run build && npm run lint"
   },
   "keywords": [
@@ -28,7 +33,10 @@
     "automation",
     "browser-automation",
     "testing",
-    "selenium"
+    "selenium",
+    "cli",
+    "agent",
+    "ai"
   ],
   "author": "Dimitar Topuzov",
   "license": "MIT",
@@ -45,7 +53,11 @@
   },
   "files": [
     "dist",
+    "bin",
+    "docs",
+    "skills",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "sideEffects": false,
