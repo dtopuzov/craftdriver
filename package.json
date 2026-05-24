@@ -55,13 +55,13 @@
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.1.0",
     "@typescript-eslint/parser": "^8.1.0",
-    "chromedriver": "^147.0.4",
-    "geckodriver": "^6.1.0",
+    "chromedriver": "^148.0.4",
     "eslint": "^9.8.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "^2.29.1",
     "eslint-plugin-n": "^17.10.1",
     "eslint-plugin-promise": "^6.4.0",
+    "geckodriver": "^6.1.0",
     "http-server": "^14.1.1",
     "prettier": "^3.3.3",
     "rimraf": "^6.0.1",
@@ -72,5 +72,9 @@
   "dependencies": {
     "@types/ws": "^8.18.1",
     "ws": "^8.19.0"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.6",
+    "ip-address": "10.1.1"
   }
 }
