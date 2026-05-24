@@ -30,7 +30,7 @@ import {
 import { Frame } from './frame.js';
 import { Page } from './page.js';
 import { BrowserContext } from './browserContext.js';
-import { Tracer, type TraceStartOptions, type TraceBundle } from './tracing.js';
+import { Tracer, type TraceStartOptions } from './tracing.js';
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 
@@ -250,6 +250,21 @@ interface BidiContextInfo {
   parent?: string;
   userContext?: string;
   children?: BidiContextInfo[];
+}
+
+/** Best-effort string form of a selector (CSS string or By descriptor) for tracing. */
+function selectorToString(sel: string | By | undefined): string | undefined {
+  if (sel === undefined) return undefined;
+  if (typeof sel === 'string') return sel;
+  try {
+    if (sel && typeof (sel as { using?: unknown }).using === 'string') {
+      const b = sel as { using: string; value: string };
+      return `${b.using}=${b.value}`;
+    }
+    return String(sel);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Recursively find the child context that matches an iframe's src URL. */
@@ -565,6 +580,7 @@ export class Browser {
   }
 
   async navigateTo(url: string, opts?: { waitUntil?: LoadState }): Promise<void> {
+    this._tracer?.recordAction('navigateTo', [url, opts], url);
     const waitUntil: LoadState = opts?.waitUntil ?? 'load';
 
     if (this.bidiSession?.isConnected()) {
@@ -604,6 +620,7 @@ export class Browser {
    * Proxies to {@link Page.goBack} on {@link activePage}.
    */
   async goBack(): Promise<void> {
+    this._tracer?.recordAction('goBack');
     const page = await this.activePage();
     await page.goBack();
   }
@@ -613,6 +630,7 @@ export class Browser {
    * Proxies to {@link Page.goForward} on {@link activePage}.
    */
   async goForward(): Promise<void> {
+    this._tracer?.recordAction('goForward');
     const page = await this.activePage();
     await page.goForward();
   }
@@ -622,6 +640,7 @@ export class Browser {
    * {@link activePage}.
    */
   async reload(): Promise<void> {
+    this._tracer?.recordAction('reload');
     const page = await this.activePage();
     await page.reload();
   }
@@ -643,6 +662,7 @@ export class Browser {
     html: string,
     opts?: { waitUntil?: Exclude<LoadState, 'networkidle'> }
   ): Promise<void> {
+    this._tracer?.recordAction('setContent', [opts]);
     const page = await this.activePage();
     await page.setContent(html, opts);
   }
@@ -1071,18 +1091,23 @@ export class Browser {
   // ─── Tracing ─────────────────────────────────────────────────────────────
 
   /**
-   * Start a tracing session. Captures console, errors, network requests
-   * and responses, and navigations. Optionally takes periodic screenshots.
+   * Start a streaming trace session. Writes every event synchronously to
+   * `<outDir>/trace.ndjson` so a thrown `expect` on the next line cannot
+   * lose data. Screenshots, when enabled, land in `<outDir>/screenshots/`.
    *
-   * **BiDi-only.** Call `stopTrace(path)` to flush the bundle to disk.
+   * **BiDi-only.** Call `stopTrace()` to write the closing marker and
+   * close the file.
    *
    * @example
-   * await browser.startTrace({ screenshots: true });
-   * await browser.navigateTo('/checkout');
-   * await browser.click('#pay');
-   * await browser.stopTrace('./traces/checkout.json');
+   * await browser.startTrace({ outDir: './artefacts/login' });
+   * try {
+   *   await browser.navigateTo('/checkout');
+   *   await browser.click('#pay');
+   * } finally {
+   *   await browser.stopTrace();
+   * }
    */
-  async startTrace(opts?: TraceStartOptions): Promise<void> {
+  async startTrace(opts: TraceStartOptions): Promise<void> {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'startTrace() requires BiDi (enableBiDi: true). ' +
@@ -1096,15 +1121,15 @@ export class Browser {
   }
 
   /**
-   * Stop the active trace and write the JSON bundle to `path`.
-   * Screenshots, if any, are written to a sibling `screenshots/` folder.
-   * Returns the in-memory bundle.
+   * Stop the active trace: drain in-flight screenshots, write the closing
+   * `meta` line, and close the file. If your test threw and never reached
+   * here, the file is still valid NDJSON — just without the closing line.
    */
-  async stopTrace(path: string): Promise<TraceBundle> {
+  async stopTrace(): Promise<void> {
     if (!this._tracer || !this._tracer.isRunning) {
       throw new Error('stopTrace(): no trace is running. Call startTrace() first.');
     }
-    return this._tracer.stop(path);
+    await this._tracer.stop();
   }
 
   /**
@@ -1370,6 +1395,7 @@ export class Browser {
    * Uses BiDi when available, Classic WebDriver otherwise.
    */
   async acceptDialog(text?: string): Promise<void> {
+    this._tracer?.recordAction('acceptDialog', text !== undefined ? [text] : undefined);
     if (this.bidiSession?.isConnected()) {
       await this.bidiSession.handleUserPrompt(true, text);
       return;
@@ -1383,6 +1409,7 @@ export class Browser {
    * Uses BiDi when available, Classic WebDriver otherwise.
    */
   async dismissDialog(): Promise<void> {
+    this._tracer?.recordAction('dismissDialog');
     if (this.bidiSession?.isConnected()) {
       await this.bidiSession.handleUserPrompt(false);
       return;
@@ -1778,6 +1805,7 @@ export class Browser {
   }
 
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    if (this._tracer?.isRunning) this._tracer.recordAction('click', undefined, selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
     await el.click();
@@ -1788,6 +1816,7 @@ export class Browser {
     text: string,
     opts?: { timeout?: number }
   ): Promise<void> {
+    if (this._tracer?.isRunning) this._tracer.recordAction('fill', [text], selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), {
       timeout: opts?.timeout ?? this.defaults.timeout,
@@ -1798,6 +1827,7 @@ export class Browser {
   }
 
   async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {
+    if (this._tracer?.isRunning) this._tracer.recordAction('clear', undefined, selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementIsVisible(by), {
       timeout: opts?.timeout ?? this.defaults.timeout,
