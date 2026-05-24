@@ -47,7 +47,7 @@ export type TraceEvent =
   | { t: number; type: 'console'; level: string; text: string }
   | { t: number; type: 'error'; text: string }
   | { t: number; type: 'request'; url: string; method: string; requestId?: string }
-  | { t: number; type: 'response'; url: string; status: number; requestId?: string }
+  | { t: number; type: 'response'; url: string; status: number; mimeType?: string; fromCache?: true; requestId?: string }
   | { t: number; type: 'navigation'; url: string; context?: string }
   | { t: number; type: 'screenshot'; file: string; actionIndex?: number; reason: 'action' | 'error' }
   | { t: number; type: 'action'; name: string; args?: unknown[]; selector?: string };
@@ -151,12 +151,16 @@ export class Tracer {
         const p = params as Record<string, unknown>;
         const req = (p.request ?? {}) as Record<string, unknown>;
         const res = (p.response ?? {}) as Record<string, unknown>;
-        this.push({
+        const ev: Record<string, unknown> = {
           type: 'response',
           url: String(req.url ?? res.url ?? ''),
           status: Number(res.status ?? 0),
           requestId: req.request as string | undefined,
-        });
+        };
+        const mime = res.mimeType;
+        if (typeof mime === 'string' && mime.length > 0) ev.mimeType = mime;
+        if (res.fromCache === true) ev.fromCache = true;
+        this.push(ev as { type: TraceEvent['type'] } & Record<string, unknown>);
       }));
     }
 

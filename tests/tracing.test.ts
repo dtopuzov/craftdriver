@@ -60,6 +60,13 @@ describe('Tracing', () => {
     const fill = actions.find((a) => a.name === 'fill')!;
     expect(fill.args).toEqual(['alice']);
     expect(fill.selector).toBe('#username');
+
+    // Response events should carry the document mimeType.
+    const htmlResponse = events.find(
+      (e): e is Extract<TraceEvent, { type: 'response' }> =>
+        e.type === 'response' && typeof e.mimeType === 'string' && e.mimeType.includes('html')
+    );
+    expect(htmlResponse).toBeDefined();
   });
 
   it('trace is on disk even when stopTrace is never called (test-throws scenario)', async () => {

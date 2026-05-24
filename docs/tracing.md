@@ -74,7 +74,7 @@ since `startTrace`) and a `type`:
 | `console`      | `level`, `text`                                             |
 | `error`        | `text` (uncaught page errors)                               |
 | `request`      | `url`, `method`, `requestId?`                               |
-| `response`     | `url`, `status`, `requestId?`                               |
+| `response`     | `url`, `status`, `mimeType?`, `fromCache?`, `requestId?`    |
 | `navigation`   | `url`, `context?`                                           |
 | `screenshot`   | `file` (relative path), `reason` (`'action'` \| `'error'`), `actionIndex?` |
 
@@ -149,7 +149,7 @@ Drop this into your test folder (e.g. `tests/auto-trace.ts`):
 
 ```ts
 import { beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, TraceScreenshotMode } from 'craftdriver';
 
@@ -169,8 +169,16 @@ export function autoTrace(getBrowser: () => Browser): void {
   });
 
   afterEach(async ({ task }) => {
-    try { await getBrowser().stopTrace(); } catch { return; }
     const failed = task.result?.state === 'fail';
+    // Snap the page as it looked at the failed assertion (not just
+    // before the last click).
+    if (failed) {
+      try {
+        const buf = await getBrowser().screenshot();
+        writeFileSync(join(currentDir, 'final.png'), buf);
+      } catch { /* browser may already be dead */ }
+    }
+    try { await getBrowser().stopTrace(); } catch { return; }
     if (MODE === 'on-failure' && !failed) {
       rmSync(currentDir, { recursive: true, force: true });
     } else if (failed) {

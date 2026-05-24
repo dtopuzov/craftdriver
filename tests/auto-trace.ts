@@ -18,7 +18,7 @@
  *   CRAFTDRIVER_TRACE_SCREENSHOTS=auto|off    (default: auto)
  */
 import { beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, TraceScreenshotMode } from '../src';
 
@@ -47,12 +47,21 @@ export function autoTrace(getBrowser: () => Browser, opts: AutoTraceOptions = {}
   });
 
   afterEach(async ({ task }) => {
+    const failed = task.result?.state === 'fail';
+    // Capture the final page state BEFORE stopping the trace so a viewer
+    // can see what the page looked like at the moment of failure (not
+    // just the snapshot taken before the last click).
+    if (failed) {
+      try {
+        const buf = await getBrowser().screenshot();
+        writeFileSync(join(currentDir, 'final.png'), buf);
+      } catch { /* browser may already be dead */ }
+    }
     try {
       await getBrowser().stopTrace();
     } catch {
       return; // never started — nothing to clean up
     }
-    const failed = task.result?.state === 'fail';
     if (mode === 'on-failure' && !failed) {
       rmSync(currentDir, { recursive: true, force: true });
     } else if (failed) {
