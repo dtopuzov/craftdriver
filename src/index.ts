@@ -22,8 +22,8 @@ export { Keyboard } from './lib/keyboard.js';
 export { Mouse } from './lib/mouse.js';
 export {
   type TraceStartOptions,
+  type TraceScreenshotMode,
   type TraceEvent,
-  type TraceBundle,
 } from './lib/tracing.js';
 
 // BiDi features - network interception, logging, session state

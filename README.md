@@ -117,7 +117,7 @@ const browser2 = await Browser.launch({
 - **Console & error logs** — Capture browser console messages and JS errors
 - **Permissions & geolocation** — `grantPermissions()`, `setGeolocation()`
 - **Emulation** — dark mode, locale, timezone, offline, reduced motion via `browser.emulate({...})`. See [docs/emulation.md](./docs/emulation.md).
-- **Tracing** — Record network, console, and navigation events to a JSON bundle
+- **Tracing** — Append-only NDJSON timeline of actions, network, console, navigations + on-action/on-error screenshots, written synchronously so a thrown `expect` cannot lose data
 - **Accessibility audits** — Run axe-core against any page, element, or locator. WCAG violations come back with rule IDs, impact, and help URLs — with a one-line `disableRules` escape hatch for rules your project knowingly skips. Works out of the box; no extra install. See [docs/accessibility.md](./docs/accessibility.md).
 
 ## Documentation
@@ -137,7 +137,7 @@ const browser2 = await Browser.launch({
 | [Emulation](./docs/emulation.md)                   | Dark mode, locale, timezone, offline, reduced motion        |
 | [Browser Contexts](./docs/browser-context.md)      | Isolated user profiles for multi-user testing               |
 | [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture                     |
-| [Tracing](./docs/tracing.md)                       | Record events and screenshots to a JSON trace bundle        |
+| [Tracing](./docs/tracing.md)                       | Crash-resilient NDJSON event log + evidence screenshots for failed tests |
 | [Accessibility](./docs/accessibility.md)           | axe-core powered a11y audits, scoped to page/element/locator |
 | [Virtual Clock](./docs/clock.md)                   | Fake `Date`, `setTimeout`, and `setInterval` for time-dependent tests |
 
