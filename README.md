@@ -107,6 +107,7 @@ const browser2 = await Browser.launch({
 - **File uploads & downloads** — `element.setInputFiles()` and `browser.waitForDownload()`
 - **Navigation helpers** — `goBack()`, `goForward()`, `reload()`, `content()`, `setContent()`
 - **In-page scripts** — `browser.evaluate()` and `browser.addInitScript()`
+- **Virtual clock** — Test idle timeouts, trial expirations, and debounced inputs without `sleep()`. See [docs/clock.md](./docs/clock.md).
 
 ### Advanced Features (BiDi)
 
@@ -136,6 +137,7 @@ const browser2 = await Browser.launch({
 | [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture                     |
 | [Tracing](./docs/tracing.md)                       | Record events and screenshots to a JSON trace bundle        |
 | [Accessibility](./docs/accessibility.md)           | axe-core powered a11y audits, scoped to page/element/locator |
+| [Virtual Clock](./docs/clock.md)                   | Fake `Date`, `setTimeout`, and `setInterval` for time-dependent tests |
 
 ## Contributing
 

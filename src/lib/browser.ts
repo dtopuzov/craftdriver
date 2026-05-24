@@ -32,6 +32,7 @@ import { Page } from './page.js';
 import { BrowserContext } from './browserContext.js';
 import { Tracer, type TraceStartOptions, type TraceBundle } from './tracing.js';
 import { A11y } from './a11y.js';
+import { Clock } from './clock.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -256,6 +257,7 @@ export class Browser {
   private _tracer?: Tracer;
   private _storage?: SessionStateManager;
   private _a11y?: A11y;
+  private _clock?: Clock;
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
 
@@ -490,6 +492,22 @@ export class Browser {
       );
     }
     return this._storage;
+  }
+
+  /**
+   * Virtual clock control — freeze or advance `Date`, `setTimeout`, and
+   * `setInterval` inside the page.  Requires BiDi (enabled by default).
+   *
+   * ```ts
+   * await browser.clock.install({ time: '2026-01-01T09:00:00Z' });
+   * await browser.clock.fastForward('15:01');
+   * ```
+   */
+  get clock(): Clock {
+    if (!this._clock) {
+      this._clock = new Clock(this);
+    }
+    return this._clock;
   }
 
   /**

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Clock</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    #login-modal { display: none; }
+    #login-modal.visible { display: block; }
+    #search-status { color: #888; }
+  </style>
+</head>
+<body>
+  <h1>Clock fixture</h1>
+
+  <!-- Section 1: current date display (uses Date.now / new Date) -->
+  <p id="date-display"></p>
+  <p id="performance-display"></p>
+
+  <!-- Section 2: trial banner — keyed on a fixed deadline -->
+  <div id="trial-banner"></div>
+
+  <!-- Section 3: debounced search input -->
+  <input id="search-input" type="text" placeholder="Search…" autocomplete="off">
+  <p id="search-status">no request yet</p>
+  <p id="search-count">0</p>
+
+  <!-- Section 4: 15-minute idle timer → login modal -->
+  <main id="main-content">Main content</main>
+  <div id="login-modal">
+    <h2>Session expired — please log in</h2>
+  </div>
+
+  <script>
+    // ── Section 1: update date display once on load ──────────────────────────
+    document.getElementById('date-display').textContent = new Date().toISOString();
+    document.getElementById('performance-display').textContent =
+      String(Math.round(performance.now()));
+
+    // ── Section 2: trial banner ──────────────────────────────────────────────
+    // Deadline: 2026-06-16T00:00:00Z
+    var TRIAL_DEADLINE = new Date('2026-06-16T00:00:00Z').getTime();
+    (function updateBanner() {
+      var now = Date.now();
+      var banner = document.getElementById('trial-banner');
+      if (now < TRIAL_DEADLINE) {
+        var msLeft = TRIAL_DEADLINE - now;
+        var hoursLeft = msLeft / 3600000;
+        if (hoursLeft <= 24) {
+          banner.textContent = 'Trial expires today';
+        } else {
+          banner.textContent = 'Trial active';
+        }
+      } else {
+        banner.textContent = 'Trial expired';
+      }
+    })();
+
+    // ── Section 3: debounced search ──────────────────────────────────────────
+    var searchCount = 0;
+    var debounceTimer = null;
+    document.getElementById('search-input').addEventListener('input', function(e) {
+      clearTimeout(debounceTimer);
+      var query = e.target.value;
+      debounceTimer = setTimeout(function() {
+        searchCount++;
+        document.getElementById('search-status').textContent =
+          'request sent: ' + query;
+        document.getElementById('search-count').textContent = String(searchCount);
+        // In a real app this would be fetch('/search?q=' + query)
+      }, 300);
+    });
+
+    // ── Section 4: 15-minute idle logout ────────────────────────────────────
+    // 15 minutes = 900 000 ms
+    var IDLE_MS = 15 * 60 * 1000;
+    setTimeout(function() {
+      document.getElementById('login-modal').classList.add('visible');
+      document.getElementById('main-content').style.display = 'none';
+    }, IDLE_MS);
+  </script>
+</body>
+</html>
