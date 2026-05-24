@@ -436,6 +436,32 @@ const browser = await Browser.launch({
 });
 ```
 
+## Time Control
+
+Control the clock the page sees — `Date.now()`, `new Date()`,
+`performance.now()`, `setTimeout`, and `setInterval`.
+
+See [Virtual Clock](./clock.md) for the full guide and method reference.
+
+```typescript
+// Freeze date for date-dependent rendering (no fake timers)
+await browser.clock.setFixedTime('2026-06-15T23:59:00Z');
+await browser.navigateTo('/billing');
+await browser.expect('#trial-banner').toContainText('expires today');
+
+// Full fake-timer installation — control every setTimeout/setInterval
+await browser.clock.install({ time: '2026-01-01T09:00:00Z' });
+await browser.navigateTo('/dashboard');
+await browser.clock.fastForward('15:01'); // advance 15 min 1 s
+await browser.expect('#login-modal').toBeVisible();
+
+// Debounced input: advance exactly to the threshold
+await browser.clock.install();
+await browser.fill('#q', 'lap');
+await browser.clock.tick(299); // debounce hasn't fired yet
+await browser.clock.tick(2);   // total 301 ms — fires exactly once
+```
+
 ## Dialogs (alert / confirm / prompt)
 
 > **Heads-up.** craftdriver makes unhandled dialogs **loud failures**

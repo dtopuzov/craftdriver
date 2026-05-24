@@ -46,6 +46,13 @@ export {
 export { ChromeService, type ChromeServiceOptions } from './lib/chrome.js';
 export { FirefoxService, type FirefoxServiceOptions } from './lib/firefox.js';
 
+// Virtual clock control
+export {
+  Clock,
+  type ClockTime,
+  type ClockInstallOptions,
+} from './lib/clock.js';
+
 // Accessibility audits (axe-core wrapper — axe-core ships with craftdriver)
 export {
   A11y,
