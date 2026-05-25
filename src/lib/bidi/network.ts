@@ -148,16 +148,18 @@ export class NetworkInterceptor {
   async intercept(
     patterns: string | string[] | UrlPattern | UrlPattern[],
     handler: RequestHandler,
-    phases: InterceptPhase[] = ['beforeRequestSent']
+    phases: InterceptPhase[] = ['beforeRequestSent'],
+    contexts?: BrowsingContext[]
   ): Promise<string> {
     await this.initialize();
 
     const urlPatterns = this.normalizePatterns(patterns);
 
+    const ctxs = contexts ?? (this.context ? [this.context] : undefined);
     const result = await this.connection.send<{ intercept: string }>('network.addIntercept', {
       phases,
       urlPatterns,
-      ...(this.context ? { contexts: [this.context] } : {}),
+      ...(ctxs ? { contexts: ctxs } : {}),
     });
 
     const interceptId = result.intercept;

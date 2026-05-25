@@ -101,6 +101,9 @@
           // Set session cookie (expires in 1 hour)
           const expires = new Date(Date.now() + 3600000).toUTCString();
           document.cookie = `session=${encodeURIComponent(u)}; path=/; expires=${expires}`;
+          // Persist UX prefs in localStorage so storageState round-trips capture them.
+          localStorage.setItem('lastUser', u);
+          localStorage.setItem('theme', 'dark');
           showLoggedIn(u);
         } else {
           result.textContent = 'Missing credentials';

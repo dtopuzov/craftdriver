@@ -18,31 +18,155 @@
  *     started in (id = `'default'`).
  */
 
+import fs from 'node:fs/promises';
 import type { Driver } from './driver.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { Page } from './page.js';
-import type { BrowsingContextInfo } from './bidi/types.js';
+import type { NetworkInterceptor, RequestHandler } from './bidi/network.js';
+import type {
+  BrowsingContextInfo,
+  Cookie,
+  CookieInput,
+  GetCookiesResult,
+  RawNetworkCookie,
+  RawPartialCookie,
+  SessionState,
+  UrlPattern,
+} from './bidi/types.js';
+
+/** Filter applied to {@link BrowserContext.clearCookies}. */
+export interface ClearCookiesFilter {
+  /** Match cookies whose `name` equals this string. */
+  name?: string;
+  /** Match cookies whose `domain` equals this string. */
+  domain?: string;
+  /** Match cookies whose `path` equals this string. */
+  path?: string;
+}
+
+/** Options for {@link BrowserContext.storageState}. */
+export interface ContextStorageStateOptions {
+  /** Include cookies in the snapshot. Default `true`. */
+  includeCookies?: boolean;
+  /**
+   * Include localStorage in the snapshot. Default `true`.
+   * Only origins of currently-open pages in this context are captured;
+   * BiDi has no API to read localStorage for an origin that no page is
+   * currently visiting.
+   */
+  includeLocalStorage?: boolean;
+}
+
+/** Internal hooks the owning {@link Browser} passes to a new context. */
+export interface BrowserContextHooks {
+  /** Returns the singleton {@link NetworkInterceptor} — used by {@link BrowserContext.route}. */
+  getNetwork: () => NetworkInterceptor;
+  /** Returns the engine name, used by Milestone-C setters to gate engine-specific BiDi calls. */
+  getBrowserName?: () => 'chrome' | 'chromium' | 'firefox';
+}
+
+/** Per-context options stored at creation time. */
+export interface BrowserContextConfig {
+  /**
+   * Base URL used to resolve relative paths passed to `page.navigateTo()`.
+   * Absolute URLs are unaffected.
+   */
+  baseURL?: string;
+  /**
+   * Extra HTTP headers added to every request from every page in this
+   * context. Applied via BiDi `network.setExtraHeaders` on context
+   * creation and re-applied to each new page that opens here.
+   */
+  extraHTTPHeaders?: Record<string, string>;
+}
+
+/** A handle returned by {@link BrowserContext.addInitScript}. */
+export interface InitScriptHandle {
+  /** BiDi preload-script id. */
+  id: string;
+  /** Remove the init script. Safe to call more than once. */
+  remove(): Promise<void>;
+}
+
+/** Pattern accepted by {@link BrowserContext.route}. Same shape as the browser-level interceptor. */
+export type RoutePattern = string | string[] | UrlPattern | UrlPattern[];
+
+/** Event listener signatures. */
+type PageListener = (page: Page) => void;
+type CloseListener = () => void;
 
 export class BrowserContext {
+  /** Monotonic counter for synthetic route ids returned by `route()`. */
+  private static _routeCounter = 0;
   private driver: Driver;
   private conn: BiDiConnection;
   private getDefaultTimeout: () => number;
   private getNavigationTimeout: () => number;
   private _id: string;
   private _closed = false;
+  private _hooks?: BrowserContextHooks;
+  /** Per-context config (baseURL, extraHTTPHeaders). Read by Page for URL resolution. */
+  private _config: BrowserContextConfig;
+  /**
+   * Preload-script id installed by {@link loadStorageState} to write
+   * localStorage entries on first navigation to each captured origin.
+   * Tracked so a subsequent call replaces (rather than stacks) the script.
+   */
+  private _localStoragePreloadId?: string;
+  /** Preload-script ids registered via {@link addInitScript}. */
+  private _initScriptIds = new Set<string>();
+  /**
+   * Per-route bookkeeping for `route()`. The synthetic id we return to
+   * the user maps to its pattern, handler, and the live BiDi intercept
+   * ids — one per page that currently belongs to this user context.
+   *
+   * BiDi `network.addIntercept` does not accept a user-context filter,
+   * so we register a separate intercept per page (with `contexts: [pageId]`)
+   * and add/remove them as pages open and close.
+   */
+  private _routes = new Map<
+    string,
+    { pattern: RoutePattern; handler: RequestHandler; perPage: Map<string, string> }
+  >();
+  /** Top-level browsing-context (page) ids currently inside this user context. */
+  private _pageIds = new Set<string>();
+  /**
+   * Page ids we've already fired `'page'` listeners for. Tracked
+   * separately from `_pageIds` so that the listener fires exactly once
+   * regardless of whether `newPage()` populates `_pageIds` before or
+   * after the `browsingContext.contextCreated` event arrives.
+   */
+  private _notifiedPageIds = new Set<string>();
+  /**
+   * The in-flight promise from the most recent call to {@link _ensurePageTracking}.
+   * Doubles as the "is tracking armed?" flag — truthy after the first call,
+   * cleared in {@link close}. Used to await readiness when `on('page')` is
+   * followed immediately by `newPage()` — Firefox fires `contextCreated`
+   * before `session.subscribe` round-trips, so we must defer page creation
+   * until the listener is attached.
+   */
+  private _trackingPromise?: Promise<void>;
+  /** Unsubscribe handles for the contextCreated/Destroyed listeners. */
+  private _trackingOffs: Array<() => void> = [];
+  private _pageListeners = new Set<PageListener>();
+  private _closeListeners = new Set<CloseListener>();
 
   constructor(
     driver: Driver,
     conn: BiDiConnection,
     userContextId: string,
     getDefaultTimeout: () => number,
-    getNavigationTimeout: () => number
+    getNavigationTimeout: () => number,
+    hooks?: BrowserContextHooks,
+    config: BrowserContextConfig = {}
   ) {
     this.driver = driver;
     this.conn = conn;
     this._id = userContextId;
     this.getDefaultTimeout = getDefaultTimeout;
     this.getNavigationTimeout = getNavigationTimeout;
+    this._hooks = hooks;
+    this._config = { ...config };
   }
 
   /** The BiDi user-context id. The implicit default context has id `'default'`. */
@@ -55,12 +179,25 @@ export class BrowserContext {
     return this._closed;
   }
 
+  /**
+   * Base URL used to resolve relative paths in `page.navigateTo()`.
+   * Configured via `browser.newContext({ baseURL })`. Read by {@link Page}.
+   */
+  get baseURL(): string | undefined {
+    return this._config.baseURL;
+  }
+
   private assertOpen(): void {
     if (this._closed) {
       throw new Error(
         `BrowserContext "${this._id}" is closed; create a new one with browser.newContext().`
       );
     }
+  }
+
+  /** BiDi partition descriptor for storage operations scoped to this user context. */
+  private partition(): { type: 'storageKey'; userContext: string } {
+    return { type: 'storageKey', userContext: this._id };
   }
 
   /**
@@ -70,11 +207,23 @@ export class BrowserContext {
    */
   async newPage(opts?: { url?: string; type?: 'tab' | 'window' }): Promise<Page> {
     this.assertOpen();
+    // If any code path has armed page tracking (typically `on('page', …)`),
+    // wait for the subscription to be in place before we trigger
+    // `contextCreated` — Firefox emits the event before `session.subscribe`
+    // round-trips, and we must not lose it.
+    if (this._trackingPromise) await this._trackingPromise;
     const created = await this.conn.send<{ context: string }>('browsingContext.create', {
       type: opts?.type ?? 'tab',
       userContext: this._id,
     });
-    const page = new Page(this.driver, created.context, this.getDefaultTimeout, this.conn);
+    const page = new Page(this.driver, created.context, this.getDefaultTimeout, this.conn, this);
+    // Track and apply extra headers before navigation so the first request carries them.
+    this._pageIds.add(created.context);
+    await this._applyExtraHeadersTo([created.context]);
+    // Register any existing routes on this new page before navigation.
+    for (const sid of this._routes.keys()) {
+      await this._registerRouteOnPage(sid, created.context).catch(() => { });
+    }
     if (opts?.url) {
       await page.navigateTo(opts.url);
     }
@@ -92,7 +241,7 @@ export class BrowserContext {
     );
     return (tree.contexts ?? [])
       .filter((c) => c.userContext === this._id && !c.parent)
-      .map((c) => new Page(this.driver, c.context, this.getDefaultTimeout, this.conn));
+      .map((c) => new Page(this.driver, c.context, this.getDefaultTimeout, this.conn, this));
   }
 
   /**
@@ -107,6 +256,9 @@ export class BrowserContext {
     this.assertOpen();
     const timeout = opts?.timeout ?? this.getNavigationTimeout();
 
+    // Make sure any prior `on('page')` subscription is fully installed before
+    // we run `action()` — otherwise a fast popup could fire before we listen.
+    if (this._trackingPromise) await this._trackingPromise;
     await this.conn.subscribe(['browsingContext.contextCreated']).catch(() => { /* already subscribed */ });
 
     return new Promise<Page>((resolve, reject) => {
@@ -124,7 +276,8 @@ export class BrowserContext {
           this.driver,
           params.context as string,
           this.getDefaultTimeout,
-          this.conn
+          this.conn,
+          this
         ));
       });
 
@@ -136,9 +289,205 @@ export class BrowserContext {
     });
   }
 
+  // ── Cookies ──────────────────────────────────────────────────────────────
+
+  /**
+   * Return cookies scoped to this user context.
+   *
+   * Optionally filter by URL(s): only cookies whose `domain`/`path` would
+   * be sent on a request to that URL are returned. Mirrors Playwright's
+   * `BrowserContext.cookies(urls)` shape.
+   *
+   * @example
+   * ```ts
+   * const session = await alice.cookies(['https://app.example.com']);
+   * expect(session.find(c => c.name === 'sid')).toBeDefined();
+   * ```
+   */
+  async cookies(urls?: string | string[]): Promise<Cookie[]> {
+    this.assertOpen();
+    const result = await this.conn.send<GetCookiesResult>('storage.getCookies', {
+      partition: this.partition(),
+    });
+    const all = (result.cookies ?? []).map(normalizeCookie);
+    if (urls === undefined) return all;
+    const urlList = Array.isArray(urls) ? urls : [urls];
+    const parsed = urlList.map((u) => new URL(u));
+    return all.filter((c) => parsed.some((u) => cookieMatchesUrl(c, u)));
+  }
+
+  /**
+   * Add cookies to this user context. The `domain` field is required —
+   * BiDi rejects host-less cookies. Use `expiry` (UNIX seconds) or omit
+   * for a session cookie.
+   *
+   * @example
+   * ```ts
+   * // Pre-seed an authenticated session before the first navigation.
+   * await alice.addCookies([
+   *   { name: 'sid', value: 'eyJhbGciOi…', domain: 'app.example.com', path: '/', secure: true, sameSite: 'lax' },
+   * ]);
+   * ```
+   */
+  async addCookies(cookies: CookieInput[]): Promise<void> {
+    this.assertOpen();
+    for (const c of cookies) {
+      // BiDi rejects `sameSite: 'none'` without `secure: true`. Be loud
+      // instead of silently rewriting the cookie.
+      if (c.sameSite === 'none' && !c.secure) {
+        throw new Error(
+          `addCookies: cookie "${c.name}" has sameSite "none" but secure is false. ` +
+          `Set secure: true or change sameSite to 'lax'/'strict'.`
+        );
+      }
+      const partial: RawPartialCookie = {
+        name: c.name,
+        value: typeof c.value === 'string' ? { type: 'string', value: c.value } : c.value,
+        domain: c.domain,
+        path: c.path,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite,
+        expiry: c.expiry,
+      };
+      await this.conn.send('storage.setCookie', {
+        cookie: partial,
+        partition: this.partition(),
+      });
+    }
+  }
+
+  /**
+   * Remove cookies from this user context.
+   *
+   * - No filter: clears every cookie in this context.
+   * - Filter fields are AND-combined: a cookie must match every provided
+   *   field to be removed.
+   *
+   * @example
+   * ```ts
+   * await alice.clearCookies({ name: 'sid' });           // sign Alice out
+   * await alice.clearCookies({ domain: 'tracker.io' });  // wipe a single host
+   * await alice.clearCookies();                          // full reset
+   * ```
+   */
+  async clearCookies(filter?: ClearCookiesFilter): Promise<void> {
+    this.assertOpen();
+    await this.conn.send('storage.deleteCookies', {
+      filter: filter ?? {},
+      partition: this.partition(),
+    });
+  }
+
+  // ── Storage state (Playwright-shape JSON) ────────────────────────────────
+
+  /**
+   * Snapshot cookies + localStorage for this context.
+   *
+   * Returns `{ cookies, localStorage }` — a superset of Playwright's
+   * `storageState()` JSON shape, kept close enough that dumped files
+   * are interchangeable on a best-effort basis.
+   *
+   * **Limitation.** localStorage can only be read for origins that a page
+   * in this context is currently visiting — BiDi has no out-of-band
+   * storage read API. Open one page per origin you want captured before
+   * snapshotting.
+   */
+  async storageState(opts?: ContextStorageStateOptions): Promise<SessionState> {
+    this.assertOpen();
+    const state: SessionState = {};
+
+    if (opts?.includeCookies !== false) {
+      state.cookies = await this.cookies();
+    }
+
+    if (opts?.includeLocalStorage !== false) {
+      const local = await this.collectLocalStorage();
+      if (Object.keys(local).length > 0) {
+        state.localStorage = local;
+      }
+    }
+
+    return state;
+  }
+
+  /**
+   * Snapshot the context's state and write it to `path` as JSON.
+   * Returns the snapshot for inspection.
+   *
+   * @example
+   * ```ts
+   * // tests/setup/login.ts — runs once, before the test suite.
+   * const alice = await browser.newContext();
+   * const page = await alice.newPage({ url: 'https://app.example.com/login' });
+   * await loginAs(page, 'alice');
+   * await alice.saveStorageState('auth/alice.json');
+   * await alice.close();
+   * ```
+   */
+  async saveStorageState(
+    path: string,
+    opts?: ContextStorageStateOptions
+  ): Promise<SessionState> {
+    const state = await this.storageState(opts);
+    await fs.writeFile(path, JSON.stringify(state, null, 2), 'utf-8');
+    return state;
+  }
+
+  /**
+   * Apply a previously-captured snapshot to this context.
+   *
+   * - Cookies are written immediately.
+   * - localStorage entries are installed via a preload script that runs
+   *   on first navigation to each origin, before any page script. This
+   *   matches the way Playwright restores localStorage and survives full
+   *   reloads.
+   *
+   * Calling `loadStorageState` again replaces the previous preload
+   * script; it does not stack.
+   *
+   * @param source A `SessionState` object, or a path to a JSON file
+   *   produced by {@link saveStorageState}.
+   */
+  async loadStorageState(source: SessionState | string): Promise<void> {
+    this.assertOpen();
+    const state: SessionState =
+      typeof source === 'string'
+        ? (JSON.parse(await fs.readFile(source, 'utf-8')) as SessionState)
+        : source;
+
+    if (state.cookies?.length) {
+      // Sanitize: a snapshot may contain cookies with sameSite:'none' and
+      // secure:false because some engines report that combo for cookies
+      // originally set via document.cookie. BiDi rejects it. Drop the
+      // sameSite field on those so the engine picks its default.
+      const sanitized = state.cookies.map((c) => {
+        if (c.sameSite === 'none' && !c.secure) {
+          const { sameSite: _drop, ...rest } = c;
+          return rest as CookieInput;
+        }
+        return c;
+      });
+      await this.addCookies(sanitized);
+    }
+
+    // Replace any previously-installed localStorage preload.
+    if (this._localStoragePreloadId) {
+      await this.conn
+        .send('script.removePreloadScript', { script: this._localStoragePreloadId })
+        .catch(() => { /* already gone */ });
+      this._localStoragePreloadId = undefined;
+    }
+
+    if (state.localStorage && Object.keys(state.localStorage).length > 0) {
+      this._localStoragePreloadId = await this.installLocalStoragePreload(state.localStorage);
+    }
+  }
+
   /**
    * Remove this user context. All of its pages are closed and any
    * subsequent operation on this `BrowserContext` instance throws.
+   * Fires the `'close'` event before tearing down.
    *
    * The default context (`id === 'default'`) cannot be removed.
    */
@@ -150,7 +499,640 @@ export class BrowserContext {
         'Quit the browser instead with browser.quit().'
       );
     }
+
+    // Best-effort cleanup of init scripts and routes before the context
+    // goes away — keeps the browser-level interceptor map from leaking.
+    for (const id of this._initScriptIds) {
+      await this.conn.send('script.removePreloadScript', { script: id }).catch(() => { });
+    }
+    this._initScriptIds.clear();
+    if (this._localStoragePreloadId) {
+      await this.conn
+        .send('script.removePreloadScript', { script: this._localStoragePreloadId })
+        .catch(() => { });
+      this._localStoragePreloadId = undefined;
+    }
+    if (this._hooks && this._routes.size > 0) {
+      const net = this._hooks.getNetwork();
+      for (const entry of this._routes.values()) {
+        for (const realId of entry.perPage.values()) {
+          if (!realId) continue;
+          await net.removeIntercept(realId).catch(() => { });
+        }
+      }
+    }
+    this._routes.clear();
+    for (const off of this._trackingOffs) off();
+    this._trackingOffs = [];
+    this._trackingPromise = undefined;
+
     await this.conn.send('browser.removeUserContext', { userContext: this._id });
     this._closed = true;
+
+    // Fire close listeners last, after the context is fully gone.
+    for (const fn of this._closeListeners) {
+      try { fn(); } catch { /* listener errors must not break close() */ }
+    }
+    this._closeListeners.clear();
+    this._pageListeners.clear();
   }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+
+  /**
+   * Subscribe to context-scoped events.
+   *
+   * - `'page'`: fires whenever a new top-level page opens inside this
+   *   context — programmatic (`ctx.newPage()`), `window.open()` from one
+   *   of this context's pages, or `target="_blank"` clicks. Use this when
+   *   you want a hook that applies to *every* page, current and future
+   *   (e.g. console capture on a multi-tab flow).
+   * - `'close'`: fires once after this context has been removed.
+   *
+   * Returns an unsubscribe function. Listeners that throw are caught and
+   * ignored so a bad handler can't take down navigation.
+   *
+   * @example
+   * ```ts
+   * // Log every page's console output across the whole context,
+   * // including popups that haven't been opened yet.
+   * const off = ctx.on('page', (page) => {
+   *   page.url().then((url) => console.log(`[ctx ${ctx.id}] page opened: ${url}`));
+   * });
+   * // …later…
+   * off();
+   * ```
+   */
+  on(event: 'page', listener: PageListener): () => void;
+  on(event: 'close', listener: CloseListener): () => void;
+  on(event: 'page' | 'close', listener: PageListener | CloseListener): () => void {
+    if (event === 'close') {
+      this._closeListeners.add(listener as CloseListener);
+      return () => this._closeListeners.delete(listener as CloseListener);
+    }
+    this._pageListeners.add(listener as PageListener);
+    // Page tracking is what powers the 'page' event AND `route` membership
+    // filtering. Start it lazily on first listener.
+    this._ensurePageTracking().catch(() => { });
+    return () => this._pageListeners.delete(listener as PageListener);
+  }
+
+  /** Remove a previously-registered listener. */
+  off(event: 'page', listener: PageListener): void;
+  off(event: 'close', listener: CloseListener): void;
+  off(event: 'page' | 'close', listener: PageListener | CloseListener): void {
+    if (event === 'close') this._closeListeners.delete(listener as CloseListener);
+    else this._pageListeners.delete(listener as PageListener);
+  }
+
+  // ── Init scripts ─────────────────────────────────────────────────────────
+
+  /**
+   * Register a script that runs in every page of this context, **before
+   * any page script**, on every navigation including popups. Scoped to
+   * this user context via BiDi `script.addPreloadScript`'s `userContexts`
+   * parameter.
+   *
+   * Use it for the "every page in this profile gets this hook" patterns:
+   * feature flags, fake clocks, auth shims, deterministic Math.random.
+   *
+   * @example
+   * ```ts
+   * // Mark every page as running under E2E so the app can skip
+   * // animations and disable analytics — no per-page wiring needed.
+   * await ctx.addInitScript(() => {
+   *   window.__E2E__ = true;
+   * });
+   * ```
+   */
+  async addInitScript(
+    script: string | ((...args: unknown[]) => unknown)
+  ): Promise<InitScriptHandle> {
+    this.assertOpen();
+    const fnDecl =
+      typeof script === 'function' ? script.toString() : `() => { ${script} }`;
+    const result = await this.conn.send<{ script: string }>('script.addPreloadScript', {
+      functionDeclaration: fnDecl,
+      userContexts: [this._id],
+    });
+    this._initScriptIds.add(result.script);
+    return {
+      id: result.script,
+      remove: async () => {
+        if (!this._initScriptIds.has(result.script)) return;
+        this._initScriptIds.delete(result.script);
+        await this.conn
+          .send('script.removePreloadScript', { script: result.script })
+          .catch(() => { });
+      },
+    };
+  }
+
+  /**
+   * Remove an init script by its handle id. Alternative to calling
+   * `handle.remove()` on the value returned by {@link addInitScript}.
+   */
+  async removeInitScript(id: string): Promise<void> {
+    if (!this._initScriptIds.has(id)) return;
+    this._initScriptIds.delete(id);
+    await this.conn.send('script.removePreloadScript', { script: id }).catch(() => { });
+  }
+
+  // ── Routing ──────────────────────────────────────────────────────────────
+
+  /**
+   * Intercept network requests originating from any page in this
+   * context. The handler runs for every matching request and decides
+   * how to answer it (`fulfill` / `continue` / `abort`).
+   *
+   * Routes are registered as a separate BiDi `network.addIntercept`
+   * per page, scoped to that page's browsing-context id. Pages opened
+   * later inherit every route automatically; closed pages have their
+   * intercept removed. Requests from *other* contexts are not seen.
+   *
+   * @example
+   * ```ts
+   * // Mock the authenticated user endpoint just for Alice's context.
+   * await alice.route('**\/api/me', (req) => ({
+   *   status: 200,
+   *   headers: { 'content-type': 'application/json' },
+   *   body: { id: 1, name: 'Alice' },
+   * }));
+   * ```
+   */
+  async route(pattern: RoutePattern, handler: RequestHandler): Promise<string> {
+    this.assertOpen();
+    if (!this._hooks) {
+      throw new Error(
+        'ctx.route() requires a network interceptor — this BrowserContext was ' +
+        'constructed without one. Create the context via browser.newContext().'
+      );
+    }
+    await this._ensurePageTracking();
+    // Synthetic id returned to the user. Stable across page churn.
+    const syntheticId = `ctx-route-${++BrowserContext._routeCounter}`;
+    const entry = { pattern, handler, perPage: new Map<string, string>() };
+    this._routes.set(syntheticId, entry);
+    // Register intercept on every page that already exists in this context.
+    await Promise.all(
+      [...this._pageIds].map((pageId) =>
+        this._registerRouteOnPage(syntheticId, pageId).catch(() => { })
+      )
+    );
+    return syntheticId;
+  }
+
+  /**
+   * Remove a route previously registered with {@link route}. With no
+   * argument, removes every route registered on this context.
+   *
+   * @example
+   * ```ts
+   * const id = await ctx.route('**\/api/feature-flags', mockFlags);
+   * // …test runs…
+   * await ctx.unroute(id);
+   * ```
+   */
+  async unroute(id?: string): Promise<void> {
+    if (!this._hooks) return;
+    const net = this._hooks.getNetwork();
+    const remove = async (syntheticId: string) => {
+      const entry = this._routes.get(syntheticId);
+      if (!entry) return;
+      this._routes.delete(syntheticId);
+      for (const realId of entry.perPage.values()) {
+        if (!realId) continue; // placeholder for an in-flight registration
+        await net.removeIntercept(realId).catch(() => { });
+      }
+    };
+    if (id) {
+      await remove(id);
+      return;
+    }
+    for (const sid of [...this._routes.keys()]) {
+      await remove(sid);
+    }
+  }
+
+  // ── Extra HTTP headers ───────────────────────────────────────────────────
+
+  /**
+   * Replace this context's extra-HTTP-headers map. Applied to every
+   * currently-open page in this context, and re-applied to each new page
+   * that opens afterwards.
+   *
+   * Pass `{}` to clear.
+   *
+   * @example
+   * ```ts
+   * await alice.setExtraHTTPHeaders({ 'X-Tenant': 'acme', 'X-Test': 'true' });
+   * ```
+   */
+  async setExtraHTTPHeaders(headers: Record<string, string>): Promise<void> {
+    this.assertOpen();
+    this._config.extraHTTPHeaders = { ...headers };
+    await this._ensurePageTracking();
+    if (this._pageIds.size > 0) {
+      await this._applyExtraHeadersTo([...this._pageIds]);
+    }
+  }
+
+  // ── Identity & device emulation (Milestone C) ────────────────────────────
+
+  /**
+   * Override the locale reported to every page in this context.
+   *
+   * Mapped to BiDi `emulation.setLocaleOverride` scoped to
+   * `userContexts: [this.id]`, so the override applies to every page
+   * currently open in this context **and** every page opened later.
+   * Pass `null` to clear the override.
+   *
+   * Cross-browser: works on Chrome and Firefox.
+   *
+   * @example
+   * ```ts
+   * // Render the UI in German for a checkout-translation test.
+   * await ctx.setLocale('de-DE');
+   * const page = await ctx.newPage({ url: '/checkout' });
+   * await page.expect(page.find('h1')).toContainText('Kasse');
+   * ```
+   */
+  async setLocale(locale: string | null): Promise<void> {
+    this.assertOpen();
+    await this.conn.send('emulation.setLocaleOverride', {
+      userContexts: [this._id],
+      locale,
+    });
+  }
+
+  /**
+   * Override the timezone reported to every page in this context.
+   *
+   * Mapped to BiDi `emulation.setTimezoneOverride` scoped to
+   * `userContexts: [this.id]`. Pass `null` to clear the override.
+   * Accepts any IANA timezone id (e.g. `'Europe/Berlin'`,
+   * `'America/Los_Angeles'`).
+   *
+   * Cross-browser: works on Chrome and Firefox.
+   *
+   * @example
+   * ```ts
+   * await ctx.setTimezone('Asia/Tokyo');
+   * const page = await ctx.newPage({ url: '/dashboard' });
+   * // `new Date().getTimezoneOffset()` in the page now reflects JST.
+   * ```
+   */
+  async setTimezone(timezoneId: string | null): Promise<void> {
+    this.assertOpen();
+    await this.conn.send('emulation.setTimezoneOverride', {
+      userContexts: [this._id],
+      timezone: timezoneId,
+    });
+  }
+
+  /**
+   * Override `navigator.geolocation` for every page in this context.
+   *
+   * Mapped to BiDi `emulation.setGeolocationOverride` scoped to
+   * `userContexts: [this.id]`. Pass `null` to clear and return to the
+   * real device location.
+   *
+   * The page still has to be granted the `geolocation` permission \u2014 use
+   * {@link grantPermissions} once the origin is known.
+   *
+   * @example
+   * ```ts
+   * await ctx.setGeolocation({ latitude: 51.5074, longitude: -0.1278 });
+   * const page = await ctx.newPage({ url: 'https://app.example.com' });
+   * await ctx.grantPermissions(['geolocation'], { origin: 'https://app.example.com' });
+   * ```
+   */
+  async setGeolocation(
+    coords: { latitude: number; longitude: number; accuracy?: number } | null
+  ): Promise<void> {
+    this.assertOpen();
+    const params: Record<string, unknown> = { userContexts: [this._id] };
+    if (coords === null) {
+      params.coordinates = null;
+    } else {
+      if (
+        typeof coords.latitude !== 'number' ||
+        typeof coords.longitude !== 'number' ||
+        coords.latitude < -90 || coords.latitude > 90 ||
+        coords.longitude < -180 || coords.longitude > 180
+      ) {
+        throw new Error(
+          `setGeolocation: invalid coordinates ${JSON.stringify(coords)}. ` +
+          'latitude must be in [-90, 90] and longitude in [-180, 180].'
+        );
+      }
+      params.coordinates = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy ?? 1,
+      };
+    }
+    try {
+      await this.conn.send('emulation.setGeolocationOverride', params);
+    } catch (err) {
+      const engine = this._hooks?.getBrowserName?.() ?? 'this browser';
+      throw new Error(
+        `setGeolocation() failed on ${engine}: ${(err as Error).message}. ` +
+        'BiDi `emulation.setGeolocationOverride` coverage is still uneven ' +
+        'across engines; Chrome is the reliable target today.'
+      );
+    }
+  }
+
+  /**
+   * Grant (or deny) one or more permissions for an origin in this context.
+   *
+   * Mapped to BiDi `permissions.setPermission` with the `userContext`
+   * parameter, so the grant only affects pages inside **this** context.
+   * The set of valid permission names is the W3C Permissions catalogue
+   * (`'geolocation'`, `'notifications'`, `'clipboard-read'`,
+   * `'clipboard-write'`, `'camera'`, `'microphone'`, \u2026).
+   *
+   * `opts.origin` is required \u2014 BiDi has no "all origins" wildcard.
+   * `opts.state` defaults to `'granted'`.
+   *
+   * @example
+   * ```ts
+   * await ctx.grantPermissions(['geolocation'], { origin: 'https://app.example.com' });
+   * await ctx.grantPermissions(['notifications'], {
+   *   origin: 'https://app.example.com',
+   *   state: 'denied',
+   * });
+   * ```
+   */
+  async grantPermissions(
+    permissions: string[],
+    opts: { origin: string; state?: 'granted' | 'denied' | 'prompt' }
+  ): Promise<void> {
+    this.assertOpen();
+    if (!Array.isArray(permissions) || permissions.length === 0) {
+      throw new Error('grantPermissions: pass a non-empty array of permission names.');
+    }
+    if (!opts || typeof opts.origin !== 'string' || opts.origin.length === 0) {
+      throw new Error(
+        'grantPermissions: `origin` is required \u2014 BiDi `permissions.setPermission` ' +
+        'has no "all origins" wildcard.'
+      );
+    }
+    const state = opts.state ?? 'granted';
+    for (const name of permissions) {
+      try {
+        await this.conn.send('permissions.setPermission', {
+          descriptor: { name },
+          state,
+          origin: opts.origin,
+          userContext: this._id,
+        });
+      } catch (err) {
+        const engine = this._hooks?.getBrowserName?.() ?? 'this browser';
+        throw new Error(
+          `grantPermissions(${JSON.stringify(name)}) failed on ${engine}: ` +
+          `${(err as Error).message}.`
+        );
+      }
+    }
+  }
+
+  /**
+   * Reset the listed permissions for an origin back to the browser
+   * default (`'prompt'`). Convenience wrapper around
+   * {@link grantPermissions} with `state: 'prompt'`.
+   */
+  async clearPermissions(
+    permissions: string[],
+    opts: { origin: string }
+  ): Promise<void> {
+    await this.grantPermissions(permissions, { ...opts, state: 'prompt' });
+  }
+
+  // ── Internal helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Read localStorage for every origin currently open in this context.
+   * Returns `{ origin: { key: value, ... }, ... }`.
+   */
+  private async collectLocalStorage(): Promise<
+    Record<string, Record<string, string>>
+  > {
+    const pages = await this.pages();
+    const byOrigin: Record<string, Record<string, string>> = {};
+    for (const page of pages) {
+      try {
+        const url = await page.url();
+        if (!url || url === 'about:blank') continue;
+        const origin = new URL(url).origin;
+        if (byOrigin[origin]) continue; // first page wins
+        const entries = await page.evaluate<Record<string, string>>(
+          `const out = {};
+           for (let i = 0; i < localStorage.length; i++) {
+             const k = localStorage.key(i);
+             if (k !== null) out[k] = localStorage.getItem(k) ?? '';
+           }
+           return out;`
+        );
+        if (entries && Object.keys(entries).length > 0) {
+          byOrigin[origin] = entries;
+        }
+      } catch {
+        // Page may have been closed mid-snapshot; skip.
+      }
+    }
+    return byOrigin;
+  }
+
+  /**
+   * Install a preload script (scoped to this user context) that, on first
+   * navigation to each captured origin, writes the localStorage entries
+   * before any page script runs.
+   */
+  private async installLocalStoragePreload(
+    localStorage: Record<string, Record<string, string>>
+  ): Promise<string> {
+    // Serialize the origin → entries map into the function body. Safe because
+    // we control the JSON shape (strings only).
+    const payload = JSON.stringify(localStorage);
+    const fnSrc = `() => {
+      try {
+        const data = ${payload};
+        const entries = data[location.origin];
+        if (!entries) return;
+        for (const k in entries) {
+          try { window.localStorage.setItem(k, entries[k]); } catch (e) { /* quota / opaque origin */ }
+        }
+      } catch (e) { /* never break user pages */ }
+    }`;
+
+    const result = await this.conn.send<{ script: string }>('script.addPreloadScript', {
+      functionDeclaration: fnSrc,
+      userContexts: [this._id],
+    });
+    return result.script;
+  }
+
+  /**
+   * Subscribe (once) to BiDi page-creation / page-destruction events and
+   * seed `_pageIds` with currently-open pages in this context. Powers
+   * both the `'page'` event and route membership filtering.
+   */
+  private _ensurePageTracking(): Promise<void> {
+    if (this._closed) return Promise.resolve();
+    if (this._trackingPromise) return this._trackingPromise;
+    this._trackingPromise = this._startPageTracking();
+    return this._trackingPromise;
+  }
+
+  private async _startPageTracking(): Promise<void> {
+    await this.conn
+      .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
+      .catch(() => { /* already subscribed */ });
+
+    const onCreated = (params: Record<string, unknown>) => {
+      if (params.parent) return; // nested frames
+      if (params.userContext !== this._id) return;
+      const id = params.context as string;
+      this._pageIds.add(id);
+      // Headers must be applied before the first request from this page.
+      this._applyExtraHeadersTo([id]).catch(() => { });
+      // Register every existing route on the new page.
+      for (const sid of this._routes.keys()) {
+        this._registerRouteOnPage(sid, id).catch(() => { });
+      }
+      // Notify page listeners exactly once per page.
+      if (this._notifiedPageIds.has(id)) return;
+      this._notifiedPageIds.add(id);
+      if (this._pageListeners.size > 0) {
+        const page = new Page(this.driver, id, this.getDefaultTimeout, this.conn, this);
+        for (const fn of this._pageListeners) {
+          try { fn(page); } catch { /* listener errors must not break events */ }
+        }
+      }
+    };
+    const onDestroyed = (params: Record<string, unknown>) => {
+      if (params.parent) return;
+      const id = params.context as string;
+      this._pageIds.delete(id);
+      this._notifiedPageIds.delete(id);
+      // Tear down any per-page intercepts registered against this page.
+      const net = this._hooks?.getNetwork();
+      for (const entry of this._routes.values()) {
+        const realId = entry.perPage.get(id);
+        if (realId && net) {
+          entry.perPage.delete(id);
+          net.removeIntercept(realId).catch(() => { });
+        } else if (realId === '') {
+          // In-flight registration — drop the placeholder; the registration
+          // will detect the missing page and clean itself up.
+          entry.perPage.delete(id);
+        }
+      }
+    };
+
+    this._trackingOffs.push(this.conn.on('browsingContext.contextCreated', onCreated));
+    this._trackingOffs.push(this.conn.on('browsingContext.contextDestroyed', onDestroyed));
+
+    // Seed with currently-open pages AFTER handlers are attached so we don't
+    // miss a contextCreated event that races with this seeding.
+    try {
+      const tree = await this.conn.send<{ contexts: BrowsingContextInfo[] }>(
+        'browsingContext.getTree',
+        {}
+      );
+      for (const c of tree.contexts ?? []) {
+        if (c.userContext === this._id && !c.parent) {
+          this._pageIds.add(c.context);
+        }
+      }
+    } catch { /* not fatal — set will fill from events */ }
+  }
+
+  /**
+   * Push the current `extraHTTPHeaders` onto a specific set of page ids.
+   * No-op when no headers are configured.
+   */
+  private async _applyExtraHeadersTo(contexts: string[]): Promise<void> {
+    const headers = this._config.extraHTTPHeaders;
+    if (!headers || Object.keys(headers).length === 0 || contexts.length === 0) return;
+    if (!this._hooks) return;
+    await this._hooks.getNetwork().setExtraHeaders(headers, contexts);
+  }
+
+  /**
+   * Register a single route's BiDi intercept against one page id. Records
+   * the live intercept id in the route's `perPage` map so it can be
+   * cleaned up when the page closes or the route is removed.
+   *
+   * Reserves the slot synchronously (before awaiting `intercept`) so that
+   * concurrent callers — typically `newPage()` and the `contextCreated`
+   * event firing for the same page — don't both create an intercept.
+   */
+  private async _registerRouteOnPage(syntheticId: string, pageId: string): Promise<void> {
+    const entry = this._routes.get(syntheticId);
+    if (!entry || !this._hooks) return;
+    if (entry.perPage.has(pageId)) return;
+    // Reserve before the await with a placeholder so a parallel registration
+    // call observes `perPage.has(pageId)` === true and bails out early.
+    entry.perPage.set(pageId, '');
+    try {
+      const realId = await this._hooks.getNetwork().intercept(
+        entry.pattern,
+        entry.handler,
+        ['beforeRequestSent'],
+        [pageId]
+      );
+      // The route may have been unrouted, or the page destroyed (which
+      // clears the placeholder via `onDestroyed`), while we were awaiting.
+      // In either case, drop the intercept and leave no stale entry behind.
+      if (!this._routes.has(syntheticId) || !this._pageIds.has(pageId)) {
+        entry.perPage.delete(pageId);
+        await this._hooks.getNetwork().removeIntercept(realId).catch(() => { });
+        return;
+      }
+      entry.perPage.set(pageId, realId);
+    } catch (err) {
+      // Roll back the placeholder so a later retry can succeed.
+      if (entry.perPage.get(pageId) === '') entry.perPage.delete(pageId);
+      throw err;
+    }
+  }
+}
+
+// ── Module-private helpers ─────────────────────────────────────────────────
+
+function normalizeCookie(raw: RawNetworkCookie): Cookie {
+  return {
+    name: raw.name,
+    value: typeof raw.value === 'string' ? raw.value : raw.value.value,
+    domain: raw.domain,
+    path: raw.path,
+    size: raw.size,
+    httpOnly: raw.httpOnly,
+    secure: raw.secure,
+    sameSite: raw.sameSite,
+    expiry: raw.expiry,
+  };
+}
+
+/** Would `cookie` be sent on a request to `url`? RFC-6265 domain/path match (best effort). */
+function cookieMatchesUrl(cookie: Cookie, url: URL): boolean {
+  const cookieDomain = cookie.domain.replace(/^\./, '').toLowerCase();
+  const reqHost = url.hostname.toLowerCase();
+  const domainOk = reqHost === cookieDomain || reqHost.endsWith('.' + cookieDomain);
+  if (!domainOk) return false;
+
+  const cookiePath = cookie.path || '/';
+  const reqPath = url.pathname || '/';
+  const pathOk =
+    cookiePath === '/' ||
+    reqPath === cookiePath ||
+    reqPath.startsWith(cookiePath.endsWith('/') ? cookiePath : cookiePath + '/');
+  if (!pathOk) return false;
+
+  if (cookie.secure && url.protocol !== 'https:') return false;
+
+  return true;
 }
