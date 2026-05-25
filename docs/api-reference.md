@@ -16,13 +16,17 @@ Run `npm run docs:api` to regenerate. CI fails when this file is out of date.
 | `A11yViolationNode` | type | — | [accessibility](accessibility.md) |
 | `Browser` | class | — | [browser-api](browser-api.md) |
 | `BrowserContext` | class | — | [browser-context](browser-context.md) |
+| `BrowserContextConfig` | type | Per-context options stored at creation time. | [browser-context](browser-context.md) |
+| `BrowserContextHooks` | type | Internal hooks the owning {@link Browser } passes to a new context. | [browser-context](browser-context.md) |
 | `By` | class | — | [selectors](selectors.md) |
 | `ChromeService` | class | — | [getting-started](getting-started.md) |
 | `ChromeServiceOptions` | type | — | [getting-started](getting-started.md) |
+| `ClearCookiesFilter` | type | Filter applied to {@link BrowserContext.clearCookies}. | [browser-context](browser-context.md) |
 | `Clock` | class | Controls the virtual clock inside the browser page. | [clock](clock.md) |
 | `ClockInstallOptions` | type | Options for {@link Clock.install}. | [clock](clock.md) |
 | `ClockTime` | type | Accepted forms for a point in time. | [clock](clock.md) |
 | `ConsoleMessage` | type | — | [bidi-features](bidi-features.md) |
+| `ContextStorageStateOptions` | type | Options for {@link BrowserContext.storageState}. | [browser-context](browser-context.md) |
 | `Cookie` | type | — | [bidi-features](bidi-features.md) |
 | `CookieInput` | type | — | [bidi-features](bidi-features.md) |
 | `CraftdriverError` | class | Base class for every error thrown from the public API. | [error-codes](error-codes.md) |
@@ -40,6 +44,7 @@ Run `npm run docs:api` to regenerate. CI fails when this file is out of date.
 | `FirefoxService` | class | — | [getting-started](getting-started.md) |
 | `FirefoxServiceOptions` | type | — | [getting-started](getting-started.md) |
 | `Frame` | class | — | [browser-api](browser-api.md) |
+| `InitScriptHandle` | type | A handle returned by {@link BrowserContext.addInitScript}. | [browser-context](browser-context.md) |
 | `InterceptedRequest` | type | — | [bidi-features](bidi-features.md) |
 | `InterceptedResponse` | type | — | [bidi-features](bidi-features.md) |
 | `JavaScriptError` | type | — | [bidi-features](bidi-features.md) |
@@ -55,6 +60,7 @@ Run `npm run docs:api` to regenerate. CI fails when this file is out of date.
 | `Mouse` | class | — | [keyboard-mouse](keyboard-mouse.md) |
 | `NetworkInterceptor` | class | — | [bidi-features](bidi-features.md) |
 | `Page` | class | — | [browser-api](browser-api.md) |
+| `RoutePattern` | type | Pattern accepted by {@link BrowserContext.route}. Same shape as the browser-level interceptor. | [browser-context](browser-context.md) |
 | `SessionState` | type | — | [bidi-features](bidi-features.md) |
 | `SessionStateManager` | class | — | [bidi-features](bidi-features.md) |
 | `StorageStateOptions` | type | — | [bidi-features](bidi-features.md) |
@@ -62,4 +68,4 @@ Run `npm run docs:api` to regenerate. CI fails when this file is out of date.
 | `TraceScreenshotMode` | type | Screenshot mode for tracing. | [tracing](tracing.md) |
 | `TraceStartOptions` | type | — | [tracing](tracing.md) |
 
-Total exports: **54**.
+Total exports: **60**.

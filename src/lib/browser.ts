@@ -295,6 +295,9 @@ function findIframeContext(
 export class Browser {
   private bidiSession?: BiDiSession;
   private _network?: NetworkInterceptor;
+  private _defaultContext?: BrowserContext;
+  /** Cache of {@link BrowserContext} wrappers keyed by user-context id. */
+  private _contextsById = new Map<string, BrowserContext>();
   private _logs?: LogMonitor;
   private _tracer?: Tracer;
   private _storage?: SessionStateManager;
@@ -1584,7 +1587,13 @@ export class Browser {
         {}
       );
       return (tree.contexts ?? []).map(
-        (ctx) => new Page(this.driver, ctx.context, this.getDefaultTimeout, conn)
+        (ctx) => new Page(
+          this.driver,
+          ctx.context,
+          this.getDefaultTimeout,
+          conn,
+          this._wrapContext(ctx.userContext ?? 'default')
+        )
       );
     }
 
@@ -1619,7 +1628,7 @@ export class Browser {
     const created = await conn.send<{ context: string }>('browsingContext.create', {
       type: opts?.type ?? 'tab',
     });
-    const page = new Page(this.driver, created.context, this.getDefaultTimeout, conn);
+    const page = new Page(this.driver, created.context, this.getDefaultTimeout, conn, this.defaultContext);
     if (opts?.url) {
       await page.navigateTo(opts.url);
     }
@@ -1662,7 +1671,8 @@ export class Browser {
               this.driver,
               params.context as string,
               this.getDefaultTimeout,
-              conn
+              conn,
+              this._wrapContext((params.userContext as string | undefined) ?? 'default')
             ));
           }
         });
@@ -1704,14 +1714,89 @@ export class Browser {
    * Maps to BiDi `browser.createUserContext`. **BiDi-only** — throws in
    * Classic mode because WebDriver Classic has no equivalent.
    *
+   * Optionally pre-seed the context with a previously-saved
+   * `storageState` snapshot (object or path to JSON) — cookies are
+   * applied immediately and localStorage entries land on first
+   * navigation to each captured origin.
+   *
    * @example
    * const alice = await browser.newContext();
    * const bob = await browser.newContext();
    * const aPage = await alice.newPage({ url: 'https://app.example.com/login' });
    * const bPage = await bob.newPage({ url: 'https://app.example.com/login' });
    * // logging in as Alice in aPage does not leak into bPage.
+   *
+   * @example
+   * // Skip the login UI in every test by reusing a saved session.
+   * const ctx = await browser.newContext({ storageState: 'auth/alice.json' });
+   * const page = await ctx.newPage({ url: 'https://app.example.com/dashboard' });
+   *
+   * @example
+   * // Pre-configure a context for a staging tenant: every relative URL
+   * // resolves against staging, every request carries the tenant header.
+   * const ctx = await browser.newContext({
+   *   baseURL: 'https://staging.example.com',
+   *   extraHTTPHeaders: { 'X-Tenant': 'acme' },
+   * });
+   * const page = await ctx.newPage({ url: '/dashboard' });  // → staging.example.com/dashboard
    */
-  async newContext(): Promise<BrowserContext> {
+  /**
+   * Return the {@link BrowserContext} wrapper for a given BiDi user-context
+   * id, constructing it on first access and caching it thereafter. Stable
+   * across {@link defaultContext}, {@link newContext}, and {@link contexts}
+   * so route handlers, event listeners, and init scripts always live on
+   * the same instance the user holds.
+   *
+   * Caller must guarantee BiDi is connected (`bidiSession.isConnected()`).
+   */
+  private _wrapContext(
+    id: string,
+    config?: { baseURL?: string; extraHTTPHeaders?: Record<string, string> }
+  ): BrowserContext {
+    const cached = this._contextsById.get(id);
+    if (cached) return cached;
+    const conn = this.bidiSession!.getConnection();
+    const ctx = new BrowserContext(
+      this.driver,
+      conn,
+      id,
+      this.getDefaultTimeout,
+      () => this.defaults.navigationTimeout,
+      { getNetwork: () => this.network, getBrowserName: () => this._browserName },
+      config
+    );
+    this._contextsById.set(id, ctx);
+    // Evict on close so long-running suites that create many contexts don't
+    // accumulate dead wrappers.
+    ctx.on('close', () => { this._contextsById.delete(id); });
+    return ctx;
+  }
+
+  async newContext(opts?: {
+    storageState?: SessionState | string;
+    baseURL?: string;
+    extraHTTPHeaders?: Record<string, string>;
+    /**
+     * Locale reported by `navigator.language`, `Intl.*`, and the
+     * `Accept-Language` header. Cross-browser via BiDi
+     * `emulation.setLocaleOverride`. Applies to every page in this
+     * context, including pages opened later.
+     */
+    locale?: string;
+    /**
+     * IANA timezone applied to `Date` and `Intl.DateTimeFormat`.
+     * Cross-browser via BiDi `emulation.setTimezoneOverride`. Applies to
+     * every page in this context, including pages opened later.
+     */
+    timezoneId?: string;
+    /**
+     * Coordinates returned by `navigator.geolocation`. Cross-browser via
+     * BiDi `emulation.setGeolocationOverride`. The page still needs the
+     * `geolocation` permission \u2014 use {@link BrowserContext.grantPermissions}
+     * once the origin is known.
+     */
+    geolocation?: { latitude: number; longitude: number; accuracy?: number };
+  }): Promise<BrowserContext> {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'newContext() requires BiDi (enableBiDi: true). ' +
@@ -1720,13 +1805,19 @@ export class Browser {
     }
     const conn = this.bidiSession.getConnection();
     const created = await conn.send<{ userContext: string }>('browser.createUserContext', {});
-    return new BrowserContext(
-      this.driver,
-      conn,
-      created.userContext,
-      this.getDefaultTimeout,
-      () => this.defaults.navigationTimeout
-    );
+    const ctx = this._wrapContext(created.userContext, {
+      baseURL: opts?.baseURL,
+      extraHTTPHeaders: opts?.extraHTTPHeaders,
+    });
+    if (opts?.storageState !== undefined) {
+      await ctx.loadStorageState(opts.storageState);
+    }
+    // Apply Milestone-C emulation options. Each setter is `userContexts`-scoped,
+    // so future pages in this context inherit automatically.
+    if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
+    if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
+    if (opts?.geolocation !== undefined) await ctx.setGeolocation(opts.geolocation);
+    return ctx;
   }
 
   /**
@@ -1747,15 +1838,7 @@ export class Browser {
       'browser.getUserContexts',
       {}
     );
-    return (result.userContexts ?? []).map(
-      (uc) => new BrowserContext(
-        this.driver,
-        conn,
-        uc.userContext,
-        this.getDefaultTimeout,
-        () => this.defaults.navigationTimeout
-      )
-    );
+    return (result.userContexts ?? []).map((uc) => this._wrapContext(uc.userContext));
   }
 
   /**
@@ -1770,14 +1853,9 @@ export class Browser {
         'WebDriver Classic has no concept of user contexts.'
       );
     }
-    const conn = this.bidiSession.getConnection();
-    return new BrowserContext(
-      this.driver,
-      conn,
-      'default',
-      this.getDefaultTimeout,
-      () => this.defaults.navigationTimeout
-    );
+    if (this._defaultContext) return this._defaultContext;
+    this._defaultContext = this._wrapContext('default');
+    return this._defaultContext;
   }
 
   /**
@@ -1816,7 +1894,7 @@ export class Browser {
       // pages exist in the default context (e.g. after browser.openPage()).
       const handle = await this.driver.getCurrentWindowHandle().catch(() => '');
       const focused = tops.find((c) => c.context === handle) ?? tops[0];
-      return new Page(this.driver, focused.context, this.getDefaultTimeout, conn);
+      return new Page(this.driver, focused.context, this.getDefaultTimeout, conn, this.defaultContext);
     }
     // Classic mode: no user-context concept; just wrap the current window.
     const handle = await this.driver.getCurrentWindowHandle();

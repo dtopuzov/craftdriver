@@ -19,6 +19,7 @@ import { until } from './wait.js';
 import type { WebElement } from './webelement.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
+import type { BrowserContext } from './browserContext.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
@@ -32,17 +33,34 @@ export class Page {
    */
   private contextId: string;
   private conn?: BiDiConnection;
+  /** Owning user context. Set when the page was created via a BrowserContext. */
+  private _owner?: BrowserContext;
 
   constructor(
     driver: Driver,
     contextId: string,
     getDefaultTimeout: () => number,
-    conn?: BiDiConnection
+    conn?: BiDiConnection,
+    owner?: BrowserContext
   ) {
     this.driver = driver;
     this.contextId = contextId;
     this.getDefaultTimeout = getDefaultTimeout;
     this.conn = conn;
+    this._owner = owner;
+  }
+
+  /**
+   * The {@link BrowserContext} this page belongs to.
+   *
+   * Always defined in BiDi mode — pages created via `browser.openPage()`,
+   * `browser.waitForPage()`, `browser.pages()`, and `browser.activePage()`
+   * report `browser.defaultContext`; pages created via a non-default
+   * context report that context. Only `undefined` for pages obtained from
+   * the Classic-mode fallbacks where user contexts don't exist.
+   */
+  context(): BrowserContext | undefined {
+    return this._owner;
   }
 
   /** Switch the Classic driver to this window for element operations. */
@@ -91,17 +109,33 @@ export class Page {
   }
 
   async navigateTo(url: string): Promise<void> {
+    const resolved = this._resolveUrl(url);
     if (this.conn) {
       await this.conn.send('browsingContext.navigate', {
         context: this.contextId,
-        url,
+        url: resolved,
         wait: 'complete',
       });
       return;
     }
     await this._withWindow(async () => {
-      await this.driver.navigateTo(url);
+      await this.driver.navigateTo(resolved);
     });
+  }
+
+  /**
+   * Resolve `url` against the owning context's `baseURL`, if any.
+   * Absolute URLs are returned as-is.
+   */
+  private _resolveUrl(url: string): string {
+    const baseURL = this._owner?.baseURL;
+    if (!baseURL) return url;
+    try {
+      // If `url` is already absolute this returns it unchanged.
+      return new URL(url, baseURL).href;
+    } catch {
+      return url;
+    }
   }
 
   /**

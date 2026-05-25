@@ -24,7 +24,15 @@ export { By } from './lib/by.js';
 export { Locator } from './lib/locator.js';
 export { Frame } from './lib/frame.js';
 export { Page } from './lib/page.js';
-export { BrowserContext } from './lib/browserContext.js';
+export {
+  BrowserContext,
+  type ClearCookiesFilter,
+  type ContextStorageStateOptions,
+  type BrowserContextConfig,
+  type BrowserContextHooks,
+  type InitScriptHandle,
+  type RoutePattern,
+} from './lib/browserContext.js';
 export { Keyboard } from './lib/keyboard.js';
 export { Mouse } from './lib/mouse.js';
 export {
