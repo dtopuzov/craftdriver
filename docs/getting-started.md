@@ -1,28 +1,9 @@
 # Getting Started
 
-## Prerequisites
-
-You need the appropriate WebDriver binary for your target browser.
-
-**Chrome / Chromium:**
-```bash
-npm install --save-dev chromedriver
-# or: brew install chromedriver / download from chromedriver.chromium.org
-```
-
-**Firefox (via geckodriver):**
-```bash
-npm install --save-dev geckodriver
-# or: brew install geckodriver
-# or: download from https://github.com/mozilla/geckodriver/releases
-```
-
-When installed as a dev-dependency craftdriver locates the binary automatically — no PATH setup needed.
-
 ## Installation
 
 ```bash
-npm install craftdriver
+npm install craftdriver --save-dev
 ```
 
 ## Your First Test

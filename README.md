@@ -6,55 +6,38 @@
 
 Crafted Node.js browser automation built directly on the WebDriver protocols.
 
-**Playwright-style ergonomics, WebDriver-standard internals.** Auto-waiting,
-semantic locators, and a small public surface — without leaving the W3C spec
-behind, so your tests stay stable across real browsers.
+**Playwright's ergonomics. WebDriver's standards-compliance. AI-ready.**
+
+Auto-waiting, semantic locators, network mocking, session management, mobile emulation, and more.
+
+Based on W3C specs, so your tests stay stable across real browsers.
+
+Ships AI productivity tooling out of the box: CLI, MCP, assistant bootstrap files, and packaged skill docs — no extra packages required.
 
 ## Getting started
 
 ```bash
-npm install craftdriver
+npm install craftdriver --save-dev
 ```
 
-## Prerequisites
-
-You need the appropriate WebDriver binary on your PATH (or as a dev-dependency).
-
-**Chrome / Chromium:**
-
-```bash
-npm install --save-dev chromedriver
-```
-
-**Firefox:**
-
-```bash
-npm install --save-dev geckodriver
-# or: brew install geckodriver
-```
+That's it.
+No drivers, no extra steps to install browsers.
 
 Quick example:
 
 ```ts
 import { Browser } from 'craftdriver';
 
-// Chrome
 const browser = await Browser.launch({ browserName: 'chrome' });
 
-// Firefox
-// const browser = await Browser.launch({ browserName: 'firefox' });
-
-await browser.navigateTo('http://127.0.0.1:8080/login.html');
-await browser.fill('#username', 'testuser'); // string = CSS selector
-await browser.fill('#password', 'secret');
+await browser.navigateTo('https://example.com');
+await browser.fill('#username', 'alice');
+await browser.fill('#password', 'hunter2');
 await browser.click('#submit');
-await browser.expect('#result').toHaveText('Welcome testuser');
+await browser.expect('#result').toHaveText('Welcome alice');
+
 await browser.quit();
 ```
-
-String selectors are CSS by default. For text, role, label, or test id, use
-the `By.*` helpers or `browser.getBy*()` methods — see
-[Selectors](./docs/selectors.md).
 
 Mobile emulation:
 
@@ -81,17 +64,19 @@ Session persistence:
 ```ts
 await browser.saveState('./session.json');
 
-// Later: restore with storageState option
+// Later: restore cookies and localStorage in one shot
 const browser2 = await Browser.launch({
   browserName: 'chrome',
   storageState: './session.json',
 });
 ```
 
-## Command-line interface
+## AI Productivity Tooling
 
 `craftdriver` ships three surfaces for AI agents (Copilot, Claude
 Code, Cursor, Codex, Gemini CLI, …), in addition to the library:
+
+If you want Craftdriver to work well with coding agents on day one, this is the stack: a shell-friendly CLI, an MCP server for tool-calling hosts, packaged skills, and `craftdriver init` to drop the right repo instructions into place.
 
 - **CLI** (this section) — a `craftdriver` binary for shell-capable agents.
 - **Skill pack** — ready-to-load rules at [skills/craftdriver/](./skills/craftdriver/),
@@ -195,61 +180,29 @@ claude mcp add craftdriver -- npx -y craftdriver mcp
 See [docs/mcp.md](./docs/mcp.md) for the full tool list, install
 snippets for every host, and the snapshot format.
 
-## Feature Overview
+## Feature Guide
 
-### Core Features
+One table is enough here: what Craftdriver does, and where to learn the exact API.
 
-- **Simple API** — Easy to use, works as expected
-- **TypeScript-first** — Full type definitions included
-- **Flexible locators** — CSS, XPath, text, role, label, alt text, title, and test id
-- **Composable Locators** — Lazy, chainable `locator()` API with `.nth()`, `.filter()`, `.all()`
-- **Auto-waiting** — Smart waits built into every action and assertion
-- **Configurable timeouts** — `setDefaultTimeout()` / `setDefaultNavigationTimeout()`
-- **Built-in assertions** — `browser.expect(selector).toHaveText(...)` etc.
-- **Real browsers** — Tested on Chrome and Firefox (geckodriver) in CI
-- **Mobile emulation** — Device presets (iPhone, Pixel, iPad) plus custom metrics
-- **Iframes** — Interact with iframe content via `browser.frame(selector)`
-- **Tabs & popups** — `browser.openPage()` and `browser.waitForPage()`
-- **Dialogs** — `waitForDialog()`, `acceptDialog()`, `dismissDialog()`
-- **File uploads & downloads** — `element.setInputFiles()` and `browser.waitForDownload()`
-- **Navigation helpers** — `goBack()`, `goForward()`, `reload()`, `content()`, `setContent()`
-- **In-page scripts** — `browser.evaluate()` and `browser.addInitScript()`
-- **Virtual clock** — Test idle timeouts, trial expirations, and debounced inputs without `sleep()`. See [docs/clock.md](./docs/clock.md).
-
-### Advanced Features (BiDi)
-
-- **Browser contexts** — Isolated profiles for multi-user tests with `browser.newContext()`
-- **Session persistence** — Save/load cookies and localStorage
-- **Network mocking & listeners** — Intercept, mock, or observe traffic with `network.mock()` and `network.on('request' | 'response')`
-- **Console & error logs** — Capture browser console messages and JS errors
-- **Permissions & geolocation** — `grantPermissions()`, `setGeolocation()`
-- **Emulation** — dark mode, locale, timezone, offline, reduced motion via `browser.emulate({...})`. See [docs/emulation.md](./docs/emulation.md).
-- **Tracing** — Append-only NDJSON timeline of actions, network, console, navigations + on-action/on-error screenshots, written synchronously so a thrown `expect` cannot lose data
-- **Accessibility audits** — Run axe-core against any page, element, or locator. WCAG violations come back with rule IDs, impact, and help URLs — with a one-line `disableRules` escape hatch for rules your project knowingly skips. Works out of the box; no extra install. See [docs/accessibility.md](./docs/accessibility.md).
-
-## Documentation
-
-| Guide                                              | Description                                                 |
-| -------------------------------------------------- | ----------------------------------------------------------- |
-| [Getting Started](./docs/getting-started.md)       | Installation, prerequisites, and first test                 |
-| [CLI](./docs/cli.md)                               | `craftdriver` binary for shell, scripts, and AI agents      |
-| [MCP server](./docs/mcp.md)                        | Stdio JSON-RPC server for MCP-aware AI hosts                |
-| [Skill pack](./skills/craftdriver/SKILL.md)        | Tiered agent rules shipped in the npm tarball               |
-| [Browser API](./docs/browser-api.md)               | Core browser control: navigation, clicks, forms             |
-| [Element API](./docs/element-api.md)               | ElementHandle methods for interacting with elements         |
-| [Selectors](./docs/selectors.md)                   | CSS, XPath, semantic locators, and composable `Locator` API |
-| [Assertions](./docs/assertions.md)                 | Built-in expect API for testing                             |
-| [Keyboard & Mouse](./docs/keyboard-mouse.md)       | Low-level input simulation                                  |
-| [Dialogs](./docs/dialogs.md)                       | Handling `alert`, `confirm`, `prompt`, and `beforeunload`   |
-| [Session Management](./docs/session-management.md) | Cookies, localStorage, and session persistence              |
-| [Screenshots](./docs/screenshots.md)               | Capturing page and element screenshots                      |
-| [Mobile Emulation](./docs/mobile-emulation.md)     | Test with mobile device viewports and touch events          |
-| [Emulation](./docs/emulation.md)                   | Dark mode, locale, timezone, offline, reduced motion        |
-| [Browser Contexts](./docs/browser-context.md)      | Isolated user profiles for multi-user testing               |
-| [BiDi Features](./docs/bidi-features.md)           | Network mocking and console log capture                     |
-| [Tracing](./docs/tracing.md)                       | Crash-resilient NDJSON event log + evidence screenshots for failed tests |
-| [Accessibility](./docs/accessibility.md)           | axe-core powered a11y audits, scoped to page/element/locator |
-| [Virtual Clock](./docs/clock.md)                   | Fake `Date`, `setTimeout`, and `setInterval` for time-dependent tests |
+| Area | What you get | Learn more |
+| --- | --- | --- |
+| Getting started | Install, launch a browser, write the first test | [Getting Started](./docs/getting-started.md) |
+| Driver management | Zero-config driver download, cache behavior, env vars, offline mode | [Driver Configuration](./docs/driver-configuration.md) |
+| Browser control | Navigation, tabs, popups, iframes, content helpers, evaluate, init scripts | [Browser API](./docs/browser-api.md) |
+| Elements and locators | CSS, XPath, text, role, label, test id, and composable `locator()` chains | [Selectors](./docs/selectors.md) |
+| Element actions | Click, fill, upload, inspect, and interact through element handles | [Element API](./docs/element-api.md) |
+| Assertions and auto-waiting | Built-in `expect(...)`, retries, visibility, text, attributes, and timing behavior | [Assertions](./docs/assertions.md) |
+| Keyboard and mouse | Low-level key presses, mouse movement, hover, drag, and pointer input | [Keyboard & Mouse](./docs/keyboard-mouse.md) |
+| Dialogs | `alert`, `confirm`, `prompt`, and `beforeunload` handling | [Dialogs](./docs/dialogs.md) |
+| Sessions and storage | Cookies, localStorage, save/load state, persistent flows | [Session Management](./docs/session-management.md) |
+| Screenshots | Page and element screenshots for tests and debugging | [Screenshots](./docs/screenshots.md) |
+| Mobile and emulation | Device presets, viewport emulation, locale, timezone, offline, reduced motion | [Mobile Emulation](./docs/mobile-emulation.md), [Emulation](./docs/emulation.md) |
+| Browser contexts | Isolated profiles for multi-user and multi-session testing | [Browser Contexts](./docs/browser-context.md) |
+| BiDi features | Network mocking, request/response listeners, console logs, JS errors | [BiDi Features](./docs/bidi-features.md) |
+| Tracing and debugging | Crash-resilient NDJSON traces and evidence screenshots | [Tracing](./docs/tracing.md) |
+| Accessibility | Built-in axe-core audits for page, element, and locator scopes | [Accessibility](./docs/accessibility.md) |
+| Virtual time | Fake `Date`, `setTimeout`, and `setInterval` for time-sensitive flows | [Virtual Clock](./docs/clock.md) |
+| Agent surfaces | Shell CLI, MCP server, assistant bootstrap, and packaged skill files | [CLI](./docs/cli.md), [MCP server](./docs/mcp.md), [Skill pack](./skills/craftdriver/SKILL.md) |
 
 ## Contributing
 
