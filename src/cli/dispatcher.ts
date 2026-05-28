@@ -44,9 +44,16 @@ export function createBrowserHandle(launch: () => Promise<Browser>): BrowserHand
 }
 
 function ms(args: Record<string, unknown> | undefined, key = 'timeout'): number {
+  // Validate-or-fallback to bound timer durations (defends against resource
+  // exhaustion from hostile socket input). CodeQL does not treat Math.min
+  // as a sanitizer, so we use explicit range checks.
+  const MAX_TIMEOUT_MS = 300_000;
   const v = args?.[key];
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
-  if (typeof v === 'string' && /^\d+$/.test(v)) return Number(v);
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_TIMEOUT_MS) return v;
+  if (typeof v === 'string' && /^\d+$/.test(v)) {
+    const n = Number(v);
+    if (n >= 0 && n <= MAX_TIMEOUT_MS) return n;
+  }
   return AGENT_DEFAULT_TIMEOUT_MS;
 }
 

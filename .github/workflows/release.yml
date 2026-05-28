@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: 
+    branches:
       - main
 
 permissions:
@@ -14,7 +14,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
     if: github.repository == 'dtopuzov/craftdriver'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -26,6 +28,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
@@ -36,5 +39,4 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx semantic-release

@@ -306,8 +306,19 @@ export class NetworkInterceptor {
    */
   async waitForNetworkIdle(opts?: { idleDuration?: number; timeout?: number }): Promise<void> {
     await this.initialize();
-    const idleDuration = opts?.idleDuration ?? 500;
-    const timeout = opts?.timeout ?? 30000;
+    // Validate-or-fallback to bound timer durations (defends against resource
+    // exhaustion from a hostile / buggy caller). CodeQL does not treat
+    // Math.min as a sanitizer, so we use explicit range checks.
+    const MAX_IDLE_MS = 60_000;
+    const MAX_TIMEOUT_MS = 300_000;
+    const reqIdle = opts?.idleDuration;
+    const reqTimeout = opts?.timeout;
+    const idleDuration =
+      typeof reqIdle === 'number' && reqIdle >= 0 && reqIdle <= MAX_IDLE_MS ? reqIdle : 500;
+    const timeout =
+      typeof reqTimeout === 'number' && reqTimeout >= 0 && reqTimeout <= MAX_TIMEOUT_MS
+        ? reqTimeout
+        : 30_000;
 
     return new Promise<void>((resolve, reject) => {
       let idleTimer: ReturnType<typeof setTimeout> | undefined;

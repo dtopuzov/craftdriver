@@ -139,7 +139,9 @@ function renderTable(rows) {
   lines.push('| Symbol | Kind | Summary | Docs |');
   lines.push('|---|---|---|---|');
   for (const r of rows) {
-    const summary = r.summary ? r.summary.replace(/\|/g, '\\|') : '—';
+    const summary = r.summary
+      ? r.summary.replace(/[\\|]/g, '\\$&')
+      : '—';
     // The output file lives in docs/, so link targets are relative to docs/.
     const docLink = r.topic
       ? `[${path.basename(r.topic, '.md')}](${path.relative('docs', r.topic)})`

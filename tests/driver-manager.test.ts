@@ -57,7 +57,13 @@ describe('driver manager — auto-download integration', () => {
       'CRAFTDRIVER_OFFLINE',
       'CHROMEDRIVER_PATH',
       'SE_CHROMEDRIVER',
+      'CRAFTDRIVER_SKIP_PATH_PROBE',
     ]);
+
+    // Skip the PATH probe so pre-installed chromedriver on CI runners
+    // (ubuntu-latest) or nvm-managed Node envs does not short-circuit the
+    // resolution chain before step 7 (auto-download).
+    process.env.CRAFTDRIVER_SKIP_PATH_PROBE = '1';
 
     // Point the cache at our temp dir AFTER unsetEnvVars so it is not unset.
     process.env.CRAFTDRIVER_CACHE_DIR = testCacheDir;
