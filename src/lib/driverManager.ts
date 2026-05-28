@@ -422,8 +422,10 @@ export async function resolveChromeDriver(options?: {
   );
   if (fs.existsSync(localBin)) return localBin;
 
-  // 5. PATH probe.
-  if (commandOnPath('chromedriver')) return 'chromedriver';
+  // 5. PATH probe (skipped when CRAFTDRIVER_SKIP_PATH_PROBE is set, e.g. in
+  //    integration tests that need to exercise the auto-download path even on
+  //    systems where chromedriver is already installed).
+  if (!process.env.CRAFTDRIVER_SKIP_PATH_PROBE && commandOnPath('chromedriver')) return 'chromedriver';
 
   // 6. Offline guard.
   if (process.env.CRAFTDRIVER_OFFLINE) {

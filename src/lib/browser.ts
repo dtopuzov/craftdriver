@@ -996,7 +996,15 @@ export class Browser {
     state: Exclude<LoadState, 'none'> = 'load',
     opts?: { timeout?: number }
   ): Promise<void> {
-    const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
+    // Validate-or-fallback to bound timer duration (defends against resource
+    // exhaustion from a hostile / buggy caller). CodeQL does not treat
+    // Math.min as a sanitizer, so we use an explicit range check.
+    const MAX_TIMEOUT_MS = 300_000;
+    const requested = opts?.timeout;
+    const timeout =
+      typeof requested === 'number' && requested >= 0 && requested <= MAX_TIMEOUT_MS
+        ? requested
+        : this.defaults.navigationTimeout;
 
     if (state === 'networkidle') {
       if (this.bidiSession?.isConnected()) {
