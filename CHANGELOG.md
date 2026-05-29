@@ -1,3 +1,18 @@
+# [0.2.0](https://github.com/dtopuzov/craftdriver/compare/v0.1.0...v0.2.0) (2026-05-29)
+
+
+### Features
+
+* accessibility audits ([0b59957](https://github.com/dtopuzov/craftdriver/commit/0b59957ecb014d32962298de8da939cb873c6380))
+* add driver manager ([3f60949](https://github.com/dtopuzov/craftdriver/commit/3f6094918fdaf0e04a8df61d732ea878c215875f))
+* AI productivity tooling ([ffac9f0](https://github.com/dtopuzov/craftdriver/commit/ffac9f02d45bc14126e016bd2b7cfac3cf2fb057))
+* browser-context ([6ddbc8a](https://github.com/dtopuzov/craftdriver/commit/6ddbc8acf619418987dc2be1613271bcd5ada488))
+* browser.emulate ([aefabba](https://github.com/dtopuzov/craftdriver/commit/aefabba9132275d77ad673539c71242affbb47fb))
+* ship the May browser automation feature set ([b89f3a6](https://github.com/dtopuzov/craftdriver/commit/b89f3a65b704178b7d984d65af9c12bddbc2d524))
+* **tracing:** mimeType + fromCache on response events; final.png on failure ([4b1b293](https://github.com/dtopuzov/craftdriver/commit/4b1b293cd46d9641fa1106c7ae9736a47e418e62))
+* **tracing:** streaming NDJSON tracer with on-failure vitest helper ([3c95a4b](https://github.com/dtopuzov/craftdriver/commit/3c95a4b2880ff379668b449a47e422ce74e2cfb3))
+* virtual clock ([1d6b0ec](https://github.com/dtopuzov/craftdriver/commit/1d6b0eca4d8f0eed03dc597a3bf443836a206208))
+
 # [0.1.0](https://github.com/dtopuzov/craftdriver/compare/v0.0.3...v0.1.0) (2026-02-08)
 
 ## Unreleased
