@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/dtopuzov/craftdriver/compare/v0.2.0...v0.2.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* bump axe-core ([9b59497](https://github.com/dtopuzov/craftdriver/commit/9b59497f410f779a2341e5729bbf2490b202314f))
+
 # [0.2.0](https://github.com/dtopuzov/craftdriver/compare/v0.1.0...v0.2.0) (2026-05-29)
 
 
