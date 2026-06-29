@@ -32,6 +32,31 @@ describe('browser.activePage() — the contract for browser-level shortcuts', ()
     expect(fromBrowser).toBe(fromActive);
   });
 
+  it('does not request the full BiDi context tree on the hot path', async () => {
+    const session = (browser as any).bidiSession;
+    if (!session?.getConnection) return;
+
+    const conn = session.getConnection();
+    const originalSend = conn.send;
+    const getTreeParams: Record<string, unknown>[] = [];
+
+    conn.send = async (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'browsingContext.getTree') {
+        getTreeParams.push(params);
+      }
+      return originalSend.call(conn, method, params);
+    };
+
+    try {
+      const page = await browser.activePage();
+      expect(await page.title()).toBe('Craftdriver Popup');
+    } finally {
+      conn.send = originalSend;
+    }
+
+    expect(getTreeParams).not.toContainEqual({});
+  });
+
   it('does not follow openPage() into the new tab', async () => {
     const original = await browser.activePage();
     const newTab = await browser.openPage({

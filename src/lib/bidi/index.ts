@@ -40,7 +40,7 @@ export class BiDiSession {
     // Get the current browsing context
     const result = await this.connection.send<{
       contexts: Array<{ context: string; url: string }>;
-    }>('browsingContext.getTree', {});
+    }>('browsingContext.getTree', { maxDepth: 0 });
 
     if (result.contexts?.[0]) {
       this.context = result.contexts[0].context;

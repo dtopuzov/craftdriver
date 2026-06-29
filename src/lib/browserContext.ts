@@ -237,7 +237,7 @@ export class BrowserContext {
     this.assertOpen();
     const tree = await this.conn.send<{ contexts: BrowsingContextInfo[] }>(
       'browsingContext.getTree',
-      {}
+      { maxDepth: 0 }
     );
     return (tree.contexts ?? [])
       .filter((c) => c.userContext === this._id && !c.parent)
@@ -1040,7 +1040,7 @@ export class BrowserContext {
     try {
       const tree = await this.conn.send<{ contexts: BrowsingContextInfo[] }>(
         'browsingContext.getTree',
-        {}
+        { maxDepth: 0 }
       );
       for (const c of tree.contexts ?? []) {
         if (c.userContext === this._id && !c.parent) {
