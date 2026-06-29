@@ -17,6 +17,7 @@ import { Mouse } from './mouse.js';
 import { ActionsBuilder } from './actions.js';
 import { Capabilities } from './types.js';
 import type { RemoteValue, ScriptEvaluateResult } from './bidi/types.js';
+import type { BiDiConnection } from './bidi/connection.js';
 import {
   BiDiSession,
   NetworkInterceptor,
@@ -298,6 +299,11 @@ export class Browser {
   private _defaultContext?: BrowserContext;
   /** Cache of {@link BrowserContext} wrappers keyed by user-context id. */
   private _contextsById = new Map<string, BrowserContext>();
+  /** Top-level browsing-context ids keyed to their BiDi user-context id. */
+  private _topLevelContextUserContexts = new Map<string, string>();
+  private _topLevelContextTracking?: Promise<void>;
+  private _topLevelContextTrackingOffs: Array<() => void> = [];
+  private _topLevelContextCacheVersion = 0;
   private _logs?: LogMonitor;
   private _tracer?: Tracer;
   private _storage?: SessionStateManager;
@@ -473,6 +479,7 @@ export class Browser {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await session.connect(wsUrl);
+        await this._ensureTopLevelContextTracking().catch(() => { });
         return; // success
       } catch (err) {
         if (attempt < maxAttempts) {
@@ -798,7 +805,7 @@ export class Browser {
     // Apply across all top-level contexts in the default user context.
     const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
       'browsingContext.getTree',
-      {}
+      { maxDepth: 0 }
     );
     const tops = (tree.contexts ?? []).filter((c) => !c.parent);
     const contexts = tops.map((c) => c.context);
@@ -892,7 +899,7 @@ export class Browser {
     const conn = this.bidiSession.getConnection();
     const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
       'browsingContext.getTree',
-      {}
+      { maxDepth: 0 }
     );
     const contexts = (tree.contexts ?? []).filter((c) => !c.parent).map((c) => c.context);
 
@@ -1096,6 +1103,11 @@ export class Browser {
     if (this.bidiSession) {
       await this.bidiSession.close().catch(() => { });
     }
+    for (const off of this._topLevelContextTrackingOffs) off();
+    this._topLevelContextTrackingOffs = [];
+    this._topLevelContextTracking = undefined;
+    this._topLevelContextUserContexts.clear();
+    this._topLevelContextCacheVersion++;
     // DELETE the WebDriver session — this tells the driver service to close the browser.
     await this.driver.quit().catch(() => { });
     // Give the browser process a moment to fully release any ports (e.g. Firefox BiDi
@@ -1592,7 +1604,7 @@ export class Browser {
       const conn = this.bidiSession.getConnection();
       const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
         'browsingContext.getTree',
-        {}
+        { maxDepth: 0 }
       );
       return (tree.contexts ?? []).map(
         (ctx) => new Page(
@@ -1866,6 +1878,68 @@ export class Browser {
     return this._defaultContext;
   }
 
+  private async _ensureTopLevelContextTracking(): Promise<void> {
+    if (!this.bidiSession?.isConnected()) return;
+    if (this._topLevelContextTracking) return this._topLevelContextTracking;
+    this._topLevelContextTracking = this._startTopLevelContextTracking();
+    return this._topLevelContextTracking;
+  }
+
+  private async _startTopLevelContextTracking(): Promise<void> {
+    const conn = this.bidiSession!.getConnection();
+
+    await conn
+      .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
+      .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });
+
+    const onCreated = (params: Record<string, unknown>) => {
+      if (params.parent) return;
+      const id = params.context;
+      if (typeof id !== 'string') return;
+      this._topLevelContextUserContexts.set(
+        id,
+        typeof params.userContext === 'string' ? params.userContext : ''
+      );
+      this._topLevelContextCacheVersion++;
+    };
+    const onDestroyed = (params: Record<string, unknown>) => {
+      if (params.parent) return;
+      if (typeof params.context === 'string') {
+        this._topLevelContextUserContexts.delete(params.context);
+        this._topLevelContextCacheVersion++;
+      }
+    };
+
+    this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextCreated', onCreated));
+    this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextDestroyed', onDestroyed));
+
+    await this._refreshTopLevelContextCache(conn).catch(() => { });
+  }
+
+  private async _refreshTopLevelContextCache(conn: BiDiConnection): Promise<void> {
+    const version = this._topLevelContextCacheVersion;
+    const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
+      'browsingContext.getTree',
+      { maxDepth: 0 }
+    );
+    if (this._topLevelContextCacheVersion === version) {
+      this._topLevelContextUserContexts.clear();
+    }
+    for (const ctx of tree.contexts ?? []) {
+      if (!ctx.parent) {
+        this._topLevelContextUserContexts.set(ctx.context, ctx.userContext ?? 'default');
+      }
+    }
+    this._topLevelContextCacheVersion++;
+  }
+
+  private _firstDefaultTopLevelContext(): string | undefined {
+    for (const [id, userContext] of this._topLevelContextUserContexts) {
+      if (userContext === 'default') return id;
+    }
+    return undefined;
+  }
+
   /**
    * Return the currently focused top-level page in `defaultContext`.
    *
@@ -1888,21 +1962,25 @@ export class Browser {
   async activePage(): Promise<Page> {
     if (this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
-      const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
-        'browsingContext.getTree',
-        {}
-      );
-      const tops = (tree.contexts ?? []).filter(
-        (c) => !c.parent && c.userContext === 'default'
-      );
-      if (tops.length === 0) {
+      const handle = await this.driver.getCurrentWindowHandle().catch(() => '');
+      await this._ensureTopLevelContextTracking();
+
+      if (handle && this._topLevelContextUserContexts.get(handle) === 'default') {
+        return new Page(this.driver, handle, this.getDefaultTimeout, conn, this.defaultContext);
+      }
+
+      // Events should keep the cache warm, but a cheap top-level sync covers
+      // missed startup events and direct protocol/browser changes.
+      await this._refreshTopLevelContextCache(conn);
+      if (handle && this._topLevelContextUserContexts.get(handle) === 'default') {
+        return new Page(this.driver, handle, this.getDefaultTimeout, conn, this.defaultContext);
+      }
+
+      const fallback = this._firstDefaultTopLevelContext();
+      if (!fallback) {
         throw new Error('activePage(): no top-level page in the default context.');
       }
-      // Match the Classic-driver focus to disambiguate when multiple top-level
-      // pages exist in the default context (e.g. after browser.openPage()).
-      const handle = await this.driver.getCurrentWindowHandle().catch(() => '');
-      const focused = tops.find((c) => c.context === handle) ?? tops[0];
-      return new Page(this.driver, focused.context, this.getDefaultTimeout, conn, this.defaultContext);
+      return new Page(this.driver, fallback, this.getDefaultTimeout, conn, this.defaultContext);
     }
     // Classic mode: no user-context concept; just wrap the current window.
     const handle = await this.driver.getCurrentWindowHandle();
