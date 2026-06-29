@@ -1,3 +1,10 @@
+## [0.2.2](https://github.com/dtopuzov/craftdriver/compare/v0.2.1...v0.2.2) (2026-06-29)
+
+
+### Bug Fixes
+
+* speed up BiDi activePage lookup ([ec0bb1c](https://github.com/dtopuzov/craftdriver/commit/ec0bb1cd16bb26a3115f3b572963cdded03d0680))
+
 ## [0.2.1](https://github.com/dtopuzov/craftdriver/compare/v0.2.0...v0.2.1) (2026-06-22)
 
 
