@@ -124,6 +124,15 @@ export interface LaunchOptions {
    * Set `false` only if your environment cannot negotiate a BiDi WebSocket.
    */
   enableBiDi?: boolean;
+  /**
+   * Start console/error log capture immediately at launch instead of lazily
+   * on first `browser.logs`/`onConsole`/`onError`/`waitForConsole` access.
+   * **Defaults to `false`** — log capture is lazy by default so sessions that
+   * never touch `browser.logs` don't pay its subscription cost. Set `true` if
+   * you need to guarantee capture of console/error output emitted between
+   * `Browser.launch()` and your first `browser.logs` touch.
+   */
+  captureLogs?: boolean;
   /** Load session state from file on launch. BiDi is always used when this is set. */
   storageState?: string;
   /** Enable mobile device emulation (Chrome/Chromium only) */
@@ -456,6 +465,10 @@ export class Browser {
     const wsUrl = (driver as any).__wsUrl;
     if (wsUrl && options.enableBiDi !== false) {
       await browser.initBiDi(wsUrl);
+      if (options.captureLogs && browser.bidiSession?.isConnected()) {
+        // Arm log capture now instead of lazily on first browser.logs touch.
+        void browser.bidiSession.logs.initialize();
+      }
     }
 
     // Load session state if provided
@@ -478,7 +491,14 @@ export class Browser {
     const maxAttempts = 8;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await session.connect(wsUrl);
+        await session.connect(wsUrl, {
+          // Seed the top-level-context cache from the tree connect() already
+          // fetched, off the subscription connect() already armed — avoids a
+          // second getTree/subscribe round trip right after this returns.
+          onContextTree: (contexts) => {
+            this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
+          },
+        });
         await this._ensureTopLevelContextTracking().catch(() => { });
         return; // success
       } catch (err) {
@@ -600,31 +620,32 @@ export class Browser {
     this._tracer?.recordAction('navigateTo', [url, opts], url);
     const waitUntil: LoadState = opts?.waitUntil ?? 'load';
 
-    if (this.bidiSession?.isConnected()) {
+    // Classic-first: the default `waitUntil: 'load'` has an exact Classic
+    // equivalent — Classic navigateTo() already blocks until
+    // `document.readyState === 'complete'` — so there's no reason to spend a
+    // BiDi round trip on the common case. BiDi is reserved for wait semantics
+    // Classic cannot express: 'none' (return immediately), 'domcontentloaded'
+    // (early return before full load), and 'networkidle' (needs real network
+    // visibility).
+    const context = waitUntil !== 'load' ? this.bidiSession?.getContext() : undefined;
+    if (context && this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
-      const context = this.bidiSession.getContext();
-      if (!context) {
-        // No context yet — fall through to Classic
-      } else {
-        // BiDi path: browsingContext.navigate with the appropriate wait
-        // 'networkidle' uses 'complete' (load) then waits for network silence
-        const bidiWait =
-          waitUntil === 'none' ? 'none'
-            : waitUntil === 'domcontentloaded' ? 'interactive'
-              : 'complete'; // 'load' and 'networkidle'
+      const bidiWait =
+        waitUntil === 'none' ? 'none'
+          : waitUntil === 'domcontentloaded' ? 'interactive'
+            : 'complete'; // 'networkidle'
 
-        await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
+      await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
 
-        if (waitUntil === 'networkidle') {
-          await this.bidiSession.network.waitForNetworkIdle({
-            timeout: this.defaults.navigationTimeout,
-          });
-        }
-        return;
+      if (waitUntil === 'networkidle') {
+        await this.bidiSession.network.waitForNetworkIdle({
+          timeout: this.defaults.navigationTimeout,
+        });
       }
+      return;
     }
 
-    // Classic fallback (already waits for document.readyState === 'complete')
+    // Classic path — default 'load', or BiDi unavailable/no context yet.
     await this.driver.navigateTo(url);
     if (waitUntil === 'networkidle') {
       // Best-effort: Classic can't track network events; give it a short settle time
@@ -1885,12 +1906,26 @@ export class Browser {
     return this._topLevelContextTracking;
   }
 
-  private async _startTopLevelContextTracking(): Promise<void> {
+  /**
+   * @param initialContexts  When provided (the normal path — passed via
+   *   `BiDiSession.connect()`'s `onContextTree` callback), `contextCreated`/
+   *   `contextDestroyed` are already subscribed as part of `connect()`'s
+   *   merged batch and the tree is already fetched — this just registers
+   *   handlers and seeds the cache from it, no extra round trip. Falls back
+   *   to its own subscribe + `getTree` when called without a pre-fetched
+   *   tree (defensive — e.g. if `_ensureTopLevelContextTracking()` is ever
+   *   reached before `initBiDi()`'s callback has run).
+   */
+  private async _startTopLevelContextTracking(
+    initialContexts?: BidiContextInfo[]
+  ): Promise<void> {
     const conn = this.bidiSession!.getConnection();
 
-    await conn
-      .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
-      .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });
+    if (!initialContexts) {
+      await conn
+        .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
+        .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });
+    }
 
     const onCreated = (params: Record<string, unknown>) => {
       if (params.parent) return;
@@ -1913,7 +1948,16 @@ export class Browser {
     this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextCreated', onCreated));
     this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextDestroyed', onDestroyed));
 
-    await this._refreshTopLevelContextCache(conn).catch(() => { });
+    if (initialContexts) {
+      for (const ctx of initialContexts) {
+        if (!ctx.parent) {
+          this._topLevelContextUserContexts.set(ctx.context, ctx.userContext ?? 'default');
+        }
+      }
+      this._topLevelContextCacheVersion++;
+    } else {
+      await this._refreshTopLevelContextCache(conn).catch(() => { });
+    }
   }
 
   private async _refreshTopLevelContextCache(conn: BiDiConnection): Promise<void> {

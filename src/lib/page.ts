@@ -108,16 +108,44 @@ export class Page {
     return this._withWindow(() => this.driver.getTitle());
   }
 
-  async navigateTo(url: string): Promise<void> {
+  /**
+   * @param opts.waitUntil  Load state to wait for. Defaults to `'load'`.
+   *   `'load'` on a default-context page is Classic-first — Classic
+   *   navigateTo() already blocks until `document.readyState === 'complete'`.
+   *   `'none'` and `'domcontentloaded'` require BiDi; `'networkidle'` isn't
+   *   available at the Page level — use `browser.waitForLoadState('networkidle')`.
+   */
+  async navigateTo(
+    url: string,
+    opts?: { waitUntil?: Exclude<LoadState, 'networkidle'> }
+  ): Promise<void> {
     const resolved = this._resolveUrl(url);
-    if (this.conn) {
+    const waitUntil = opts?.waitUntil ?? 'load';
+
+    // Classic's window-handle APIs only reliably reach pages in the default
+    // BiDi user context — pages created via a non-default context
+    // (browser.newContext()) aren't guaranteed to be switchable via Classic
+    // `switchToWindow`, so those always go through BiDi regardless of
+    // waitUntil. Default-context pages get the classic-first treatment for
+    // the common 'load' case.
+    const isDefaultContext = !this._owner || this._owner.id === 'default';
+
+    if (this.conn && (waitUntil !== 'load' || !isDefaultContext)) {
+      const bidiWait =
+        waitUntil === 'none' ? 'none'
+          : waitUntil === 'domcontentloaded' ? 'interactive'
+            : 'complete'; // 'load' on a non-default context
       await this.conn.send('browsingContext.navigate', {
         context: this.contextId,
         url: resolved,
-        wait: 'complete',
+        wait: bidiWait,
       });
       return;
     }
+
+    // Classic path — default-context 'load', or no BiDi connection. BiDi
+    // context ids equal Classic window handles for top-level contexts (see
+    // `_makeContextSwitcher()` below), so `_withWindow` works here too.
     await this._withWindow(async () => {
       await this.driver.navigateTo(resolved);
     });
