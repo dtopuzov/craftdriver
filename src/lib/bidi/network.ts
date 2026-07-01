@@ -58,6 +58,7 @@ export class NetworkInterceptor {
   private intercepts = new Map<string, InterceptRule>();
   private handlers = new Map<string, RequestHandler>();
   private subscribed = false;
+  private handlersWired = false;
   private context?: BrowsingContext;
   private requestListeners: Array<(req: InterceptedRequest) => void> = [];
   private responseListeners: Array<(res: InterceptedResponse) => void> = [];
@@ -72,19 +73,33 @@ export class NetworkInterceptor {
   }
 
   /**
+   * Mark the WS subscription as already armed — e.g. done as part of
+   * `BiDiSession.connect()`'s merged connect-time batch — without sending a
+   * redundant `session.subscribe`. Event handlers still need wiring;
+   * `initialize()` remains the thing to call before relying on events, but
+   * its subscribe step becomes a same-tick no-op.
+   */
+  markSubscribed(): void {
+    this.subscribed = true;
+  }
+
+  /**
    * Initialize network event subscriptions
    */
   async initialize(): Promise<void> {
-    if (this.subscribed) return;
+    if (this.handlersWired) return;
 
-    // Subscribe to network events
-    await this.connection.subscribe([
-      'network.beforeRequestSent',
-      'network.responseStarted',
-      'network.responseCompleted',
-      'network.fetchError',
-      'network.authRequired',
-    ]);
+    if (!this.subscribed) {
+      // Subscribe to network events
+      await this.connection.subscribe([
+        'network.beforeRequestSent',
+        'network.responseStarted',
+        'network.responseCompleted',
+        'network.fetchError',
+        'network.authRequired',
+      ]);
+      this.subscribed = true;
+    }
 
     // Handle intercepted requests + track in-flight
     this.connection.on('network.beforeRequestSent', async (params) => {
@@ -139,7 +154,7 @@ export class NetworkInterceptor {
       }
     });
 
-    this.subscribed = true;
+    this.handlersWired = true;
   }
 
   /**

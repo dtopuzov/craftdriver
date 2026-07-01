@@ -80,6 +80,7 @@ export class LogMonitor {
    */
   onLog(handler: LogHandler): () => void {
     this.allHandlers.add(handler);
+    void this.initialize();
     return () => this.allHandlers.delete(handler);
   }
 
@@ -88,6 +89,7 @@ export class LogMonitor {
    */
   onConsole(handler: ConsoleHandler): () => void {
     this.consoleHandlers.add(handler);
+    void this.initialize();
     return () => this.consoleHandlers.delete(handler);
   }
 
@@ -96,6 +98,7 @@ export class LogMonitor {
    */
   onError(handler: ErrorHandler): () => void {
     this.errorHandlers.add(handler);
+    void this.initialize();
     return () => this.errorHandlers.delete(handler);
   }
 
@@ -107,6 +110,7 @@ export class LogMonitor {
       this.levelHandlers.set(level, new Set());
     }
     this.levelHandlers.get(level)!.add(handler);
+    void this.initialize();
     return () => this.levelHandlers.get(level)?.delete(handler);
   }
 

@@ -66,7 +66,13 @@ export class Driver {
 
   async quit(): Promise<void> {
     const client = new HttpClient(this.endpoint);
-    await client.send({ method: 'DELETE', path: `/session/${this.sessionId}` });
+    try {
+      await client.send({ method: 'DELETE', path: `/session/${this.sessionId}` });
+    } finally {
+      // Destroy the keep-alive agent for this endpoint so pooled sockets
+      // don't keep the Node process alive after the session ends.
+      client.close();
+    }
   }
 
   async getCurrentUrl(): Promise<string> {
