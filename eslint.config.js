@@ -16,6 +16,7 @@ export default [
       'rust/**',
       'tests/**',
       'vitest.config.ts',
+      'vitest.perf.config.ts',
     ],
   },
   {
