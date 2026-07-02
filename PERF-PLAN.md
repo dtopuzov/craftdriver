@@ -29,9 +29,14 @@ wall-clock time (test-authoring/infrastructure), not any automation
 command's speed, which is explicitly not the current interest. Left in
 the file set for reference, not on the active path below.
 
-1. **[PERF-01](./PERF-01.md)** — BiDi duplicate-subscription cleanup (4
-   spots, not the 1 originally documented). Quick, mechanical, same shape
-   as work already shipped. No reason to delay.
+1. **[PERF-01](./PERF-01.md)** — ✅ **Shipped.** BiDi duplicate-subscription
+   cleanup. Removed the 3 genuinely-redundant `session.subscribe()` round
+   trips (`_startPageTracking`, `Browser.waitForPage`,
+   `BrowserContext.waitForPage`); left the 4th (`_startTopLevelContextTracking`'s
+   `!initialContexts` fallback) in place — verified it's currently unreachable
+   defensive code whose subscribe is load-bearing *if* the branch ever runs.
+   Verified green on Chrome + Firefox against the existing suites that
+   exercise all three fixed paths.
 2. **[PERF-05](./PERF-05.md)** — Phase 5a, background BiDi connect in
    `Browser.launch()`. The connect-time gap is quantified (~300–500ms),
    the design questions are already scoped, and the "wait until validated
