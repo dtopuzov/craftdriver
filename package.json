@@ -18,6 +18,7 @@
     "test:chrome": "BROWSER_NAME=chrome vitest run",
     "test:chromium": "BROWSER_NAME=chromium vitest run",
     "bench": "HEADLESS=true vitest run --config vitest.perf.config.ts",
+    "bench:realapp": "HEADLESS=true vitest run --config vitest.perf.realapp.config.ts",
     "clean": "rimraf dist",
     "serve": "http-server ./examples -a 127.0.0.1 -p 8080 -c-1 --cors",
     "examples:start": "npm run serve",
