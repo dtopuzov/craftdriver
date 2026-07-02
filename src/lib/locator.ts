@@ -47,6 +47,7 @@ export class Locator {
     const childBy = typeof selector === 'string' ? By.css(selector) : selector;
     const child = new Locator(this.driver, childBy, this.getDefaultTimeout);
     child._parent = this;
+    child._contextSwitcher = this._contextSwitcher;
     return child;
   }
 
@@ -281,7 +282,11 @@ export class Locator {
   async all(): Promise<ElementHandle[]> {
     return this._withContext(async () => {
       const els = await this._findFinal();
-      return els.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
+      return els.map((we) => {
+        const handle = ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout);
+        if (this._contextSwitcher) handle.withContext(this._contextSwitcher);
+        return handle;
+      });
     });
   }
 

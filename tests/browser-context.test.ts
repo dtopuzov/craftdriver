@@ -84,6 +84,37 @@ describe('BrowserContext (BiDi user contexts)', () => {
     }
   });
 
+  it('page.findAll() handles stay bound to a non-default context\'s window', async () => {
+    // Regression: findAll() used to return snapshot handles with no context
+    // switcher, so a later .text() call ran against whichever window
+    // happened to have Classic focus by then instead of this page's own
+    // window — invisible on the always-default-context happy path, real
+    // once a page lives in a non-default BrowserContext.
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage({ url: `${baseUrl}/locator.html` });
+      const handles = await page.findAll('.product-name');
+      expect(handles.length).toBe(5);
+      const texts = await Promise.all(handles.map((h) => h.text()));
+      expect(texts).toContain('Widget Lite');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it('page.locator(...).all() handles stay bound to a non-default context\'s window', async () => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage({ url: `${baseUrl}/locator.html` });
+      const handles = await page.locator('.product').filter({ hasText: 'Gadget' }).all();
+      expect(handles.length).toBe(2);
+      const texts = await Promise.all(handles.map((h) => h.text()));
+      expect(texts.every((t) => t.includes('Gadget'))).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it('close() removes the context and subsequent ops throw', async () => {
     const ctx = await browser.newContext();
     await ctx.close();
