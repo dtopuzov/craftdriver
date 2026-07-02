@@ -379,7 +379,12 @@ export class Page {
   async findAll(selector: string | By): Promise<ElementHandle[]> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const webElements = await this._withWindow(() => this.driver.findElements(by));
-    return webElements.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
+    const sw = this._makeContextSwitcher();
+    return webElements.map((we) => {
+      const handle = ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout);
+      if (sw) handle.withContext(sw);
+      return handle;
+    });
   }
 
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {

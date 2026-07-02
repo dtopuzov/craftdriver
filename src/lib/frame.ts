@@ -90,7 +90,9 @@ export class Frame {
     } finally {
       await this.contextSwitcher.out();
     }
-    return webElements.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
+    return webElements.map((we) =>
+      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout).withContext(this.contextSwitcher)
+    );
   }
 
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {

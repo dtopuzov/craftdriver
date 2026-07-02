@@ -54,4 +54,24 @@ describe('Iframes', () => {
     await frame.locator('#child-btn').click();
     await frame.locator('#child-result').expect().toHaveText('clicked');
   });
+
+  it('frame.findAll() handles stay bound to the frame after the call returns', async () => {
+    // Regression: findAll() used to return snapshot handles with no context
+    // switcher, so a later .text()/.click() on them ran against whatever
+    // context happened to be active by then instead of switching back into
+    // the iframe.
+    const frame = await browser.frame('#my-frame');
+    const handles = await frame.findAll('h2');
+    expect(handles.length).toBe(1);
+    expect(await handles[0].text()).toBe('Child Frame');
+  });
+
+  it('nested frame.locator(...).locator(...) resolves inside the frame', async () => {
+    // Regression: a child Locator created via .locator() didn't inherit its
+    // parent's context switcher, so the nested lookup ran outside the frame
+    // and never found the element.
+    const frame = await browser.frame('#my-frame');
+    await frame.locator('body').locator('#child-btn').click();
+    await frame.locator('#child-result').expect().toHaveText('clicked');
+  });
 });
