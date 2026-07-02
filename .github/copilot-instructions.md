@@ -7,7 +7,10 @@ layout) live in the code itself — read it before assuming.
 
 ## What this project is
 
-A pragmatic, BiDi-first WebDriver automation library for Node.js.
+A pragmatic WebDriver automation library for Node.js that picks the
+fastest correct protocol — Classic or BiDi — per command, keeping
+BiDi-only capabilities (network mocking, log capture, tracing,
+multi-context, downloads) available and easy to use.
 Vision: **Playwright's ergonomics, WebDriver's standards-compliance, only
 the API users actually need.** Minimal surface, powerful internals.
 
@@ -69,10 +72,12 @@ These survive refactors. Honour them when adding *or* changing code.
    an existing one can be extended. One good concept beats three ad-hoc
    helpers. Don't grow the API just because Playwright has the feature.
 
-2. **BiDi-first, Classic as fallback.** New capabilities (network, logs,
-   downloads, init scripts, real load events) belong on BiDi. Use Classic
-   WebDriver only when BiDi can't do the thing, and isolate the fallback
-   behind the same public method.
+2. **Fastest correct protocol per command.** Capabilities Classic can't
+   express at all (network, logs, downloads, init scripts, multi-context,
+   tracing) belong on BiDi and throw a clear error when it's unavailable.
+   For commands Classic *can* do (navigation, load-state waits), pick
+   whichever protocol is cheapest for the requested semantics and degrade
+   gracefully to Classic instead of throwing when BiDi isn't connected.
 
 3. **Auto-waiting is the default.** Every action and assertion waits up
    to a configurable timeout. Never expose a "non-waiting" variant of a

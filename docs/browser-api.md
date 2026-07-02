@@ -28,7 +28,8 @@ const browser = await Browser.launch({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `browserName` | `'chrome' \| 'chromium' \| 'firefox'` | `'chrome'` | Browser to launch |
-| `enableBiDi` | `boolean` | `true` | Use WebDriver BiDi. Set `false` only when running against a browser that does not support it. |
+| `enableBiDi` | `boolean` | `true` | Use WebDriver BiDi. Set `false` only when running against a browser that does not support it — every BiDi-only feature then throws a `requires BiDi` error if called. |
+| `captureLogs` | `boolean` | `false` | Start console/error log capture immediately at launch instead of lazily on first `browser.logs`/`onConsole`/`onError`/`waitForConsole` touch. See [BiDi Features — Console & Error Logs](./bidi-features.md#console--error-logs). |
 | `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
 | `downloadsDir` | `string` | temp dir | Directory where downloaded files are saved |

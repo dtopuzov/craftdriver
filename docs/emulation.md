@@ -25,12 +25,16 @@ await browser.emulate({
 
 | Option | What the page sees | Transport | Cross-browser |
 |---|---|---|---|
-| `colorScheme` | `prefers-color-scheme` media query | BiDi + CDP `Emulation.setEmulatedMedia` | Chromium only |
-| `reducedMotion` | `prefers-reduced-motion` media query | BiDi + CDP `Emulation.setEmulatedMedia` | Chromium only |
-| `forcedColors` | `forced-colors` media query | BiDi + CDP `Emulation.setEmulatedMedia` | Chromium only |
+| `colorScheme` | `prefers-color-scheme` media query | CDP `Emulation.setEmulatedMedia` (over the BiDi+CDP bridge) | Chromium only |
+| `reducedMotion` | `prefers-reduced-motion` media query | CDP `Emulation.setEmulatedMedia` (over the BiDi+CDP bridge) | Chromium only |
+| `forcedColors` | `forced-colors` media query | CDP `Emulation.setEmulatedMedia` (over the BiDi+CDP bridge) | Chromium only |
 | `locale` | `navigator.language`, `Intl.*` formatting | BiDi `emulation.setLocaleOverride` | yes |
 | `timezoneId` | `Intl.DateTimeFormat`, `Date` offsets | BiDi `emulation.setTimezoneOverride` | yes |
-| `offline` | `navigator.onLine`, network stack | BiDi + CDP `Network.emulateNetworkConditions` | Chromium only |
+| `offline` | `navigator.onLine`, network stack | CDP `Network.emulateNetworkConditions` (over the BiDi+CDP bridge) | Chromium only |
+
+All options still require an active BiDi session (`enableBiDi: true`, the
+default) — the four CDP-backed options ride over a CDP bridge that BiDi
+opens, they don't work with BiDi disabled.
 
 - Pass `null` for any field to clear that override.
 - Calling `emulate({})` is a no-op.
