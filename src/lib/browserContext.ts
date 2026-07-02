@@ -258,8 +258,9 @@ export class BrowserContext {
 
     // Make sure any prior `on('page')` subscription is fully installed before
     // we run `action()` — otherwise a fast popup could fire before we listen.
+    // `browsingContext.contextCreated` is already subscribed session-wide by
+    // `BiDiSession.connect()`, so no per-call `subscribe()` is needed here.
     if (this._trackingPromise) await this._trackingPromise;
-    await this.conn.subscribe(['browsingContext.contextCreated']).catch(() => { /* already subscribed */ });
 
     return new Promise<Page>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -988,10 +989,10 @@ export class BrowserContext {
   }
 
   private async _startPageTracking(): Promise<void> {
-    await this.conn
-      .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
-      .catch(() => { /* already subscribed */ });
-
+    // No `subscribe()` here: `browsingContext.contextCreated`/`contextDestroyed`
+    // are already subscribed session-wide in `BiDiSession.connect()`'s batch,
+    // and this method can only run once BiDi is connected. Handlers register
+    // independently via `conn.on(...)` below, so we just attach them.
     const onCreated = (params: Record<string, unknown>) => {
       if (params.parent) return; // nested frames
       if (params.userContext !== this._id) return;

@@ -1698,9 +1698,9 @@ export class Browser {
     if (this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
 
-      // Subscribe to contextCreated if not already subscribed
-      await conn.subscribe(['browsingContext.contextCreated']).catch(() => {/* already subscribed */ });
-
+      // `browsingContext.contextCreated` is already subscribed session-wide by
+      // `BiDiSession.connect()` (which must have run for `isConnected()` to be
+      // true), so no per-call `subscribe()` round trip is needed here.
       return new Promise<Page>((resolve, reject) => {
         const timer = setTimeout(() => {
           off();
@@ -1926,6 +1926,15 @@ export class Browser {
     const conn = this.bidiSession!.getConnection();
 
     if (!initialContexts) {
+      // Defensive path only. In today's sequencing this branch is unreachable:
+      // `initBiDi()` always seeds `_topLevelContextTracking` via `connect()`'s
+      // `onContextTree` callback (with `initialContexts`) before `launch()`
+      // returns, so no external caller can reach `_ensureTopLevelContextTracking()`
+      // — and thus this arg-less path — before `connect()` has already subscribed.
+      // The `subscribe()` is kept (unlike the redundant ones removed elsewhere,
+      // see PERF-01) precisely because this branch's contract is "connect()'s
+      // subscribe may NOT have run yet"; dropping it would break that contract
+      // if a future refactor ever made the branch reachable.
       await conn
         .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
         .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });

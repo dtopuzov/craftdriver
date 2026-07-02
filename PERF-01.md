@@ -1,5 +1,32 @@
 # PERF-01: BiDi duplicate-subscription cleanup
 
+## Status: ✅ Shipped
+
+Removed the three genuinely-redundant `session.subscribe()` round trips:
+`BrowserContext._startPageTracking()`, `Browser.waitForPage()`, and
+`BrowserContext.waitForPage()`. Each now relies on the session-wide
+subscription already armed in `BiDiSession.connect()`'s batch and only
+attaches its `conn.on(...)` handler.
+
+Call site 4 — `Browser._startTopLevelContextTracking()`'s `!initialContexts`
+fallback — was **left in place**. Per the Risks check below: in today's
+`initBiDi()` sequencing this branch is unreachable (the `onContextTree`
+callback always seeds `_topLevelContextTracking` with `initialContexts`
+before `launch()` returns, so no external caller can reach the arg-less
+path before `connect()` has already subscribed). Its `subscribe()` is kept
+because the branch's entire contract is "connect()'s subscribe may not have
+run yet"; removing it would only matter if a future refactor made the branch
+reachable, at which point it would silently break. Documented inline at the
+call site.
+
+Verified: existing suites that exercise all three fixed paths
+(`tests/pages.test.ts`, `tests/browser-context-hooks.test.ts`,
+`tests/browser-context.test.ts`, `tests/network.test.ts`) pass on both
+Chrome and Firefox — event delivery (the real "handler fires zero times"
+risk) survives the change on both engines. No new benchmark: this is a
+first-use round-trip removal, not a wall-clock-visible delta (as the
+Verification section predicted).
+
 ## Description
 
 `BiDiSession.connect()` already subscribes to `browsingContext.contextCreated`
