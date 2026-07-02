@@ -15,41 +15,10 @@
 import { describe, it, expect } from 'vitest';
 import { Browser } from '../../src/index.js';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from '../utils.js';
+import { median, timed, sample, printTable } from './_perf-utils.js';
 
 const WARMUP_ITERATIONS = 1;
 const MEASURED_ITERATIONS = 4;
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-function p95(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
-  return sorted[idx];
-}
-
-function fmt(ms: number): string {
-  return `${ms.toFixed(1)}ms`;
-}
-
-async function timed<T>(fn: () => Promise<T>): Promise<[number, T]> {
-  const start = performance.now();
-  const result = await fn();
-  return [performance.now() - start, result];
-}
-
-/** Run WARMUP_ITERATIONS + MEASURED_ITERATIONS samples of `fn`, discarding the warmup. */
-async function sample(fn: () => Promise<number>): Promise<number[]> {
-  const values: number[] = [];
-  for (let i = 0; i < WARMUP_ITERATIONS + MEASURED_ITERATIONS; i++) {
-    const elapsed = await fn();
-    if (i >= WARMUP_ITERATIONS) values.push(elapsed);
-  }
-  return values;
-}
 
 /** Navigate to login.html, fill 2 inputs, submit, assert the result text. Clears
  *  the session cookie afterward (untimed) so the next iteration hits a fresh
@@ -85,22 +54,20 @@ async function runNetworkWait(browser: Browser, baseUrl: string): Promise<number
   return elapsed;
 }
 
-function printTable(title: string, rows: Array<{ label: string; values: number[] }>): void {
-  console.log(`\n${title}`);
-  console.log('-'.repeat(title.length));
-  for (const { label, values } of rows) {
-    console.log(
-      `  ${label.padEnd(28)} median=${fmt(median(values)).padStart(9)}  p95=${fmt(p95(values)).padStart(9)}  n=${values.length}`
-    );
-  }
-}
-
 describe('BiDi vs Classic performance benchmark', () => {
   it(
     'connect-time-only: Browser.launch() for enableBiDi true vs false',
     async () => {
-      const bidiSamples = await sample(() => runConnectOnly(true));
-      const classicSamples = await sample(() => runConnectOnly(false));
+      const bidiSamples = await sample(
+        () => runConnectOnly(true),
+        WARMUP_ITERATIONS,
+        MEASURED_ITERATIONS
+      );
+      const classicSamples = await sample(
+        () => runConnectOnly(false),
+        WARMUP_ITERATIONS,
+        MEASURED_ITERATIONS
+      );
 
       printTable('Browser.launch() only', [
         { label: 'enableBiDi: true', values: bidiSamples },
@@ -128,12 +95,18 @@ describe('BiDi vs Classic performance benchmark', () => {
       for (const enableBiDi of [true, false] as const) {
         const browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi });
         try {
-          flowSamples[String(enableBiDi) as 'true' | 'false'] = await sample(() =>
-            runFlow(browser, baseUrl)
+          flowSamples[String(enableBiDi) as 'true' | 'false'] = await sample(
+            () => runFlow(browser, baseUrl),
+            WARMUP_ITERATIONS,
+            MEASURED_ITERATIONS
           );
 
           if (enableBiDi) {
-            networkWaitSamples = await sample(() => runNetworkWait(browser, baseUrl));
+            networkWaitSamples = await sample(
+              () => runNetworkWait(browser, baseUrl),
+              WARMUP_ITERATIONS,
+              MEASURED_ITERATIONS
+            );
           }
         } finally {
           await browser.quit();
