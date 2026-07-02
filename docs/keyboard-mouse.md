@@ -98,22 +98,35 @@ await browser.keyboard.press('Backspace');
 
 ## Mouse
 
-Access the mouse API via `browser.mouse`.
+Access the mouse API via `browser.mouse`. `click()`, `move()`, and
+`dragAndDrop()` all accept a `Target`: a CSS selector string, a `By`
+locator, or `{ x, y }` coordinates.
 
-### click(x, y)
+### click(target, options?)
 
-Click at specific coordinates.
+Click at coordinates or on an element.
 
 ```typescript
-await browser.mouse.click(100, 200);
+await browser.mouse.click({ x: 100, y: 200 });
+await browser.mouse.click('#submit');
+await browser.mouse.click('#submit', { button: 'right', clickCount: 2 });
 ```
 
-### move(x, y)
+### dblclick(target, options?)
 
-Move the mouse to coordinates.
+Double-click at coordinates or on an element (shorthand for `click(target, { clickCount: 2 })`).
 
 ```typescript
-await browser.mouse.move(150, 300);
+await browser.mouse.dblclick('#item');
+```
+
+### move(target, options?)
+
+Move the mouse to coordinates or over an element.
+
+```typescript
+await browser.mouse.move({ x: 150, y: 300 });
+await browser.mouse.move('#target');
 ```
 
 ### down()

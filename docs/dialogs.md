@@ -11,6 +11,13 @@ or the automation handles them.
 > failures so unexpected dialogs surface as broken tests rather than
 > passing tests against a stuck browser.
 
+> **`waitForDialog()` and `onDialog()` require BiDi.** Both are built on
+> BiDi's dialog-open event; under Classic WebDriver (`enableBiDi: false`)
+> `onDialog()` silently registers a no-op and `waitForDialog()` will simply
+> time out rather than error, since Classic has no push notification for
+> "a dialog opened." Use the imperative `acceptDialog()` / `dismissDialog()`
+> / `getDialogMessage()` API instead if you're running Classic-only.
+
 You handle a dialog one of three ways, depending on the shape of the
 test:
 
@@ -89,9 +96,13 @@ await browser.dismissDialog();       // click Cancel / close
 const text = await browser.getDialogMessage();
 ```
 
-These map directly onto W3C Classic alert endpoints
-(`/alert/accept`, `/alert/dismiss`, `/alert/text`) and throw if no
-dialog is currently open.
+`acceptDialog` / `dismissDialog` use BiDi's `handleUserPrompt` when the
+browser was launched with BiDi (the default), falling back to the W3C
+Classic alert endpoints (`/alert/accept`, `/alert/dismiss`) only when
+`enableBiDi: false`. `getDialogMessage` always uses the Classic
+`/alert/text` endpoint — BiDi only surfaces the dialog message via the
+`userPromptOpened` event, not a query, so there's nothing to query outside
+`onDialog`/`waitForDialog`. All four throw if no dialog is currently open.
 
 ## `Dialog` interface
 

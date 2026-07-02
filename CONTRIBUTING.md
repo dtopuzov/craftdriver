@@ -15,17 +15,14 @@ Thank you for your interest in contributing! This document provides guidelines a
    npm install
    ```
 
-3. **Install ChromeDriver** (required for tests)
-   ```bash
-   npm install -g chromedriver
-   ```
-
-4. **Build the project**
+3. **Build the project**
    ```bash
    npm run build
    ```
 
-5. **Run tests**
+4. **Run tests** — chromedriver/geckodriver are auto-downloaded and cached
+   on first use, no separate install step needed (see
+   [docs/driver-configuration.md](./docs/driver-configuration.md)).
    ```bash
    # Start the test server in one terminal
    npm run serve

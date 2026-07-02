@@ -1,7 +1,8 @@
 # craftdriver — SKILL
 
-Modern BiDi-first WebDriver library for Node.js. Playwright ergonomics,
-WebDriver standards-compliance, no AI in the hot path.
+Modern WebDriver library for Node.js — picks the fastest correct protocol
+(Classic or BiDi) per command. Playwright ergonomics, WebDriver
+standards-compliance, no AI in the hot path.
 
 ## Core loop
 

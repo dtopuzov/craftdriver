@@ -1,6 +1,6 @@
 # Error codes
 
-Every error thrown from the public craftdriver API is a
+Nearly every error thrown from the public craftdriver API is a
 [`CraftdriverError`](../src/lib/errors.ts), carrying:
 
 - `code` — a stable, machine-readable identifier from the table below.
@@ -11,6 +11,11 @@ Every error thrown from the public craftdriver API is a
 
 `CraftdriverError extends Error`, so `instanceof Error` keeps working
 and stack traces are preserved.
+
+> A few edge cases still throw a plain `Error` instead — e.g. calling
+> `startTrace()` again while a trace is already running, or without
+> `outDir`. Guard against these with normal usage (don't call `startTrace()`
+> twice without `stopTrace()`) rather than a `code` check.
 
 ```ts
 import { CraftdriverError, ErrorCode } from 'craftdriver';
@@ -38,11 +43,11 @@ try {
 | `TIMEOUT` | Generic `WebDriverWait.until(...)` timeout with no more specific code. | Same as above — check the condition. |
 | `EXPECT_MISMATCH` | An `expect(locator).to…()` assertion failed after auto-waiting. | Inspect `error.detail` for the selector and observed value. |
 | `A11Y_VIOLATIONS` | `browser.a11y.check()` (or scoped variants) found axe-core violations. | Iterate over `error.violations` — each has an `id`, `impact`, and `helpUrl`. |
-| `EVAL_THREW` | The function passed to `evaluate()` threw inside the page. | The page-side exception text is in `error.detail.exception`. |
+| `EVAL_THREW` | The function passed to `evaluate()` threw inside the page. Also fires for `browser.clock` methods (`tick()`, `setSystemTime()`, `runFor()`) called before `install()` — they run as in-page scripts under the hood. | The page-side exception text is in `error.detail.exception`. |
 | `EVAL_BAD_ARG` | `evaluate()` / `addInitScript()` received a non-JSON-serializable argument (function, Symbol, DOM node…). | Pass plain JSON values. |
 | `INVALID_ARGUMENT` | Caller passed an invalid value (bad enum, wrong shape, unparseable duration…). | Read the message; it lists the accepted forms. |
 | `UNSUPPORTED` | Feature exists but is unavailable on this browser/transport (e.g. Chromium-only over Firefox, or a BiDi-only feature with BiDi disabled). | Enable BiDi (`enableBiDi: true`) or switch browser. |
-| `STATE_INVALID` | Method called in the wrong state (e.g. `stopTrace()` without `startTrace()`, `clock.tick()` before `install()`). | Call the prerequisite first. |
+| `STATE_INVALID` | Method called in the wrong state (e.g. `stopTrace()` without `startTrace()`). | Call the prerequisite first. |
 | `DRIVER_ERROR` | Driver-level / transport-level failure surfaced to the caller. | Inspect `error.cause`. |
 
 ## Stability

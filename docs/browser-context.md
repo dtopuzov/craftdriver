@@ -333,13 +333,12 @@ Requests from other contexts are not seen.
 
 - `pattern`: a URL substring, a `RegExp`, or a glob (`*` matches any
   run of non-`/` characters; `**` matches any run of characters).
-- `handler({ request, fulfill, continue: cont, abort })`: called for
-  every matched request. Must call exactly one of:
-  - `fulfill({ status?, headers?, contentType?, body? })` — reply
-    immediately without hitting the network.
-  - `continue({ url?, method?, headers?, postData? })` — let the
-    request go through, optionally rewritten.
-  - `abort(reason?)` — fail the request.
+- `handler(request)`: called for every matched request, receiving an
+  `InterceptedRequest` (`url`, `method`, `headers`, `postData`, …).
+  Return a `MockResponse` (`{ status?, statusText?, headers?, body? }`)
+  to fulfill the request immediately without hitting the network, or
+  return/resolve `void` to let it continue to the network unmodified.
+  The handler may be async.
 
 ```typescript
 // Real-world: serve a fixture to one tenant, let the real API answer
@@ -347,13 +346,11 @@ Requests from other contexts are not seen.
 const admin = await browser.newContext();
 const guest = await browser.newContext();
 
-await admin.route('**/api/users', async ({ fulfill }) => {
-  await fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify([{ id: 1, role: 'admin', name: 'Alice' }]),
-  });
-});
+await admin.route('**/api/users', (request) => ({
+  status: 200,
+  headers: { 'content-type': 'application/json' },
+  body: [{ id: 1, role: 'admin', name: 'Alice' }],
+}));
 
 const aPage = await admin.newPage({ url: '/users' });
 const gPage = await guest.newPage({ url: '/users' });

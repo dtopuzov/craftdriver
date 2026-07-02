@@ -19,8 +19,8 @@ in Classic mode.
 |---|---|---|
 | Network mocking / interception | [`browser.network.*`](#network-mocking) | yes |
 | Console & error log capture | [`browser.logs.*`](#console--error-logs) | yes |
-| `waitForLoadState('load' \| 'domcontentloaded' \| 'networkidle')` | `browser.waitForLoadState()` | yes |
-| `navigateTo(..., { waitUntil })` real load events | `browser.navigateTo()` | yes |
+| `waitForLoadState('load' \| 'domcontentloaded' \| 'networkidle')` | `browser.waitForLoadState()` | no — event-driven over BiDi, polls `document.readyState` in Classic |
+| `navigateTo(..., { waitUntil })` real load events | `browser.navigateTo()` | no — event-driven over BiDi, best-effort settle timer in Classic |
 | `waitForRequest()` / `waitForResponse()` | `browser.waitForRequest()` / `waitForResponse()` | yes |
 | Init scripts (run before any page script) | `browser.addInitScript()` | yes |
 | Open new tab / popup | `browser.openPage()` | yes |
@@ -228,6 +228,14 @@ waitForResponse("**/api/users") timed out after 30000ms
 ## Console & Error Logs
 
 Access browser console output and JavaScript errors via `browser.logs`.
+
+> **Capture is lazy by default.** Craftdriver only subscribes to log events
+> the first time you touch `browser.logs.onLog()` / `.onConsole()` /
+> `.onError()` / `.on()` / `.waitForConsole()` / `.waitForError()` — messages
+> emitted before that first touch are not captured, so a bare
+> `browser.logs.getMessages()` right after `navigateTo()` can return `[]`.
+> Either arm a listener before the action that logs, or launch with
+> `Browser.launch({ captureLogs: true })` to start capture immediately.
 
 ### getMessages()
 

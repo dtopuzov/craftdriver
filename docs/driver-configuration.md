@@ -7,13 +7,17 @@ Craftdriver resolves the WebDriver binary through a chain — first match wins:
 | 1 | `driverPath` option in `Browser.launch()` |
 | 2 | `CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` env var |
 | 3 | `CRAFTDRIVER_DRIVER_PATH` env var (generic fallback for either browser) |
-| 4 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
-| 5 | `chromedriver` / `geckodriver` on `PATH` |
-| 6 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
+| 4 | Legacy/Selenium-compatible env vars: `CHROMEDRIVER_PATH`, `SE_CHROMEDRIVER` (chromedriver) or `GECKODRIVER_PATH`, `GECKODRIVER_FILEPATH`, `SE_GECKODRIVER` (geckodriver) |
+| 5 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
+| 6 | `chromedriver` / `geckodriver` on `PATH` |
+| 7 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
 
-Downloaded drivers are cached in `~/.cache/craftdriver` and reused as long as
-your browser version doesn't change. Only the driver binary is downloaded,
-never the browser itself.
+Downloaded drivers are cached in `~/.cache/craftdriver`. Only the driver
+binary is downloaded, never the browser itself. Caching differs by browser:
+chromedriver is pinned to the detected Chrome version and reused as long as
+that version doesn't change; geckodriver isn't version-pinned to Firefox, so
+it's re-checked against the latest GitHub release once per
+`CRAFTDRIVER_DRIVER_TTL` window regardless of your Firefox version.
 
 ## Environment variables
 

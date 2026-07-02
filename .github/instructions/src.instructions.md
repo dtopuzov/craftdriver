@@ -20,12 +20,21 @@ What follows are the principles that should hold across refactors.
 - Before adding a new exported symbol, check whether an existing one can
   be extended. Minimalism is a feature.
 
-## BiDi-first, Classic as fallback
+## Fastest correct protocol per command
 
-- New capabilities (network, logs, downloads, init scripts, real load
-  events, multi-context) belong on BiDi.
-- Use Classic WebDriver only when BiDi can't do the thing. Fall back
-  behind the same public method; don't expose two variants.
+- Capabilities Classic cannot express at all (network mocking/interception,
+  console/error log capture, downloads, init scripts, multi-context,
+  tracing, `waitForRequest`/`waitForResponse`) belong on BiDi and must throw
+  a clear `requires BiDi (enableBiDi: true)` error when BiDi isn't
+  connected — don't silently no-op.
+- For capabilities Classic *can* express (navigation, load-state waiting,
+  element actions), pick whichever protocol is cheapest for the requested
+  semantics — the default case usually prefers Classic — and degrade
+  gracefully to a Classic-based approximation (e.g. polling
+  `document.readyState`) instead of throwing when BiDi is unavailable.
+  Reserve the BiDi path for semantics Classic genuinely can't express
+  precisely (e.g. `waitUntil: 'networkidle'`). Fall back behind the same
+  public method; don't expose two variants.
 - Do not add Chrome DevTools Protocol (CDP) calls. We track W3C
   standards (BiDi + Classic) only.
 

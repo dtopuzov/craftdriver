@@ -118,10 +118,14 @@ export interface LaunchOptions {
   chromeService?: ChromeService;
   firefoxService?: FirefoxService;
   /**
-   * Enable WebDriver BiDi for network interception, logs, load events, etc.
-   * **Defaults to `true`** — BiDi is the primary protocol; Classic WebDriver
-   * is used only as a fallback when a capability is not yet available via BiDi.
-   * Set `false` only if your environment cannot negotiate a BiDi WebSocket.
+   * Enable WebDriver BiDi for network interception, logs, tracing, multi-tab,
+   * isolated contexts, and other BiDi-only capabilities. **Defaults to
+   * `true`.** Classic-equivalent commands (navigation, element interactions)
+   * still prefer the fastest correct protocol per command — usually Classic,
+   * since it's cheaper for the common case — rather than always routing
+   * through BiDi. Set `false` only if your environment cannot negotiate a
+   * BiDi WebSocket; doing so also disables every BiDi-only feature (each
+   * throws a `requires BiDi (enableBiDi: true)` error if called).
    */
   enableBiDi?: boolean;
   /**

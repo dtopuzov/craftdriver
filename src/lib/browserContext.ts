@@ -642,8 +642,9 @@ export class BrowserContext {
 
   /**
    * Intercept network requests originating from any page in this
-   * context. The handler runs for every matching request and decides
-   * how to answer it (`fulfill` / `continue` / `abort`).
+   * context. The handler runs for every matching request; return a
+   * `MockResponse` to fulfill it, or `void`/`undefined` to let it
+   * continue to the network unmodified.
    *
    * Routes are registered as a separate BiDi `network.addIntercept`
    * per page, scoped to that page's browsing-context id. Pages opened

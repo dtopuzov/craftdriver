@@ -213,7 +213,7 @@ async function testLoginPersistence() {
 | `includeCookies`        | `boolean`  | `true`  | Include cookies in saved state |
 | `includeLocalStorage`   | `boolean`  | `true`  | Include localStorage           |
 | `includeSessionStorage` | `boolean`  | `false` | Include sessionStorage         |
-| `origins`               | `string[]` | all     | Limit to specific origins      |
+| `origins`               | `string[]` | all     | Filter localStorage/sessionStorage capture by origin. Capture is always scoped to the page's *current* origin — this only decides whether that one origin is included, it does not collect storage from other origins the page hasn't visited. Cookies are unaffected by this option. |
 
 ### SessionStateManager (browser.storage)
 
