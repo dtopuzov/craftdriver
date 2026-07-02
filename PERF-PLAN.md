@@ -24,38 +24,34 @@ Everything below is what's left, re-verified and re-prioritized.
 
 ## Priority order
 
-1. **[PERF-03](./PERF-03.md) Step A only** — shared-browser test pattern,
-   single-file validation. Cheapest possible test of the single biggest
-   known lever (39 test files × ~2.4–2.9s launch each, dwarfs every
-   protocol-level number measured so far). Zero library changes. Do this
-   first — it tells you whether further perf investment is worth it before
-   committing to anything else below.
-2. **[PERF-01](./PERF-01.md)** — BiDi duplicate-subscription cleanup (4
+**[PERF-03](./PERF-03.md) is deprioritized** — it speeds up test-suite
+wall-clock time (test-authoring/infrastructure), not any automation
+command's speed, which is explicitly not the current interest. Left in
+the file set for reference, not on the active path below.
+
+1. **[PERF-01](./PERF-01.md)** — BiDi duplicate-subscription cleanup (4
    spots, not the 1 originally documented). Quick, mechanical, same shape
    as work already shipped. No reason to delay.
-3. **[PERF-05](./PERF-05.md)** — Phase 5a, background BiDi connect in
+2. **[PERF-05](./PERF-05.md)** — Phase 5a, background BiDi connect in
    `Browser.launch()`. The connect-time gap is quantified (~300–500ms),
    the design questions are already scoped, and the "wait until validated
    in the wild" condition from the original notes is now satisfied — we
    have real-app numbers.
-4. **[PERF-06](./PERF-06.md)** — Phase 5b, rename/simplify `enableBiDi`.
+3. **[PERF-06](./PERF-06.md)** — Phase 5b, rename/simplify `enableBiDi`.
    Explicitly sequenced after PERF-05 lands; also a breaking public-API
    decision — this file presents options, doesn't pick one for you.
-5. **[PERF-03](./PERF-03.md) Step B** — cross-file browser sharing. Only
-   after Step A's numbers justify it, and only after spiking the
-   still-fully-open chromedriver multi-client question (see the file).
-6. **[PERF-04](./PERF-04.md)** — auto-wait single-round-trip collapse.
+4. **[PERF-04](./PERF-04.md)** — auto-wait single-round-trip collapse.
    Verification found this is ~2–3x bigger in scope than originally
    documented (3 independent poll loops, not 1) and the highest-risk item
    here (hot path touching nearly every public method). Do after the
    lower-risk items above, and only after adding the poll-heavy benchmark
-   the file calls for.
-7. **[PERF-02](./PERF-02.md)** — Firefox BiDi-connect retry-loop
+   the file calls for. This is the item that most directly makes every
+   `click()`/`fill()`/`find()` call faster.
+5. **[PERF-02](./PERF-02.md)** — Firefox BiDi-connect retry-loop
    investigation. Independent of everything else; Chrome numbers aren't
    affected either way. Slot in whenever.
-8. **[PERF-07](./PERF-07.md)** — driver startup flags investigation.
-   Lowest priority, explicitly "cheap to check once PERF-03 lands." Do
-   last.
+6. **[PERF-07](./PERF-07.md)** — driver startup flags investigation.
+   Lowest priority, do last.
 
 ## Deferred / not scheduled
 

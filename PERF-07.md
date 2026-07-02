@@ -19,10 +19,9 @@ action needed there either. This item is specifically about the launched
 browser/driver *process's own startup work*, separate from the download/
 caching question.
 
-Explicitly low priority: this is only worth investigating once PERF-03
-lands and reduces how often a fresh driver process is even needed in the
-first place — no point shaving milliseconds off a cost that's about to be
-mostly eliminated by not launching nearly as often.
+Explicitly low priority: it's a small, per-launch shaving on top of a cost
+(~2.4-2.9s process spawn) that dwarfs it, worth doing once the higher-impact
+items above have landed, not before.
 
 ## Implementation
 

@@ -1,9 +1,28 @@
 # PERF-03: Shared-browser test pattern (`newContext()` instead of per-file launch)
 
+> **Deprioritized — out of scope for now.** This item speeds up *test
+> suites written using craftdriver* (this repo's own `tests/*.test.ts`, or
+> any consumer's e2e suite) by amortizing launch cost across tests. It
+> does **not** speed up any single automation command — `click()`,
+> `fill()`, `navigateTo()`, etc. are untouched either way. Confirmed
+> explicitly out of scope: the interest here is making the library
+> automate browsers faster, not making test suites run faster. Left in
+> place for reference/future revisit, not on the active priority list.
+>
+> One real, independent finding came out of a partial investigation into
+> this item: `Page.findAll()`, `Locator.all()`, `Frame.findAll()`, and
+> nested `Locator.locator()` chains all had a genuine correctness bug
+> (returned element handles lost their window/frame-context binding) —
+> fixed separately, unrelated to whether this item itself is pursued. See
+> the `fix: element handles from findAll()/all() lose their frame/window
+> binding` commit.
+
 ## Description
 
-This is the single biggest known lever in this whole plan — bigger than
-every protocol-level optimization done this session combined.
+This is the single biggest known lever in this whole plan for **test
+wall-clock time** — bigger than every protocol-level optimization done
+this session combined. It is *not* a lever for automation-command speed;
+see the deprioritization note above.
 
 `Browser.launch()` alone costs **~2.4–2.9s** (localhost Chrome headless,
 measured by `tests/perf/bidi-vs-classic.perf.ts`'s connect-time-only case),
