@@ -17,6 +17,7 @@ export default [
       'tests/**',
       'vitest.config.ts',
       'vitest.perf.config.ts',
+      'vitest.perf.realapp.config.ts',
     ],
   },
   {
