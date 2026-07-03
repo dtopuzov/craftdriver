@@ -342,6 +342,8 @@ export class Browser {
   private _storage?: SessionStateManager;
   private _a11y?: A11y;
   private _clock?: Clock;
+  /** Browser-scoped BiDi preload scripts registered via addInitScript()/clock. */
+  private _browserInitScriptIds = new Set<string>();
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
   private _browserName: 'chrome' | 'chromium' | 'firefox' = 'chrome';
@@ -374,6 +376,11 @@ export class Browser {
 
   /** Returns the current default timeout. Used as a live getter passed to ElementHandle / expectSelector. */
   private getDefaultTimeout = (): number => this.defaults.timeout;
+
+  private hasBrowserInitScripts = (): boolean => this._browserInitScriptIds.size > 0;
+
+  private hasDefaultNavigationInitScripts = (): boolean =>
+    this._defaultContext?._hasInitScriptsForNavigation() ?? this.hasBrowserInitScripts();
 
   static async launch(options: LaunchOptions = {}): Promise<Browser> {
     const name = options.browserName ?? 'chrome';
@@ -645,14 +652,14 @@ export class Browser {
     this._tracer?.recordAction('navigateTo', [url, opts], url);
     const waitUntil: LoadState = opts?.waitUntil ?? 'load';
 
-    // Classic-first: the default `waitUntil: 'load'` has an exact Classic
-    // equivalent — Classic navigateTo() already blocks until
-    // `document.readyState === 'complete'` — so there's no reason to spend a
-    // BiDi round trip on the common case. BiDi is reserved for wait semantics
-    // Classic cannot express: 'none' (return immediately), 'domcontentloaded'
-    // (early return before full load), and 'networkidle' (needs real network
-    // visibility).
-    const context = waitUntil !== 'load' ? this.bidiSession?.getContext() : undefined;
+    // Classic-first for ordinary `waitUntil: 'load'` navigations: Classic
+    // already blocks until `document.readyState === 'complete'`, so the common
+    // case avoids a BiDi round trip. Preload-backed sessions stay on BiDi
+    // because the next operation is often a BiDi script evaluation into the new
+    // document; mixing Classic navigate + immediate BiDi evaluate can race with
+    // the browser clearing old execution contexts on loaded-but-settling pages.
+    const needsBiDi = waitUntil !== 'load' || this.hasDefaultNavigationInitScripts();
+    const context = needsBiDi ? this.bidiSession?.getContext() : undefined;
     if (context && this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
       const bidiWait =
@@ -1149,6 +1156,7 @@ export class Browser {
     if (this.bidiSession) {
       await this.bidiSession.close().catch(() => { });
     }
+    this._browserInitScriptIds.clear();
     for (const off of this._topLevelContextTrackingOffs) off();
     this._topLevelContextTrackingOffs = [];
     this._topLevelContextTracking = undefined;
@@ -1318,9 +1326,12 @@ export class Browser {
     });
 
     const scriptId = result.script;
+    this._browserInitScriptIds.add(scriptId);
     return {
       remove: async () => {
+        if (!this._browserInitScriptIds.has(scriptId)) return;
         await conn.send('script.removePreloadScript', { script: scriptId });
+        this._browserInitScriptIds.delete(scriptId);
       },
     };
   }
@@ -1828,7 +1839,11 @@ export class Browser {
       id,
       this.getDefaultTimeout,
       () => this.defaults.navigationTimeout,
-      { getNetwork: () => this.network, getBrowserName: () => this._browserName },
+      {
+        getNetwork: () => this.network,
+        getBrowserName: () => this._browserName,
+        hasBrowserInitScripts: this.hasBrowserInitScripts,
+      },
       config
     );
     this._contextsById.set(id, ctx);

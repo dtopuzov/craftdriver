@@ -89,6 +89,10 @@ export class Page {
     }
   }
 
+  private hasInitScriptsForNavigation(): boolean {
+    return this._owner?._hasInitScriptsForNavigation() ?? false;
+  }
+
   // ── URL / title / navigation ──────────────────────────────────────────────
 
   async url(): Promise<string> {
@@ -111,10 +115,13 @@ export class Page {
 
   /**
    * @param opts.waitUntil  Load state to wait for. Defaults to `'load'`.
-   *   `'load'` on a default-context page is Classic-first — Classic
-   *   navigateTo() already blocks until `document.readyState === 'complete'`.
-   *   `'none'` and `'domcontentloaded'` require BiDi; `'networkidle'` isn't
-   *   available at the Page level — use `browser.waitForLoadState('networkidle')`.
+   *   `'load'` on a default-context page is Classic-first unless a preload
+   *   script is active. Classic navigateTo() already blocks until
+   *   `document.readyState === 'complete'`; preload-backed pages stay on BiDi
+   *   so the navigation and the next BiDi script evaluation observe the same
+   *   document lifecycle. `'none'` and `'domcontentloaded'` require BiDi;
+   *   `'networkidle'` isn't available at the Page level — use
+   *   `browser.waitForLoadState('networkidle')`.
    */
   async navigateTo(
     url: string,
@@ -124,18 +131,20 @@ export class Page {
     const waitUntil = opts?.waitUntil ?? 'load';
 
     // Classic's window-handle APIs only reliably reach pages in the default
-    // BiDi user context — pages created via a non-default context
-    // (browser.newContext()) aren't guaranteed to be switchable via Classic
-    // `switchToWindow`, so those always go through BiDi regardless of
-    // waitUntil. Default-context pages get the classic-first treatment for
-    // the common 'load' case.
+    // BiDi user context, and preload-backed pages benefit from keeping
+    // navigation on the same protocol that installed/evaluates those scripts.
+    // All other default-context 'load' navigations keep the Classic fast path.
     const isDefaultContext = !this._owner || this._owner.id === 'default';
+    const needsBiDi =
+      waitUntil !== 'load' ||
+      !isDefaultContext ||
+      this.hasInitScriptsForNavigation();
 
-    if (this.conn && (waitUntil !== 'load' || !isDefaultContext)) {
+    if (this.conn && needsBiDi) {
       const bidiWait =
         waitUntil === 'none' ? 'none'
           : waitUntil === 'domcontentloaded' ? 'interactive'
-            : 'complete'; // 'load' on a non-default context
+            : 'complete'; // 'load' on non-default/preload-backed contexts
       await this.conn.send('browsingContext.navigate', {
         context: this.contextId,
         url: resolved,
