@@ -2,18 +2,9 @@ import type { Driver } from './driver.js';
 import { By } from './by.js';
 import { WebElement } from './webelement.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { DEFAULT_POLL_INTERVAL_MS, DEFAULT_ELEMENT_TIMEOUT_MS } from './timing.js';
 
 export type Condition<T = any> = (driver: Driver) => Promise<T>;
-
-/**
- * Default interval between auto-wait poll attempts, in ms. Kept low so waits
- * on dynamically-appearing/visible elements resolve with little quantization
- * lag (an element ready mid-interval is otherwise noticed up to a full
- * interval late). The first attempt runs immediately, so already-present
- * elements never pay this — it only affects genuine waits. Shared with the
- * hand-rolled poll loops in `locator.ts` so the two stay in lockstep.
- */
-export const DEFAULT_POLL_INTERVAL_MS = 25;
 
 export interface WaitOptions {
   timeout?: number;
@@ -32,11 +23,11 @@ export class WebDriverWait {
     intervalMs?: number
   ) {
     if (typeof timeoutOrOptions === 'object') {
-      this.timeoutMs = timeoutOrOptions?.timeout ?? 5000;
+      this.timeoutMs = timeoutOrOptions?.timeout ?? DEFAULT_ELEMENT_TIMEOUT_MS;
       this.intervalMs = timeoutOrOptions?.interval ?? DEFAULT_POLL_INTERVAL_MS;
       this.timeoutMsg = timeoutOrOptions?.timeoutMsg;
     } else {
-      this.timeoutMs = timeoutOrOptions ?? 5000;
+      this.timeoutMs = timeoutOrOptions ?? DEFAULT_ELEMENT_TIMEOUT_MS;
       this.intervalMs = intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     }
   }

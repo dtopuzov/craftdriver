@@ -21,6 +21,7 @@ import os from 'os';
 import https from 'https';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { VERSION_PROBE_TIMEOUT_MS, PATH_PROBE_TIMEOUT_MS } from './timing.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -57,6 +58,27 @@ function writeMetadata(meta: Metadata): void {
   const dir = cacheDir();
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'metadata.json'), JSON.stringify(meta, null, 2));
+}
+
+/**
+ * Return the cached driver path recorded under `cacheKey` if its TTL record is
+ * still fresh and the binary still exists on disk; otherwise `undefined`. Used
+ * to skip expensive re-resolution (browser-version detection, PATH probes,
+ * network calls) on every launch.
+ */
+function readFreshCachedDriver(cacheKey: string): string | undefined {
+  const cached = readMetadata()[cacheKey];
+  if (cached && Date.now() - cached.timestamp < ttlMs() && fs.existsSync(cached.driverPath)) {
+    return cached.driverPath;
+  }
+  return undefined;
+}
+
+/** Record an auto-resolved driver path so subsequent resolves can reuse it. */
+function recordResolvedDriver(cacheKey: string, version: string, driverPath: string): void {
+  const meta = readMetadata();
+  meta[cacheKey] = { version, driverPath, timestamp: Date.now() };
+  writeMetadata(meta);
 }
 
 // ─── Platform helpers ─────────────────────────────────────────────────────────
@@ -215,7 +237,7 @@ function detectBrowserVersion(
     try {
       const result = spawnSync(candidate, ['--version'], {
         encoding: 'utf-8',
-        timeout: 5000,
+        timeout: VERSION_PROBE_TIMEOUT_MS,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       if (result.status === 0 && result.stdout) {
@@ -235,7 +257,7 @@ function commandOnPath(cmd: string): boolean {
   try {
     const r = spawnSync(os.platform() === 'win32' ? 'where' : 'which', [cmd], {
       encoding: 'utf-8',
-      timeout: 2000,
+      timeout: PATH_PROBE_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return r.status === 0 && r.stdout.trim().length > 0;
@@ -331,17 +353,9 @@ async function downloadGeckodriver(): Promise<string> {
   const cacheKey = `geckodriver/${platform}`;
   const ext = os.platform() === 'win32' ? '.zip' : '.tar.gz';
 
-  // Check TTL: if we've resolved within the TTL window and the binary still
-  // exists, skip the GitHub API call.
-  const meta = readMetadata();
-  const cached = meta[cacheKey];
-  if (
-    cached &&
-    Date.now() - cached.timestamp < ttlMs() &&
-    fs.existsSync(cached.driverPath)
-  ) {
-    return cached.driverPath;
-  }
+  // Skip the GitHub API call when a fresh cached geckodriver is still on disk.
+  const cachedPath = readFreshCachedDriver(cacheKey);
+  if (cachedPath) return cachedPath;
 
   process.stderr.write('[craftdriver] Fetching latest geckodriver version…\n');
 
@@ -385,9 +399,7 @@ async function downloadGeckodriver(): Promise<string> {
   }
 
   // Refresh TTL record regardless of whether we downloaded a new version.
-  meta[cacheKey] = { version, driverPath: driverBin, timestamp: Date.now() };
-  writeMetadata(meta);
-
+  recordResolvedDriver(cacheKey, version, driverBin);
   return driverBin;
 }
 
@@ -424,15 +436,8 @@ export async function resolveChromeDriver(options?: {
   //    path writes it. TTL defaults to 24h, tunable via CRAFTDRIVER_DRIVER_TTL
   //    (0 disables). Mirrors the metadata record geckodriver already keeps.
   const cacheKey = `chromedriver/${cftPlatform()}`;
-  const meta = readMetadata();
-  const cached = meta[cacheKey];
-  if (
-    cached &&
-    Date.now() - cached.timestamp < ttlMs() &&
-    fs.existsSync(cached.driverPath)
-  ) {
-    return cached.driverPath;
-  }
+  const cachedPath = readFreshCachedDriver(cacheKey);
+  if (cachedPath) return cachedPath;
 
   // 5. Locally installed chromedriver npm package.
   const localBin = path.resolve(
@@ -469,8 +474,7 @@ export async function resolveChromeDriver(options?: {
   const driverPath = await downloadChromedriver(detected.version);
 
   // Refresh TTL record regardless of whether we downloaded a new binary.
-  meta[cacheKey] = { version: detected.version, driverPath, timestamp: Date.now() };
-  writeMetadata(meta);
+  recordResolvedDriver(cacheKey, detected.version, driverPath);
   return driverPath;
 }
 
@@ -502,15 +506,8 @@ export async function resolveFirefoxDriver(options?: {
   //    Explicit config (arg + env vars above) always wins. Same record and TTL
   //    that downloadGeckodriver() maintains; tunable via CRAFTDRIVER_DRIVER_TTL.
   const cacheKey = `geckodriver/${geckodriverPlatform()}`;
-  const meta = readMetadata();
-  const cached = meta[cacheKey];
-  if (
-    cached &&
-    Date.now() - cached.timestamp < ttlMs() &&
-    fs.existsSync(cached.driverPath)
-  ) {
-    return cached.driverPath;
-  }
+  const cachedPath = readFreshCachedDriver(cacheKey);
+  if (cachedPath) return cachedPath;
 
   // 5. Locally installed geckodriver npm package.
   const localBin = path.resolve(

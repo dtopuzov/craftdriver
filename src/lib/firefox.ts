@@ -1,5 +1,6 @@
 import { DriverService, type DriverServiceOptions } from './service.js';
 import { resolveFirefoxDriver } from './driverManager.js';
+import { FIREFOX_READINESS_TIMEOUT_MS } from './timing.js';
 
 export type FirefoxServiceOptions = Omit<DriverServiceOptions, 'command'> & {
   /**
@@ -35,7 +36,7 @@ export class FirefoxService extends DriverService {
       pathBase: '',
       readinessPath: '/status',
       // geckodriver can take a moment to spin up Marionette + start listening.
-      readinessTimeoutMs: rest.readinessTimeoutMs ?? 15000,
+      readinessTimeoutMs: rest.readinessTimeoutMs ?? FIREFOX_READINESS_TIMEOUT_MS,
       ...rest,
       args,
     });

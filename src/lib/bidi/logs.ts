@@ -5,6 +5,7 @@
 
 import type { BiDiConnection } from './connection.js';
 import type { BrowsingContext, LogEntry, LogLevel, RemoteValue, StackTrace } from './types.js';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../timing.js';
 
 export interface ConsoleMessage {
   type: 'console';
@@ -154,7 +155,7 @@ export class LogMonitor {
    */
   waitForConsole(
     predicate: (msg: ConsoleMessage) => boolean,
-    timeout = 30000
+    timeout = DEFAULT_NAVIGATION_TIMEOUT_MS
   ): Promise<ConsoleMessage> {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -177,7 +178,7 @@ export class LogMonitor {
    */
   waitForError(
     predicate?: (err: JavaScriptError) => boolean,
-    timeout = 30000
+    timeout = DEFAULT_NAVIGATION_TIMEOUT_MS
   ): Promise<JavaScriptError> {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {

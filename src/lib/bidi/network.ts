@@ -4,6 +4,7 @@
  */
 
 import type { BiDiConnection } from './connection.js';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '../timing.js';
 import type {
   BrowsingContext,
   InterceptPhase,
@@ -442,7 +443,7 @@ export class NetworkInterceptor {
     pattern: string | ((v: InterceptedRequest | InterceptedResponse) => boolean),
     opts?: { timeout?: number }
   ): Promise<InterceptedRequest | InterceptedResponse> {
-    const timeout = opts?.timeout ?? 30000;
+    const timeout = opts?.timeout ?? DEFAULT_NAVIGATION_TIMEOUT_MS;
     const matcher =
       typeof pattern === 'function'
         ? pattern

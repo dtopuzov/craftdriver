@@ -10,11 +10,12 @@ import type {
   BiDiResponse,
   BiDiEvent,
 } from './types.js';
+import { BIDI_TIMEOUT_MS, BIDI_RECONNECT_DELAY_MS } from '../timing.js';
 
 export type EventHandler = (params: Record<string, unknown>) => void;
 
 export interface ConnectionOptions {
-  /** Connection timeout in ms (default: 30000) */
+  /** Connection timeout in ms (default: {@link BIDI_TIMEOUT_MS}) */
   timeout?: number;
   /** Auto-reconnect on disconnect */
   autoReconnect?: boolean;
@@ -34,7 +35,7 @@ export class BiDiConnection {
 
   constructor(options: ConnectionOptions = {}) {
     this.options = {
-      timeout: options.timeout ?? 30000,
+      timeout: options.timeout ?? BIDI_TIMEOUT_MS,
       autoReconnect: options.autoReconnect ?? false,
     };
   }
@@ -71,7 +72,7 @@ export class BiDiConnection {
           this.connected = false;
           this.rejectAllPending(new Error('WebSocket connection closed'));
           if (this.options.autoReconnect && this.wsUrl) {
-            setTimeout(() => this.connect(this.wsUrl).catch(() => { }), 1000);
+            setTimeout(() => this.connect(this.wsUrl).catch(() => { }), BIDI_RECONNECT_DELAY_MS);
           }
         });
 
