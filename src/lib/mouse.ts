@@ -2,6 +2,7 @@ import type { Driver } from './driver.js';
 import { By } from './by.js';
 import { Key } from './keys.js';
 import { until } from './wait.js';
+import { DEFAULT_ELEMENT_TIMEOUT_MS } from './timing.js';
 
 export type MouseButton = 'left' | 'middle' | 'right';
 export type Point = { x: number; y: number };
@@ -19,7 +20,7 @@ export class Mouse {
   private async resolveElement(selector: string | By) {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     // Wait until element is attached and visible to improve click reliability
-    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: 5000 });
+    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: DEFAULT_ELEMENT_TIMEOUT_MS });
     return el;
   }
 

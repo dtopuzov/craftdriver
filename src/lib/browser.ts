@@ -4,6 +4,15 @@ import { FirefoxService } from './firefox.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
+import {
+  DEFAULT_ELEMENT_TIMEOUT_MS,
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
+  STATE_POLL_INTERVAL_MS,
+  NETWORK_IDLE_SETTLE_MS,
+  PORT_RELEASE_DELAY_MS,
+  BIDI_CONNECT_MAX_ATTEMPTS,
+  BIDI_CONNECT_BACKOFF_STEP_MS,
+} from './timing.js';
 import { ElementHandle } from './elementHandle.js';
 import { Locator } from './locator.js';
 import { expectSelector } from './expect.js';
@@ -340,7 +349,7 @@ export class Browser {
   private _emulation: EmulateOptions = {};
 
   /** Mutable browser-level defaults. Use setDefaultTimeout() / setDefaultNavigationTimeout() to change. */
-  private defaults = { timeout: 5000, navigationTimeout: 30000 };
+  private defaults = { timeout: DEFAULT_ELEMENT_TIMEOUT_MS, navigationTimeout: DEFAULT_NAVIGATION_TIMEOUT_MS };
 
   private constructor(private driver: Driver) {
     this.keyboard = new Keyboard(this.driver);
@@ -504,7 +513,7 @@ export class Browser {
     // Retry up to 8 times with increasing delays — Firefox may not have finished
     // binding its BiDi WebSocket yet (especially when a previous session just closed
     // on the same port, or the profile is still initialising).
-    const maxAttempts = 8;
+    const maxAttempts = BIDI_CONNECT_MAX_ATTEMPTS;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await session.connect(wsUrl, {
@@ -520,7 +529,7 @@ export class Browser {
       } catch (err) {
         if (attempt < maxAttempts) {
           // Back-off: 300ms, 600ms, 900ms, 1200ms …
-          await new Promise((r) => setTimeout(r, 300 * attempt));
+          await new Promise((r) => setTimeout(r, BIDI_CONNECT_BACKOFF_STEP_MS * attempt));
         } else {
           // All attempts failed; fall back to Classic-only mode.
           console.warn('BiDi connection failed after retries, using Classic WebDriver only:', err);
@@ -665,7 +674,7 @@ export class Browser {
     await this.driver.navigateTo(url);
     if (waitUntil === 'networkidle') {
       // Best-effort: Classic can't track network events; give it a short settle time
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
     }
   }
 
@@ -1055,7 +1064,7 @@ export class Browser {
         await this.bidiSession.network.waitForNetworkIdle({ timeout });
       }
       // Classic fallback: best-effort 500ms settle
-      else { await new Promise(r => setTimeout(r, 500)); }
+      else { await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS)); }
       return;
     }
 
@@ -1105,7 +1114,7 @@ export class Browser {
     while (Date.now() < deadline) {
       const readyState = await this.driver.executeScript<string>('return document.readyState', []);
       if (readyState === 'complete' || (target === 'interactive' && readyState === 'interactive')) return;
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
     throw new CraftdriverError(
       ErrorCode.TIMEOUT_WAITING_LOAD,
@@ -1150,7 +1159,7 @@ export class Browser {
     // Give the browser process a moment to fully release any ports (e.g. Firefox BiDi
     // WebSocket port 9222) before we kill the driver service. Without this pause, a
     // subsequent launch may see a 404 when connecting to the new session's WebSocket.
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, PORT_RELEASE_DELAY_MS));
     // Stop the underlying driver service (chromedriver / geckodriver)
     // so we don't leak processes between sessions.
     if (this._driverService) {
@@ -1433,7 +1442,7 @@ export class Browser {
           },
         };
       }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
 
     throw new Error(`waitForDownload() timed out after ${timeout}ms — no file appeared in ${dir}`);
@@ -1757,7 +1766,7 @@ export class Browser {
           this.getDefaultTimeout
         );
       }
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
     throw new Error(`waitForPage() timed out after ${timeout}ms — no new tab or popup appeared`);
   }
@@ -1943,10 +1952,10 @@ export class Browser {
       // `onContextTree` callback (with `initialContexts`) before `launch()`
       // returns, so no external caller can reach `_ensureTopLevelContextTracking()`
       // — and thus this arg-less path — before `connect()` has already subscribed.
-      // The `subscribe()` is kept (unlike the redundant ones removed elsewhere,
-      // see PERF-01) precisely because this branch's contract is "connect()'s
-      // subscribe may NOT have run yet"; dropping it would break that contract
-      // if a future refactor ever made the branch reachable.
+      // The `subscribe()` is kept (unlike the redundant ones dropped from the
+      // other context-tracking call sites) precisely because this branch's
+      // contract is "connect()'s subscribe may NOT have run yet"; dropping it
+      // would break that contract if a future refactor made the branch reachable.
       await conn
         .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
         .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });

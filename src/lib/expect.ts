@@ -2,6 +2,11 @@ import type { By } from './by.js';
 import type { Driver } from './driver.js';
 import { until } from './wait.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import {
+  ASSERTION_POLL_INTERVAL_MS,
+  ASSERTION_INNER_WAIT_CAP_MS,
+  DEFAULT_ELEMENT_TIMEOUT_MS,
+} from './timing.js';
 
 /** Context switcher for frame/window scoping — used by Frame and Page. */
 export type ContextSwitcher = { in: () => Promise<void>; out: () => Promise<void> };
@@ -36,7 +41,7 @@ function matchValue(actual: string, expected: string | RegExp): boolean {
   return actual === expected;
 }
 
-export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => number = () => 5000, contextSwitcher?: ContextSwitcher): ExpectApi {
+export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => number = () => DEFAULT_ELEMENT_TIMEOUT_MS, contextSwitcher?: ContextSwitcher): ExpectApi {
   function fail(message: string, callerFn?: Function, detail?: Record<string, unknown>): never {
     const error = new CraftdriverError(ErrorCode.EXPECT_MISMATCH, message, {
       detail: { selector: `${by.using}=${by.value}`, using: by.using, value: by.value, ...(detail ?? {}) },
@@ -57,7 +62,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     let last = '';
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const text = (await found.getText())?.trim?.() ?? '';
         last = text;
@@ -65,7 +70,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to have text ${exp} but got "${last}"`, toHaveText);
@@ -80,7 +85,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     let last = '';
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const text = (await found.getText())?.trim?.() ?? '';
         last = text;
@@ -88,7 +93,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to contain text ${exp} but got "${last}"`, toContainText);
@@ -103,7 +108,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     let last = '';
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const val = await found.getProperty('value');
         last = String(val ?? '');
@@ -111,7 +116,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to have value ${exp} but got "${last}"`, toHaveValue);
@@ -127,7 +132,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     let last: string | null = null;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         last = await found.getAttribute(name);
         if (value === undefined) {
@@ -139,7 +144,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     if (value === undefined) {
       fail(`Expected element ${by.using}(${by.value}) to have attribute "${name}" but it was not found`, toHaveAttribute);
@@ -157,7 +162,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     let last = '';
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const cls = await found.getAttribute('class');
         last = cls ?? '';
@@ -166,7 +171,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to have class "${className}" but got "${last}"`, toHaveClass);
   };
@@ -194,13 +199,13 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         if (await found.isEnabled()) return;
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to be enabled within ${timeout}ms`, toBeEnabled);
   };
@@ -210,13 +215,13 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         if (!(await found.isEnabled())) return;
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to be disabled within ${timeout}ms`, toBeDisabled);
   };
@@ -226,13 +231,13 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         if (await found.isSelected()) return;
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to be checked within ${timeout}ms`, toBeChecked);
   };
@@ -242,13 +247,13 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         if (!(await found.isSelected())) return;
       } catch {
         // retry
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to not be checked within ${timeout}ms`, toBeNotChecked);
   };
@@ -261,14 +266,14 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const text = (await found.getText())?.trim?.() ?? '';
         if (!matchValue(text, expected)) return;
       } catch {
         return; // element not found = text doesn't match
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to NOT have text ${exp}`, notToHaveText);
@@ -282,14 +287,14 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const text = (await found.getText())?.trim?.() ?? '';
         if (expected instanceof RegExp ? !expected.test(text) : !text.includes(expected)) return;
       } catch {
         return;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to NOT contain text ${exp}`, notToContainText);
@@ -303,14 +308,14 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const val = String(await found.getProperty('value') ?? '');
         if (!matchValue(val, expected)) return;
       } catch {
         return;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     const exp = expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
     fail(`Expected element ${by.using}(${by.value}) to NOT have value ${exp}`, notToHaveValue);
@@ -325,7 +330,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const attr = await found.getAttribute(name);
         if (value === undefined) {
@@ -336,7 +341,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         return;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     if (value === undefined) {
       fail(`Expected element ${by.using}(${by.value}) to NOT have attribute "${name}"`, notToHaveAttribute);
@@ -353,7 +358,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       try {
-        await driver.wait(until.elementExists(by), { timeout: Math.min(250, timeout) });
+        await driver.wait(until.elementExists(by), { timeout: Math.min(ASSERTION_INNER_WAIT_CAP_MS, timeout) });
         const found = await driver.findElement(by);
         const cls = await found.getAttribute('class') ?? '';
         const classes = cls.split(/\s+/);
@@ -361,7 +366,7 @@ export function expectSelector(driver: Driver, by: By, getDefaultTimeout: () => 
       } catch {
         return;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
     }
     fail(`Expected element ${by.using}(${by.value}) to NOT have class "${className}"`, notToHaveClass);
   };

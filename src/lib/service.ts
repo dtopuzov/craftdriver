@@ -4,6 +4,7 @@ import { WebDriverEndpoint } from './types.js';
 import net from 'net';
 import fs from 'fs';
 import path from 'path';
+import { DRIVER_READINESS_TIMEOUT_MS, DRIVER_READINESS_POLL_INTERVAL_MS } from './timing.js';
 
 export interface DriverServiceOptions {
   command: string;
@@ -45,7 +46,7 @@ export class DriverService {
       port: options.port, // undefined means auto-assign
       pathBase: options.pathBase ?? '',
       readinessPath: options.readinessPath ?? '/status',
-      readinessTimeoutMs: options.readinessTimeoutMs ?? 5000,
+      readinessTimeoutMs: options.readinessTimeoutMs ?? DRIVER_READINESS_TIMEOUT_MS,
       env: options.env,
     };
   }
@@ -129,7 +130,7 @@ export class DriverService {
       // Tight poll: the driver's /status endpoint comes up ~200ms after spawn,
       // so a short interval shaves the tail latency between "ready" and "we
       // notice". These are cheap localhost GETs.
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, DRIVER_READINESS_POLL_INTERVAL_MS));
     }
     throw new Error(
       `Driver service not ready at ${this.endpoint.hostname}:${this.endpoint.port} - ${String(lastErr)}`

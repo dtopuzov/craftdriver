@@ -3,6 +3,11 @@ import { FirefoxService } from './firefox.js';
 import { DriverService } from './service.js';
 import { Driver } from './driver.js';
 import { Capabilities } from './types.js';
+import {
+  FIREFOX_SESSION_MAX_ATTEMPTS,
+  CHROME_SESSION_MAX_ATTEMPTS,
+  SESSION_CREATE_BACKOFF_STEP_MS,
+} from './timing.js';
 
 export class Builder {
   private browserName: string | undefined;
@@ -48,7 +53,7 @@ export class Builder {
 
     // Firefox's Marionette interface may not be ready immediately after geckodriver
     // reports healthy. Retry session creation with back-off before giving up.
-    const maxAttempts = name === 'firefox' ? 4 : 1;
+    const maxAttempts = name === 'firefox' ? FIREFOX_SESSION_MAX_ATTEMPTS : CHROME_SESSION_MAX_ATTEMPTS;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -56,7 +61,7 @@ export class Builder {
       } catch (err) {
         lastErr = err;
         if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 500 * attempt));
+          await new Promise((r) => setTimeout(r, SESSION_CREATE_BACKOFF_STEP_MS * attempt));
         }
       }
     }

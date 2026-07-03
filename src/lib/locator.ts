@@ -6,7 +6,7 @@ import { expectSelector } from './expect.js';
 import type { ExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
-import { DEFAULT_POLL_INTERVAL_MS } from './wait.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
 
 export interface ActionOptions {
   timeout?: number;

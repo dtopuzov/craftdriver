@@ -19,6 +19,7 @@ import { until } from './wait.js';
 import type { WebElement } from './webelement.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
+import { DEFAULT_NAVIGATION_TIMEOUT_MS, STATE_POLL_INTERVAL_MS } from './timing.js';
 
 type LoadState = 'load' | 'domcontentloaded';
 
@@ -206,7 +207,7 @@ export class Frame {
     state: LoadState = 'load',
     opts?: { timeout?: number }
   ): Promise<void> {
-    const timeout = opts?.timeout ?? 30000;
+    const timeout = opts?.timeout ?? DEFAULT_NAVIGATION_TIMEOUT_MS;
 
     if (this.conn && this.bidiContextId) {
       const ctxId = this.bidiContextId;
@@ -241,7 +242,7 @@ export class Frame {
         if (readyState === 'complete' || (state === 'domcontentloaded' && readyState === 'interactive')) {
           return;
         }
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
       }
       throw new Error(`frame.waitForLoadState('${state}') timed out after ${timeout}ms`);
     } finally {
