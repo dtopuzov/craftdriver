@@ -146,6 +146,17 @@ export interface LaunchOptions {
    * Defaults to a temporary directory unique to this browser session.
    */
   downloadsDir?: string;
+  /**
+   * Extra command-line flags passed to the launched **browser** (appended to
+   * `goog:chromeOptions.args` for Chrome/Chromium, `moz:firefoxOptions.args`
+   * for Firefox). craftdriver sets no performance/behavior flags of its own by
+   * default — this is the opt-in for advanced tuning, e.g. shaving browser
+   * startup time. See the "Performance" section of `docs/driver-configuration.md`
+   * for a measured, recommended set. Note: these are *browser* flags, distinct
+   * from the *driver* (chromedriver/geckodriver) args on `ChromeService`/
+   * `FirefoxService`.
+   */
+  args?: string[];
 }
 
 /**
@@ -381,7 +392,7 @@ export class Browser {
 
     if (isChromeFamily) {
       const chromeOptions: Record<string, unknown> = {
-        args: isHeadless ? ['--headless=new'] : [],
+        args: [...(isHeadless ? ['--headless=new'] : []), ...(options.args ?? [])],
         prefs: {
           'download.default_directory': downloadsDir,
           'download.prompt_for_download': false,
@@ -424,6 +435,7 @@ export class Browser {
     } else if (isFirefox) {
       const firefoxArgs: string[] = [];
       if (isHeadless) firefoxArgs.push('-headless');
+      if (options.args?.length) firefoxArgs.push(...options.args);
       caps['moz:firefoxOptions'] = {
         args: firefoxArgs,
         prefs: {

@@ -114,6 +114,54 @@ but the direction holds):
 
 Run it yourself with `npm run bench -- launch-critical-path`.
 
+### Browser startup flags (advanced, opt-in)
+
+craftdriver launches the browser with **no performance flags of its own** — it
+stays unopinionated so it never silently changes browser behavior underneath
+you. If you want to experiment, you can pass extra browser command-line flags
+via the `args` launch option (appended to `goog:chromeOptions.args` for
+Chrome/Chromium, `moz:firefoxOptions.args` for Firefox):
+
+```typescript
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  args: [
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-background-networking',
+    '--disable-component-update',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--disable-sync',
+    '--metrics-recording-only',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--mute-audio',
+    '--no-service-autorun',
+    '--password-store=basic',
+    '--use-mock-keychain', // macOS: skip keychain access
+    '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
+  ],
+});
+```
+
+> `args` are **browser** flags. They are distinct from the **driver**
+> (chromedriver/geckodriver) args you'd pass via `chromeService` /
+> `firefoxService` below.
+
+**Set expectations honestly:** on a normal local machine this set moved
+`Browser.launch()` wall time by **~0.4% (≈8ms — noise)** in our measurements.
+Cold browser startup is dominated by unavoidable process/engine init; these
+flags mostly suppress *background* work (auto-updates, telemetry, background
+networking, sync) that happens after startup rather than on the launch critical
+path. So their real value is **determinism and avoiding intermittent stalls in
+CI / constrained environments** (no update popups, no background network
+calls), not raw local launch speed. If you adopt them, **measure on your own
+environment** — the payoff is environment-dependent, and some flags can change
+behavior (e.g. `--no-sandbox`, or `--disable-features=...` entries a page or
+fixture relies on).
+
 ## Pinning via code
 
 For tighter control (custom port, extra driver flags), pass a `ChromeService`
