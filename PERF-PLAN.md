@@ -78,9 +78,12 @@ Everything below is the current status, most items now resolved.
 5. **[PERF-02](./PERF-02.md)** — Firefox BiDi-connect retry-loop
    investigation. Only relevant if you use Firefox locally; Chrome
    unaffected. Slot in whenever.
-6. **[PERF-07](./PERF-07.md)** — driver/browser startup flags investigation
-   — the one remaining item that could still shave local launch time.
-   Lowest priority, unknown payoff.
+6. **[PERF-07](./PERF-07.md)** — ✅ **Researched.** A curated 16-flag browser
+   startup set moved launch by ~0.4% (≈8ms, noise) — browser process init
+   dominates; the flags suppress post-startup background work, not the launch
+   critical path. No default flags (craftdriver stays unopinionated); shipped
+   instead as an opt-in `args` launch option + honest docs for users who want
+   to try them (real value is CI determinism, not local speed).
 
 ## Deferred / not scheduled
 

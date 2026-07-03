@@ -1,5 +1,29 @@
 # PERF-07: Driver startup flags investigation
 
+## Status: ✅ Researched — negligible for launch speed; shipped as documented opt-in
+
+Measured (macOS, Chrome, headless, warm cache) a curated 16-flag startup set
+(`--no-first-run`, `--disable-background-networking`, `--disable-component-update`,
+`--use-mock-keychain`, `--disable-features=Translate,BackForwardCache,...`, etc.)
+against a no-flags baseline: `Browser.launch()` **2225ms → 2217ms (~0.4%, ≈8ms —
+noise).** Cold browser startup is dominated by unavoidable process/engine init;
+these flags mostly suppress *background* work (auto-updates, telemetry, sync,
+background networking) that runs after startup, not on the launch critical path.
+So there is **no meaningful local launch-speed win** — same "premise
+over-attributes cost" pattern as PERF-04/05.
+
+Per the maintainer's decision, craftdriver stays **unopinionated — no flags set
+by default.** Instead this shipped as an **opt-in passthrough**: a new
+`args?: string[]` launch option (appended to `goog:chromeOptions.args` /
+`moz:firefoxOptions.args`), documented in `docs/driver-configuration.md`
+→ Performance → "Browser startup flags", with the measured result stated
+honestly and the recommended set provided for users who want to try it (its
+real value is CI/constrained-environment determinism, not local speed).
+
+---
+
+_Original plan preserved below._
+
 ## Description
 
 Lowest priority item in this plan, kept mainly so it isn't lost. Question:
