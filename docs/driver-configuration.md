@@ -8,16 +8,23 @@ Craftdriver resolves the WebDriver binary through a chain — first match wins:
 | 2 | `CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` env var |
 | 3 | `CRAFTDRIVER_DRIVER_PATH` env var (generic fallback for either browser) |
 | 4 | Legacy/Selenium-compatible env vars: `CHROMEDRIVER_PATH`, `SE_CHROMEDRIVER` (chromedriver) or `GECKODRIVER_PATH`, `GECKODRIVER_FILEPATH`, `SE_GECKODRIVER` (geckodriver) |
-| 5 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
-| 6 | `chromedriver` / `geckodriver` on `PATH` |
-| 7 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
+| 5 | **Cached auto-resolution** — the path a previous auto-resolve settled on, reused within the `CRAFTDRIVER_DRIVER_TTL` window |
+| 6 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
+| 7 | `chromedriver` / `geckodriver` on `PATH` |
+| 8 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
 
-Downloaded drivers are cached in `~/.cache/craftdriver`. Only the driver
-binary is downloaded, never the browser itself. Caching differs by browser:
-chromedriver is pinned to the detected Chrome version and reused as long as
-that version doesn't change; geckodriver isn't version-pinned to Firefox, so
-it's re-checked against the latest GitHub release once per
-`CRAFTDRIVER_DRIVER_TTL` window regardless of your Firefox version.
+Downloaded drivers are cached in `~/.cache/craftdriver`, and so is the
+*resolution itself* — which driver path to use. Within the
+`CRAFTDRIVER_DRIVER_TTL` window (default 24 h), craftdriver reuses the
+resolved path directly and skips the system-browser probes it would
+otherwise run on **every** launch: launching the browser binary just to read
+its version string, and a `PATH` lookup. Both are blocking calls, so caching
+the resolution measurably speeds up launch — most noticeably when several
+browsers start in parallel (see [Performance](#performance)). After the TTL
+expires, or the cache is cleared (e.g. after a browser upgrade), the driver
+is re-resolved and re-downloaded if needed. Only the driver binary is ever
+downloaded, never the browser itself. Explicit configuration (steps 1–4)
+always takes precedence over the cache.
 
 ## Environment variables
 
@@ -28,7 +35,7 @@ it's re-checked against the latest GitHub release once per
 | `CRAFTDRIVER_DRIVER_PATH` | Generic fallback path (either browser) | — |
 | `CRAFTDRIVER_CACHE_DIR` | Directory for cached driver downloads | `~/.cache/craftdriver` |
 | `CRAFTDRIVER_OFFLINE` | Set to `1` to disable all network calls | — |
-| `CRAFTDRIVER_DRIVER_TTL` | Geckodriver freshness check interval (seconds) | `86400` (24 h) |
+| `CRAFTDRIVER_DRIVER_TTL` | Driver-resolution cache lifetime, in seconds (both browsers). `0` disables the cache | `86400` (24 h) |
 
 ## Examples
 
@@ -39,7 +46,7 @@ CRAFTDRIVER_CHROMEDRIVER_PATH=/usr/bin/chromedriver npm test
 # Pin a specific geckodriver
 CRAFTDRIVER_GECKODRIVER_PATH=/usr/local/bin/geckodriver npm test
 
-# Never make a network call (requires a local driver to exist in steps 1–5)
+# Never make a network call (requires a local driver to exist in steps 1–7)
 CRAFTDRIVER_OFFLINE=1 npm test
 
 # Change the cache location
@@ -48,6 +55,44 @@ CRAFTDRIVER_CACHE_DIR=/tmp/my-driver-cache npm test
 # Re-check geckodriver more frequently (every hour instead of 24 h)
 CRAFTDRIVER_DRIVER_TTL=3600 npm test
 ```
+
+## Performance
+
+Most of the time `Browser.launch()` spends is the browser process starting up
+(that's the same for WebDriver Classic and BiDi and there's little a client
+library can do about it). The part craftdriver *does* control is resolving and
+starting the driver, and it's tuned to stay out of the way:
+
+- **Driver resolution is cached** (see above). Without a cache, resolving a
+  chromedriver means launching your Chrome binary just to read its version
+  string — a blocking call of a few hundred milliseconds on *every* launch.
+  The TTL cache skips that after the first launch.
+- **Point at a driver explicitly to skip resolution entirely.** If you set
+  `CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` (or pass
+  `chromeService: new ChromeService({ binaryPath })`), craftdriver uses it
+  directly — no version detection, no `PATH` lookup, no cache read. This is
+  the fastest and most deterministic option and is recommended for CI:
+
+  ```bash
+  CRAFTDRIVER_CHROMEDRIVER_PATH=/opt/chromedriver/chromedriver npm test
+  ```
+
+- **Parallel runs benefit the most.** The resolution work that the cache (or an
+  explicit path) removes was synchronous and blocked the event loop, so it
+  serialized when several browsers were launched at once. Removing it lets
+  concurrent `Browser.launch()` calls overlap their startup.
+
+Indicative numbers from the `tests/perf/launch-critical-path.perf.ts`
+benchmark (macOS, Chrome, headless — absolute values are machine-dependent,
+but the direction holds):
+
+| Scenario | Before | After |
+|---|---|---|
+| `Browser.launch()` (BiDi) | ~2760ms | ~2240ms |
+| `Browser.launch()` (Classic) | ~2400ms | ~1860ms |
+| 4 browsers launched concurrently | ~6450ms | ~5130ms |
+
+Run it yourself with `npm run bench -- launch-critical-path`.
 
 ## Pinning via code
 

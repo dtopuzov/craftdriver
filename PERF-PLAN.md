@@ -37,11 +37,21 @@ the file set for reference, not on the active path below.
    defensive code whose subscribe is load-bearing *if* the branch ever runs.
    Verified green on Chrome + Firefox against the existing suites that
    exercise all three fixed paths.
-2. **[PERF-05](./PERF-05.md)** — Phase 5a, background BiDi connect in
-   `Browser.launch()`. The connect-time gap is quantified (~300–500ms),
-   the design questions are already scoped, and the "wait until validated
-   in the wild" condition from the original notes is now satisfied — we
-   have real-app numbers.
+2. **[PERF-05](./PERF-05.md)** — ❌ **Not implemented; premise measured
+   wrong.** Phase-level timing showed the thing it wanted to background
+   (`initBiDi()` = WS + getTree + subscribe) is only **~35ms**, not the
+   ~300–500ms the plan assumed. The real BiDi/Classic launch gap lives in
+   `Driver.create()` (chromedriver enabling BiDi during New Session) and is
+   browser-side, not backgroundable. **The actual launch win was elsewhere
+   and is shipped:** driver-resolution was relaunching Chrome via a blocking
+   `spawnSync` to read its version on *every* launch (~340ms) plus a
+   redundant `--version` spawn (~150ms) and coarse readiness polling. Caching
+   resolution + dropping the redundant spawns cut `service.start()` from
+   ~720ms → ~180ms and total launch by **~530ms for both BiDi and Classic**
+   (launch-only: BiDi 2763→2235ms, Classic 2395→1860ms), and removed the
+   blocking spawns that stalled parallel launches. Verified by
+   `tests/perf/launch-critical-path.perf.ts`. See PERF-05.md for the full
+   measurement.
 3. **[PERF-06](./PERF-06.md)** — Phase 5b, rename/simplify `enableBiDi`.
    Explicitly sequenced after PERF-05 lands; also a breaking public-API
    decision — this file presents options, doesn't pick one for you.
