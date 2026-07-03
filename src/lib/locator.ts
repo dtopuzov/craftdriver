@@ -6,6 +6,7 @@ import { expectSelector } from './expect.js';
 import type { ExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './wait.js';
 
 export interface ActionOptions {
   timeout?: number;
@@ -148,7 +149,7 @@ export class Locator {
       } catch (e) {
         lastError = e;
       }
-      await new Promise<void>((r) => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
     }
     const selector = `${this.by.using}=${this.by.value}`;
     if (everMatched) {
@@ -184,7 +185,7 @@ export class Locator {
       } catch (e) {
         lastError = e;
       }
-      await new Promise<void>((r) => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
     }
     const selector = `${this.by.using}=${this.by.value}`;
     throw new CraftdriverError(
@@ -328,7 +329,7 @@ export class Locator {
         }
         if (!anyVisible) return;
       }
-      await new Promise<void>((r) => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
     }
     const selector = `${this.by.using}=${this.by.value}`;
     throw new CraftdriverError(
