@@ -1,5 +1,51 @@
 # PERF-04: Auto-wait single-round-trip collapse
 
+## Status: ❌ Not worth doing — premise measured false for local WebDriver
+
+The premise is that replacing the per-poll `findElement` + `isDisplayed`
+(2 round trips) with a single `execute/sync` script (1 round trip) is faster
+because it cuts round trips. **Measured on localhost (Chrome, keep-alive
+HTTP), that's false — a single `execute/sync` round trip costs as much as or
+more than the two element commands it replaces**, because `execute/sync` is a
+much heavier chromedriver command (script (de)serialization + execution
+context) than `POST /element` / `GET .../displayed`:
+
+| Operation | Round trips | Median |
+|---|---|---|
+| `isVisible()` = `findElement` + `isDisplayed` | 2 | **10.9ms** |
+| `evaluate('return 1')` | 1 | 9.3ms |
+| collapsed visibility script (querySelector + rect check) | 1 | **12.2ms** |
+
+So the collapse is **~−1.3ms — slightly slower**, not faster.
+
+And for the poll-heavy case (element appears after a delay), the wait is
+dominated by the **100ms poll interval**, not round trips: an element ready at
+250ms takes ~383ms to click; ready at 450ms takes ~497ms. The 2→1 round-trip
+collapse is ~0.3% of that — invisible.
+
+The plan's core assumption (round-trip *count* drives cost) holds for **remote
+WebDriver / Selenium Grid**, where each round trip is 20–100ms of network and
+cutting one genuinely helps. craftdriver is local-first (spawns its own
+driver), so that benefit doesn't apply to the target use case. Combined with
+this being the **highest-risk item in the plan** (three poll loops to unify,
+novel nested-locator scoping, error-semantics changes touching every public
+method), the risk/reward is clearly negative. Not implemented.
+
+**The one real (small) lever the measurement exposes** is the 100ms
+element-wait poll interval itself (`wait.ts:26/30`, and the hand-rolled loops
+in `locator.ts`). Reducing it would speed up waits on dynamically-appearing
+elements by up to ~50–75ms each — at the cost of more polling round trips
+during waits. That's a simple, low-risk, *separate* change (one constant), not
+the round-trip collapse this item describes; pursue it on its own merits if
+dynamic-wait latency proves to matter, but it does nothing for the common
+already-present-element interaction (which hits on the first poll with no
+sleep).
+
+---
+
+_Original plan (premise now known to be false for local WebDriver) preserved
+below for reference._
+
 ## Description
 
 **This item's scope is ~2-3x bigger than originally documented — read this

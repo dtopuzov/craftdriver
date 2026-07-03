@@ -55,13 +55,19 @@ the file set for reference, not on the active path below.
 3. **[PERF-06](./PERF-06.md)** — Phase 5b, rename/simplify `enableBiDi`.
    Explicitly sequenced after PERF-05 lands; also a breaking public-API
    decision — this file presents options, doesn't pick one for you.
-4. **[PERF-04](./PERF-04.md)** — auto-wait single-round-trip collapse.
-   Verification found this is ~2–3x bigger in scope than originally
-   documented (3 independent poll loops, not 1) and the highest-risk item
-   here (hot path touching nearly every public method). Do after the
-   lower-risk items above, and only after adding the poll-heavy benchmark
-   the file calls for. This is the item that most directly makes every
-   `click()`/`fill()`/`find()` call faster.
+4. **[PERF-04](./PERF-04.md)** — ❌ **Not worth doing; premise measured
+   false for local WebDriver.** Collapsing `findElement`+`isDisplayed`
+   (2 round trips) into one `execute/sync` script does not help locally —
+   a single `execute/sync` round trip (~12ms) costs as much as or more than
+   the two element commands it replaces (~11ms), because script execution is
+   a heavier chromedriver command than simple element lookups. The
+   poll-heavy case is dominated by the 100ms poll interval, not round trips.
+   The premise only holds for remote/Grid WebDriver (high per-round-trip
+   network latency), which isn't craftdriver's local-first use case. Highest
+   risk in the plan for a nil-to-negative local return. The one small real
+   lever it exposes — reducing the 100ms element-wait poll interval — is a
+   separate, low-risk one-liner (helps only dynamically-appearing-element
+   waits). See PERF-04.md for the measurements.
 5. **[PERF-02](./PERF-02.md)** — Firefox BiDi-connect retry-loop
    investigation. Independent of everything else; Chrome numbers aren't
    affected either way. Slot in whenever.
