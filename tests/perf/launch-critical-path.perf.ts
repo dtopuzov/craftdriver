@@ -7,12 +7,11 @@
  * includes `Browser.launch()` in the timed window and uses a FRESH browser
  * every iteration.
  *
- * It was written to evaluate PERF-05 (background BiDi connect) and instead
- * showed that the BiDi handshake is ~35ms — not the launch bottleneck. The
- * real launch cost was driver resolution (relaunching the browser via a
- * blocking spawnSync to read its version on every launch). This benchmark now
- * backs that fix: caching driver resolution cut launch by ~530ms for both BiDi
- * and Classic. See PERF-05.md and docs/driver-configuration.md.
+ * It surfaced that the BiDi handshake is only ~35ms — not the launch
+ * bottleneck. The real launch cost was driver resolution (relaunching the
+ * browser via a blocking spawnSync to read its version on every launch). This
+ * benchmark backs that fix: caching driver resolution cut launch by ~530ms for
+ * both BiDi and Classic. See docs/driver-configuration.md → Performance.
  *
  * Two metrics:
  *   - launch-only:      wall time of `Browser.launch()` alone.
@@ -54,7 +53,7 @@ async function coldCriticalPath(enableBiDi: boolean, baseUrl: string): Promise<n
   return elapsed;
 }
 
-describe('Launch critical-path benchmark (PERF-05)', () => {
+describe('Launch critical-path benchmark', () => {
   it(
     'launch-only: Browser.launch() wall time, BiDi vs Classic',
     async () => {
