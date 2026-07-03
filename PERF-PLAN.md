@@ -10,24 +10,26 @@ Description section for the file:line evidence.
 
 ## Where things stand
 
-Shipped and validated this session: classic-first default navigation,
-batched `BiDiSession.connect()` (6 round trips → 1), lazy log capture,
-kept-eager network subscription (A/B tested, not guessed), HTTP keep-alive.
-Result: BiDi/Classic ratio **1.12x → ~1.05–1.09x** on synthetic example
-pages, **1.17–1.19x** on a real Postgres-backed app — down from the
-original issue's 1.7x regression. `tests/perf/bidi-vs-classic.perf.ts`,
-`tests/perf/registration-shape.perf.ts`, and
-`tests/perf/realapp/registration-easymath.perf.ts` are the benchmarks that
-back these numbers; run with `npm run bench` / `npm run bench:realapp`.
+Shipped and validated: classic-first default navigation, batched
+`BiDiSession.connect()` (6 round trips → 1), lazy log capture, kept-eager
+network subscription (A/B tested), HTTP keep-alive — got the BiDi/Classic
+per-command ratio from the issue's 1.7x regression down to ~1.05–1.09x.
 
-Everything below is what's left, re-verified and re-prioritized.
+Then, the biggest concrete win: **driver-resolution caching cut
+`Browser.launch()` by ~530ms for both BiDi and Classic** (BiDi 2763→2235ms,
+Classic 2395→1860ms) by eliminating a blocking `spawnSync` that relaunched the
+browser to read its version on every launch. Also shipped: default auto-wait
+poll interval 100ms→25ms (helps dynamic-element waits ~60–87ms). Benchmarks:
+`tests/perf/bidi-vs-classic.perf.ts`, `tests/perf/launch-critical-path.perf.ts`
+(`npm run bench`).
+
+**Usage context:** local-only (no remote/Grid/BrowserStack), so any item whose
+benefit is remote-only (high per-round-trip network latency) is out — this is
+why PERF-04 was dropped.
+
+Everything below is the current status, most items now resolved.
 
 ## Priority order
-
-**[PERF-03](./PERF-03.md) is deprioritized** — it speeds up test-suite
-wall-clock time (test-authoring/infrastructure), not any automation
-command's speed, which is explicitly not the current interest. Left in
-the file set for reference, not on the active path below.
 
 1. **[PERF-01](./PERF-01.md)** — ✅ **Shipped.** BiDi duplicate-subscription
    cleanup. Removed the 3 genuinely-redundant `session.subscribe()` round
@@ -52,9 +54,11 @@ the file set for reference, not on the active path below.
    blocking spawns that stalled parallel launches. Verified by
    `tests/perf/launch-critical-path.perf.ts`. See PERF-05.md for the full
    measurement.
-3. **[PERF-06](./PERF-06.md)** — Phase 5b, rename/simplify `enableBiDi`.
-   Explicitly sequenced after PERF-05 lands; also a breaking public-API
-   decision — this file presents options, doesn't pick one for you.
+3. **[PERF-06](./PERF-06.md)** — ❌ **Not applicable.** Predicated on PERF-05
+   giving BiDi/Classic launch parity so `enableBiDi` stops being a speed
+   decision. No parity exists (BiDi launch ~375ms slower — browser-side BiDi
+   mapper, not backgroundable), so `enableBiDi: false` stays a genuine
+   launch-speed escape hatch and must not be simplified away. Moot.
 4. **[PERF-04](./PERF-04.md)** — ❌ **Not worth doing; premise measured
    false for local WebDriver.** Collapsing `findElement`+`isDisplayed`
    (2 round trips) into one `execute/sync` script does not help locally —
@@ -65,14 +69,18 @@ the file set for reference, not on the active path below.
    The premise only holds for remote/Grid WebDriver (high per-round-trip
    network latency), which isn't craftdriver's local-first use case. Highest
    risk in the plan for a nil-to-negative local return. The one small real
-   lever it exposes — reducing the 100ms element-wait poll interval — is a
-   separate, low-risk one-liner (helps only dynamically-appearing-element
-   waits). See PERF-04.md for the measurements.
+   lever it exposed — reducing the 100ms element-wait poll interval — was
+   ✅ **shipped separately** (default now 25ms, `DEFAULT_POLL_INTERVAL_MS` in
+   `wait.ts`, shared by `locator.ts`). See PERF-04.md for the measurements.
+
+### Still open (small, local-relevant, investigative)
+
 5. **[PERF-02](./PERF-02.md)** — Firefox BiDi-connect retry-loop
-   investigation. Independent of everything else; Chrome numbers aren't
-   affected either way. Slot in whenever.
-6. **[PERF-07](./PERF-07.md)** — driver startup flags investigation.
-   Lowest priority, do last.
+   investigation. Only relevant if you use Firefox locally; Chrome
+   unaffected. Slot in whenever.
+6. **[PERF-07](./PERF-07.md)** — driver/browser startup flags investigation
+   — the one remaining item that could still shave local launch time.
+   Lowest priority, unknown payoff.
 
 ## Deferred / not scheduled
 
