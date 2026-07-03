@@ -414,7 +414,27 @@ export async function resolveChromeDriver(options?: {
     if (p && fs.existsSync(p)) return p;
   }
 
-  // 4. Locally installed chromedriver npm package.
+  // 4. Auto-resolution cache. Once we've auto-resolved a chromedriver (step 7
+  //    below), reuse it for a TTL window instead of re-probing PATH (a blocking
+  //    `which` spawn, ~80ms) and re-launching Chrome to read its version
+  //    (`detectBrowserVersion`, a blocking spawnSync, ~340ms) on every single
+  //    Browser.launch(). Both stall the event loop, which is especially costly
+  //    when several browsers launch in parallel. Explicit config (the arg + env
+  //    vars checked above) always wins over this cache; only the auto-download
+  //    path writes it. TTL defaults to 24h, tunable via CRAFTDRIVER_DRIVER_TTL
+  //    (0 disables). Mirrors the metadata record geckodriver already keeps.
+  const cacheKey = `chromedriver/${cftPlatform()}`;
+  const meta = readMetadata();
+  const cached = meta[cacheKey];
+  if (
+    cached &&
+    Date.now() - cached.timestamp < ttlMs() &&
+    fs.existsSync(cached.driverPath)
+  ) {
+    return cached.driverPath;
+  }
+
+  // 5. Locally installed chromedriver npm package.
   const localBin = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '../..',
@@ -422,12 +442,12 @@ export async function resolveChromeDriver(options?: {
   );
   if (fs.existsSync(localBin)) return localBin;
 
-  // 5. PATH probe (skipped when CRAFTDRIVER_SKIP_PATH_PROBE is set, e.g. in
+  // 6. PATH probe (skipped when CRAFTDRIVER_SKIP_PATH_PROBE is set, e.g. in
   //    integration tests that need to exercise the auto-download path even on
   //    systems where chromedriver is already installed).
   if (!process.env.CRAFTDRIVER_SKIP_PATH_PROBE && commandOnPath('chromedriver')) return 'chromedriver';
 
-  // 6. Offline guard.
+  // 7. Offline guard.
   if (process.env.CRAFTDRIVER_OFFLINE) {
     throw new Error(
       'CRAFTDRIVER_OFFLINE is set and no chromedriver was found.\n' +
@@ -435,7 +455,8 @@ export async function resolveChromeDriver(options?: {
     );
   }
 
-  // 7. Detect system Chrome + download matching driver from CfT.
+  // 8. Detect system Chrome + download matching driver from CfT, then record
+  //    the result in the auto-resolution cache read at step 4.
   const p = os.platform() as SupportedPlatform;
   const candidates = CHROME_CANDIDATES[p] ?? ['google-chrome'];
   const detected = detectBrowserVersion(candidates);
@@ -445,7 +466,12 @@ export async function resolveChromeDriver(options?: {
       'Install Chrome, or set CRAFTDRIVER_DRIVER_PATH to a local chromedriver binary.',
     );
   }
-  return downloadChromedriver(detected.version);
+  const driverPath = await downloadChromedriver(detected.version);
+
+  // Refresh TTL record regardless of whether we downloaded a new binary.
+  meta[cacheKey] = { version: detected.version, driverPath, timestamp: Date.now() };
+  writeMetadata(meta);
+  return driverPath;
 }
 
 /** Resolves the path to a geckodriver binary, downloading if necessary. */
@@ -469,7 +495,24 @@ export async function resolveFirefoxDriver(options?: {
     if (p && fs.existsSync(p)) return p;
   }
 
-  // 4. Locally installed geckodriver npm package.
+  // 4. Auto-resolution cache. Once geckodriver has been auto-resolved (step 8
+  //    below writes this record), reuse it for a TTL window instead of probing
+  //    PATH (a blocking `which` spawn) and re-detecting Firefox on every
+  //    Browser.launch() — both stall the event loop and hurt parallel launches.
+  //    Explicit config (arg + env vars above) always wins. Same record and TTL
+  //    that downloadGeckodriver() maintains; tunable via CRAFTDRIVER_DRIVER_TTL.
+  const cacheKey = `geckodriver/${geckodriverPlatform()}`;
+  const meta = readMetadata();
+  const cached = meta[cacheKey];
+  if (
+    cached &&
+    Date.now() - cached.timestamp < ttlMs() &&
+    fs.existsSync(cached.driverPath)
+  ) {
+    return cached.driverPath;
+  }
+
+  // 5. Locally installed geckodriver npm package.
   const localBin = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     '../..',
@@ -477,10 +520,10 @@ export async function resolveFirefoxDriver(options?: {
   );
   if (fs.existsSync(localBin)) return localBin;
 
-  // 5. PATH probe.
+  // 6. PATH probe.
   if (commandOnPath('geckodriver')) return 'geckodriver';
 
-  // 6. Offline guard.
+  // 7. Offline guard.
   if (process.env.CRAFTDRIVER_OFFLINE) {
     throw new Error(
       'CRAFTDRIVER_OFFLINE is set and no geckodriver was found.\n' +
@@ -488,7 +531,10 @@ export async function resolveFirefoxDriver(options?: {
     );
   }
 
-  // 7. Download latest geckodriver from GitHub releases.
+  // 8. Detect system Firefox (informational only) + download latest
+  //    geckodriver from GitHub releases, which records the auto-resolution
+  //    cache read at step 4. Only reached on a cold cache, so the detection
+  //    spawn no longer runs on the common warm path.
   const p = os.platform() as SupportedPlatform;
   const candidates = FIREFOX_CANDIDATES[p] ?? ['firefox'];
   const detected = detectBrowserVersion(candidates);

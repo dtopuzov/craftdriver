@@ -2,6 +2,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { HttpClient } from './http.js';
 import { WebDriverEndpoint } from './types.js';
 import net from 'net';
+import fs from 'fs';
+import path from 'path';
 
 export interface DriverServiceOptions {
   command: string;
@@ -82,7 +84,16 @@ export class DriverService {
   }
 
   protected async ensureBinaryAvailable(): Promise<void> {
-    // Basic check: try "command --version" quickly
+    // When the command is an absolute path that exists, the driver resolver
+    // (resolveChromeDriver / resolveFirefoxDriver) has already located and
+    // validated it — skip the extra `<driver> --version` spawn. That spawn
+    // launches the driver binary and costs ~150ms per Browser.launch() while
+    // blocking the event loop (which hurts parallel launches). A broken binary
+    // still surfaces a clear error from the real `--port` spawn below.
+    if (path.isAbsolute(this.opts.command) && fs.existsSync(this.opts.command)) {
+      return;
+    }
+    // Bare command name (e.g. resolved from PATH): confirm it runs.
     await new Promise<void>((resolve, reject) => {
       const check = spawn(this.opts.command, ['--version'], {
         stdio: ['ignore', 'ignore', 'ignore'],
@@ -115,7 +126,10 @@ export class DriverService {
       } catch (e) {
         lastErr = e;
       }
-      await new Promise((r) => setTimeout(r, 100));
+      // Tight poll: the driver's /status endpoint comes up ~200ms after spawn,
+      // so a short interval shaves the tail latency between "ready" and "we
+      // notice". These are cheap localhost GETs.
+      await new Promise((r) => setTimeout(r, 25));
     }
     throw new Error(
       `Driver service not ready at ${this.endpoint.hostname}:${this.endpoint.port} - ${String(lastErr)}`

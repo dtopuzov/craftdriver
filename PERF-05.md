@@ -1,5 +1,46 @@
 # PERF-05: Phase 5a — background BiDi connect in `Browser.launch()`
 
+## Status: ❌ Not implemented — premise measured wrong; superseded by driver-resolution caching
+
+This item assumed the ~300–500ms BiDi/Classic launch gap was the WebSocket
+connect + `getTree` + `subscribe` work that `Browser.launch()` awaits, and
+that backgrounding it would reclaim that time. **Direct phase-level
+measurement (macOS, Chrome, headless) shows that assumption is false:**
+
+| Launch phase | BiDi | Classic |
+|---|---|---|
+| `service.start()` (spawn chromedriver + resolve driver) | ~720ms | ~720ms |
+| `Driver.create()` (New Session — Chrome actually launches) | ~2000ms | ~1550ms |
+| `initBiDi()` (**what PERF-05 would background**: WS + getTree + subscribe) | **~35ms** | — |
+
+The thing PERF-05 proposed to move off the critical path is only **~35ms**.
+The real BiDi/Classic gap (~450ms) lives inside `Driver.create()` — it's
+chromedriver enabling BiDi (the BiDi mapper) during the New Session command,
+which is browser/driver-side and happens *before* we even have a driver
+object, so it cannot be backgrounded. Backgrounding `initBiDi()` would buy
+~35ms in exchange for a tri-state rewrite across ~30 call sites plus the
+sync `network`/`logs` getter and `activePage()` redesigns — a bad trade.
+
+**What actually moved launch time** was elsewhere and is now shipped (see
+`docs/driver-configuration.md` + the driver-resolution changes): the driver
+resolver was relaunching Chrome via a blocking `spawnSync` on *every* launch
+just to read its version string (~340ms), plus a redundant `chromedriver
+--version` spawn (~150ms) and coarse readiness polling. Caching driver
+resolution and dropping the redundant spawns cut craftdriver-controlled
+launch overhead (`service.start()`) from ~720ms to ~180ms for **both** BiDi
+and Classic — a real, general win, verified by
+`tests/perf/launch-critical-path.perf.ts`. That is the opposite trade from
+PERF-05: bigger payoff, near-zero risk, and it helps parallel launches by
+removing the blocking spawns that stalled the event loop.
+
+If a future need arises to shave the residual ~35ms `initBiDi()`, revisit
+then — but it is not worth the correctness risk today.
+
+---
+
+_Original plan (premise now known to be incorrect) preserved below for
+reference._
+
 ## Description
 
 `Browser.launch()` still fully blocks on the complete BiDi connect
