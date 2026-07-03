@@ -10,20 +10,23 @@
 // ── Auto-wait / retry poll intervals ─────────────────────────────────────────
 
 /**
- * How often the element auto-wait machinery re-checks its condition: element
- * visibility/existence waits and `Locator` resolution loops. The first check
- * always runs immediately, so a condition that is already satisfied never pays
- * this interval — it only affects genuine waits on dynamically-appearing state.
+ * Base cadence for all auto-wait retry loops. Kept short so a condition that
+ * flips true mid-interval is noticed quickly rather than up to a full interval
+ * late. The first check of every loop runs immediately, so conditions that are
+ * already satisfied never pay it — it only affects genuine waits. Round trips
+ * to a local driver are cheap (~a few ms), so polling this often is fine.
+ *
+ * Used for element visibility/existence waits and `Locator` resolution.
  */
 export const DEFAULT_POLL_INTERVAL_MS = 25;
 
 /**
- * How often `expect(...)` assertion retries re-check their matcher. Coarser
- * than {@link DEFAULT_POLL_INTERVAL_MS} because each attempt does more work
- * (resolve element + read a property + evaluate the matcher), so polling it as
- * aggressively as bare visibility buys little and adds load.
+ * How often `expect(...)` assertion retries re-check their matcher (text,
+ * value, class, …). Same responsive cadence as {@link DEFAULT_POLL_INTERVAL_MS}
+ * so an assertion that becomes true shortly after a failed check passes almost
+ * immediately instead of waiting out a long interval.
  */
-export const ASSERTION_POLL_INTERVAL_MS = 100;
+export const ASSERTION_POLL_INTERVAL_MS = 25;
 
 /** Poll interval for the driver service's `/status` readiness check. */
 export const DRIVER_READINESS_POLL_INTERVAL_MS = 25;
@@ -31,15 +34,21 @@ export const DRIVER_READINESS_POLL_INTERVAL_MS = 25;
 /**
  * Poll interval for state that changes at process/OS speed rather than DOM
  * speed: Classic `document.readyState`, the Classic `waitForPage`
- * window-handle fallback, and download-file polling. Deliberately coarser than
- * {@link DEFAULT_POLL_INTERVAL_MS} — polling these faster buys nothing.
+ * window-handle fallback, and download-file polling. Kept at the same 25ms
+ * cadence for responsiveness — these checks (a script eval, a window-handle
+ * list, an `fs.stat`) are cheap enough to run this often.
  */
-export const STATE_POLL_INTERVAL_MS = 100;
+export const STATE_POLL_INTERVAL_MS = 25;
 
 /**
- * Upper bound on the inner `elementExists` wait inside an `expect(...)`
- * assertion, so a single attempt cannot consume the whole assertion budget
- * before the outer retry loop gets to re-evaluate the matcher.
+ * Per-attempt cap on how long one `expect(...)` retry waits for the element to
+ * *exist* before looping back to re-run the whole matcher. This does NOT govern
+ * how fast an assertion re-checks — the matcher is re-evaluated every
+ * {@link ASSERTION_POLL_INTERVAL_MS}, and an element that already exists returns
+ * from the existence wait immediately. Existence itself is polled at
+ * {@link DEFAULT_POLL_INTERVAL_MS} inside this window, so a slow-to-appear
+ * element is still caught within ~25ms; the cap only bounds a single attempt so
+ * the outer loop keeps its cadence and honours the overall timeout.
  */
 export const ASSERTION_INNER_WAIT_CAP_MS = 250;
 
