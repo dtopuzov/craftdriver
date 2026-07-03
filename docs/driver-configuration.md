@@ -80,7 +80,27 @@ starting the driver, and it's tuned to stay out of the way:
 - **Parallel runs benefit the most.** The resolution work that the cache (or an
   explicit path) removes was synchronous and blocked the event loop, so it
   serialized when several browsers were launched at once. Removing it lets
-  concurrent `Browser.launch()` calls overlap their startup.
+  concurrent `Browser.launch()` calls overlap their startup (measured ~17–20%
+  faster wall time for a batch of concurrent launches).
+
+### Concurrency and oversubscription
+
+Once resolution is out of the way, the rest of launch time is the browser
+process starting — and that is **CPU-bound**. Starting many browsers at once
+on a machine with fewer CPU cores oversubscribes the CPU, and each browser's
+startup slows down roughly in proportion. On an 8-core machine, for example, a
+single launch is ~2s but 20 simultaneous launches take ~25s *each* (they still
+finish sooner in aggregate than launching serially, just with diminishing
+returns). This is not a craftdriver limitation — it's the browser competing for
+CPU — and no client-side change removes it.
+
+Practical guidance for parallel test suites (e.g. Vitest / Jest / Playwright
+Test): **cap worker concurrency at roughly the number of CPU cores.** More
+workers than cores mostly adds launch latency, and a launch that is merely slow
+under heavy load can trip a short per-test/hook timeout and look like a hang.
+With Vitest, set `maxWorkers` (or `poolOptions`) accordingly; a generous
+`hookTimeout` for the `beforeAll` that launches the browser also helps on
+loaded CI runners.
 
 Indicative numbers from the `tests/perf/launch-critical-path.perf.ts`
 benchmark (macOS, Chrome, headless — absolute values are machine-dependent,
