@@ -63,6 +63,8 @@ export interface BrowserContextHooks {
   getNetwork: () => NetworkInterceptor;
   /** Returns the engine name, used by Milestone-C setters to gate engine-specific BiDi calls. */
   getBrowserName?: () => 'chrome' | 'chromium' | 'firefox';
+  /** True when browser-level preload scripts can run in this context's pages. */
+  hasBrowserInitScripts?: () => boolean;
 }
 
 /** Per-context options stored at creation time. */
@@ -193,6 +195,15 @@ export class BrowserContext {
         `BrowserContext "${this._id}" is closed; create a new one with browser.newContext().`
       );
     }
+  }
+
+  /** @internal Used by Page to keep preload-backed navigations on BiDi. */
+  _hasInitScriptsForNavigation(): boolean {
+    return (
+      this._initScriptIds.size > 0 ||
+      this._localStoragePreloadId !== undefined ||
+      this._hooks?.hasBrowserInitScripts?.() === true
+    );
   }
 
   /** BiDi partition descriptor for storage operations scoped to this user context. */

@@ -50,6 +50,35 @@ describe('addInitScript()', () => {
     await handle.remove();
   });
 
+  it('uses BiDi navigation only while browser init scripts are active', async () => {
+    const isolated = await Browser.launch({ browserName: BROWSER_NAME });
+    let restoreSend: (() => void) | undefined;
+    try {
+      const conn = (isolated as any).bidiSession.getConnection();
+      const originalSend = conn.send.bind(conn);
+      restoreSend = () => { conn.send = originalSend; };
+      const methods: string[] = [];
+      conn.send = (method: string, params: Record<string, unknown> = {}) => {
+        methods.push(method);
+        return originalSend(method, params);
+      };
+
+      const handle = await isolated.addInitScript(`window.__navPreload = 'ok';`);
+      methods.length = 0;
+      await isolated.navigateTo(`${EXAMPLES_BASE_URL}/evaluate.html`);
+      expect(methods).toContain('browsingContext.navigate');
+      expect(await isolated.evaluate(() => (window as any).__navPreload)).toBe('ok');
+
+      await handle.remove();
+      methods.length = 0;
+      await isolated.navigateTo(`${EXAMPLES_BASE_URL}/evaluate.html`);
+      expect(methods).not.toContain('browsingContext.navigate');
+    } finally {
+      restoreSend?.();
+      await isolated.quit();
+    }
+  });
+
   it('throws a clear error when BiDi is unavailable', async () => {
     const noBidi = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: false });
     try {
