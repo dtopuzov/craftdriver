@@ -1,5 +1,33 @@
 # PERF-06: Phase 5b — rename/simplify `enableBiDi`
 
+## Status: ❌ Not applicable — its precondition (BiDi/Classic launch parity) doesn't hold
+
+This item is predicated on PERF-05 landing and making BiDi effectively free at
+launch, so that `enableBiDi` stops being a speed decision (see Description
+below). Neither happened:
+
+- PERF-05 was not implemented (its premise was measured wrong — see PERF-05.md).
+- BiDi launch is still measurably slower than Classic: **~2235ms vs ~1860ms
+  (~375ms / ~17%)**. That gap is `Driver.create()` — chromedriver enabling its
+  BiDi mapper during New Session — and is browser-side, not something a client
+  library can remove.
+
+So `enableBiDi: false` remains a **genuine performance escape hatch**, not a
+vestigial toggle: local automation that only uses Classic-visible operations
+(navigate / click / fill / find / assert — none of which need BiDi) can launch
+~375ms faster with `enableBiDi: false`. Renaming or de-emphasizing the option
+to imply "always attempt BiDi, no tradeoff" would misrepresent that. There is
+no parity to justify the change, so the item is moot until/unless parity ever
+materializes (it can't without a browser-side change).
+
+The one useful takeaway is the reverse of this item's intent: **document
+`enableBiDi: false` as a launch-speed option** for BiDi-free workloads, rather
+than simplifying the flag away.
+
+---
+
+_Original plan (premised on a parity that doesn't exist) preserved below._
+
 ## Description
 
 Once PERF-05 lands, `enableBiDi` stops needing to be a performance
