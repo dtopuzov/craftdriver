@@ -16,6 +16,7 @@ import { Locator } from './locator.js';
 import { expectSelector } from './expect.js';
 import type { ExpectApi } from './expect.js';
 import { until } from './wait.js';
+import { bidiWaitFor } from './loadState.js';
 import type { WebElement } from './webelement.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
@@ -141,10 +142,7 @@ export class Page {
       this.hasInitScriptsForNavigation();
 
     if (this.conn && needsBiDi) {
-      const bidiWait =
-        waitUntil === 'none' ? 'none'
-          : waitUntil === 'domcontentloaded' ? 'interactive'
-            : 'complete'; // 'load' on non-default/preload-backed contexts
+      const bidiWait = bidiWaitFor(waitUntil);
       await this.conn.send('browsingContext.navigate', {
         context: this.contextId,
         url: resolved,
@@ -333,10 +331,7 @@ export class Page {
     const waitUntil = opts?.waitUntil ?? 'load';
     const url = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
     if (this.conn) {
-      const bidiWait =
-        waitUntil === 'none' ? 'none'
-          : waitUntil === 'domcontentloaded' ? 'interactive'
-            : 'complete';
+      const bidiWait = bidiWaitFor(waitUntil);
       await this.conn.send('browsingContext.navigate', {
         context: this.contextId,
         url,

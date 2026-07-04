@@ -115,3 +115,15 @@ export const BIDI_CONNECT_BACKOFF_STEP_MS = 300;
 export const FIREFOX_SESSION_MAX_ATTEMPTS = 4;
 export const CHROME_SESSION_MAX_ATTEMPTS = 1;
 export const SESSION_CREATE_BACKOFF_STEP_MS = 500;
+
+/**
+ * `evaluate()` retries on a transient "execution contexts cleared" BiDi error.
+ * A Classic-first navigate returns at `readyState === 'complete'`, which is not
+ * a barrier the BiDi side respects — an immediately following `{ context }`
+ * script call can land while BiDi is still swapping the old realm for the new
+ * one. The error is pre-execution (the script never ran, no side effects), so a
+ * short retry that re-resolves the context is safe. See
+ * plans/TODO-bidi-first-navigation.md (Option A).
+ */
+export const EVAL_REALM_RETRY_ATTEMPTS = 3;
+export const EVAL_REALM_RETRY_DELAY_MS = 25;

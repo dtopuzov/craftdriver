@@ -12,6 +12,8 @@ import {
   PORT_RELEASE_DELAY_MS,
   BIDI_CONNECT_MAX_ATTEMPTS,
   BIDI_CONNECT_BACKOFF_STEP_MS,
+  EVAL_REALM_RETRY_ATTEMPTS,
+  EVAL_REALM_RETRY_DELAY_MS,
 } from './timing.js';
 import { ElementHandle } from './elementHandle.js';
 import { Locator } from './locator.js';
@@ -39,6 +41,7 @@ import {
 } from './bidi/index.js';
 import { Frame } from './frame.js';
 import { Page } from './page.js';
+import { bidiWaitFor } from './loadState.js';
 import { BrowserContext } from './browserContext.js';
 import { Tracer, type TraceStartOptions } from './tracing.js';
 import { A11y } from './a11y.js';
@@ -662,10 +665,7 @@ export class Browser {
     const context = needsBiDi ? this.bidiSession?.getContext() : undefined;
     if (context && this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
-      const bidiWait =
-        waitUntil === 'none' ? 'none'
-          : waitUntil === 'domcontentloaded' ? 'interactive'
-            : 'complete'; // 'networkidle'
+      const bidiWait = bidiWaitFor(waitUntil);
 
       await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
 
@@ -1257,26 +1257,39 @@ export class Browser {
 
     if (this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
-      const context = this.bidiSession.getContext();
-      const target: Record<string, unknown> = context ? { context } : {};
+      // Classic-first navigations return at readyState === 'complete', which is
+      // not a barrier the BiDi side respects: an immediately following
+      // { context } call can race the browser swapping the old realm for the
+      // new one and throw "execution contexts cleared". The error is
+      // pre-execution (script never ran, no side effects), so retry a few times,
+      // re-resolving the context each attempt. In-script errors take the
+      // result.type === 'exception' path below and are never retried here.
+      const functionDeclaration =
+        typeof fn === 'function' ? fnSrc : `function() { ${fnSrc} }`;
+      const callArgs = typeof fn === 'function' ? args.map(serializeLocalValue) : [];
 
-      let result: ScriptEvaluateResult;
-      if (typeof fn === 'function') {
-        result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: fnSrc,
-          target,
-          arguments: args.map(serializeLocalValue),
-          awaitPromise: true,
-        });
-      } else {
-        // String form: wrap in a function so `return` statements are valid,
-        // matching the behaviour of Classic WebDriver executeScript.
-        result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: `function() { ${fnSrc} }`,
-          target,
-          arguments: [],
-          awaitPromise: true,
-        });
+      let result: ScriptEvaluateResult | undefined;
+      for (let attempt = 1; ; attempt++) {
+        const context = this.bidiSession.getContext();
+        const target: Record<string, unknown> = context ? { context } : {};
+        try {
+          result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
+            functionDeclaration,
+            target,
+            arguments: callArgs,
+            awaitPromise: true,
+          });
+          break;
+        } catch (err) {
+          if (
+            attempt < EVAL_REALM_RETRY_ATTEMPTS &&
+            String((err as Error)?.message).includes('execution contexts cleared')
+          ) {
+            await new Promise(r => setTimeout(r, EVAL_REALM_RETRY_DELAY_MS));
+            continue;
+          }
+          throw err;
+        }
       }
 
       if (result.type === 'exception') {
