@@ -1,3 +1,61 @@
+# [1.0.0](https://github.com/dtopuzov/craftdriver/compare/v0.2.2...v1.0.0) (2026-07-04)
+
+
+### Bug Fixes
+
+* element handles from findAll()/all() lose their frame/window binding ([518c385](https://github.com/dtopuzov/craftdriver/commit/518c3855de6793ae93eeb605521182d98f77e9cb))
+* keep preload-backed navigation on BiDi ([665da10](https://github.com/dtopuzov/craftdriver/commit/665da10f4e76078edaa9e54d76d9b79668553472))
+* recover stale chromedriver cache ([b5cc568](https://github.com/dtopuzov/craftdriver/commit/b5cc568cafb6ff63a92e9631ea75a44d480e8ddd))
+* retry evaluate() past transient "execution contexts cleared"; dedupe navigate wait mapping ([f23f3b1](https://github.com/dtopuzov/craftdriver/commit/f23f3b1b571163916022a7a7e55f10b17c8c6729))
+
+
+### Features
+
+* add opt-in browser `args` launch option; document startup flags (PERF-07) ([bef028a](https://github.com/dtopuzov/craftdriver/commit/bef028a1096acf557c784359cdad170031c3638f))
+
+
+### Performance Improvements
+
+* cache driver resolution to cut Browser.launch() by ~530ms ([e959208](https://github.com/dtopuzov/craftdriver/commit/e959208e94a0b39f193c06bff3dc0ee304db3808))
+* classic-first navigation, batched BiDi connect, lazy logs, HTTP keep-alive ([018ea5e](https://github.com/dtopuzov/craftdriver/commit/018ea5e7e2daa47cfea7e9ac3c28a83397f8a82e)), closes [#20](https://github.com/dtopuzov/craftdriver/issues/20)
+* drop 3 redundant BiDi session.subscribe round trips (PERF-01) ([db23e8e](https://github.com/dtopuzov/craftdriver/commit/db23e8e7491d98190b39788891290d65e349a6b0))
+* lower default auto-wait poll interval 100ms -> 25ms ([2c2b96f](https://github.com/dtopuzov/craftdriver/commit/2c2b96f142278ae5f8cb5f5d150210eb758719c6))
+* make assertion and state polling as responsive as element waits ([9f9978b](https://github.com/dtopuzov/craftdriver/commit/9f9978b5a8f9677ad94e72f7d644c2e71ee1b142))
+* scope quit() 500ms port-release sleep to Firefox+BiDi ([acbc58e](https://github.com/dtopuzov/craftdriver/commit/acbc58eda6fc14efdcc3138c1edaffa558e48d10))
+
+
+### BREAKING CHANGES
+
+* console/error messages emitted before the first
+  browser.logs / onConsole / onError / waitForConsole call are no longer
+  captured by default. Pass captureLogs: true to Browser.launch(), or
+  touch browser.logs right after launch, to restore from-launch capture.
+
+  Network subscription stays eager in the same merged connect-time batch
+  - resolved with a benchmark A/B rather than a guess: stripping
+  network.* events entirely moved the E2E-flow BiDi/Classic ratio from
+  0.93x to 0.94x, well under the ~5% bar for "not worth the added
+  complexity of going lazy."
+
+- HttpClient now keeps one pooled, keep-alive Agent per endpoint instead
+  of opening a fresh TCP connection for every Classic WebDriver command
+  (49+ call sites across driver.ts/webelement.ts, no call-site changes
+  needed). Driver.quit() destroys the agent in a finally block so pooled
+  sockets don't keep the process alive after the session ends. Benefits
+  both enableBiDi: true and false equally.
+
+Net result on this machine (localhost Chrome headless, tests/perf/
+bidi-vs-classic.perf.ts): E2E-flow BiDi/Classic ratio improved from
+1.12x to ~1.05x across repeated runs (0.93x-1.12x observed - BiDi is
+sometimes faster than Classic now, not consistently slower). Full test
+suite (287 tests) green, lint and build clean.
+
+enableBiDi remains for now as an explicit opt-out; retiring it as a
+user-facing flag is tracked as follow-up work once this lands and proves
+out, not done in this change.
+
+Fixes: https://github.com/dtopuzov/craftdriver/issues/20
+
 ## [0.2.2](https://github.com/dtopuzov/craftdriver/compare/v0.2.1...v0.2.2) (2026-06-29)
 
 
