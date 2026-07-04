@@ -81,6 +81,36 @@ function recordResolvedDriver(cacheKey: string, version: string, driverPath: str
   writeMetadata(meta);
 }
 
+/**
+ * Drop the cached chromedriver resolution if it points at `driverPath`.
+ * Returns true when an entry was removed. The downloaded binary is left on disk;
+ * only the "reuse this path without re-detecting Chrome" metadata is cleared.
+ */
+export function invalidateChromeDriverAutoResolutionCache(driverPath?: string): boolean {
+  const meta = readMetadata();
+  let keys: string[];
+  try {
+    keys = [`chromedriver/${cftPlatform()}`];
+  } catch {
+    // On unsupported CfT platforms (notably Linux ARM64), avoid letting cleanup
+    // mask the original session-creation error.
+    keys = Object.keys(meta).filter((key) => key.startsWith('chromedriver/'));
+  }
+
+  const expectedPath = driverPath ? path.resolve(driverPath) : undefined;
+  let removed = false;
+  for (const key of keys) {
+    const entry = meta[key];
+    if (!entry) continue;
+    if (expectedPath && path.resolve(entry.driverPath) !== expectedPath) continue;
+    delete meta[key];
+    removed = true;
+  }
+
+  if (removed) writeMetadata(meta);
+  return removed;
+}
+
 // ─── Platform helpers ─────────────────────────────────────────────────────────
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';

@@ -21,10 +21,11 @@ otherwise run on **every** launch: launching the browser binary just to read
 its version string, and a `PATH` lookup. Both are blocking calls, so caching
 the resolution measurably speeds up launch — most noticeably when several
 browsers start in parallel (see [Performance](#performance)). After the TTL
-expires, or the cache is cleared (e.g. after a browser upgrade), the driver
-is re-resolved and re-downloaded if needed. Only the driver binary is ever
-downloaded, never the browser itself. Explicit configuration (steps 1–4)
-always takes precedence over the cache.
+expires, or if Chrome reports that the cached chromedriver is for the wrong
+major version after a browser upgrade, the driver is re-resolved and
+re-downloaded if needed. Only the driver binary is ever downloaded, never the
+browser itself. Explicit configuration (steps 1–4) always takes precedence over
+the cache.
 
 ## Environment variables
 

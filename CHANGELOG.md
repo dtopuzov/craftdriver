@@ -31,6 +31,7 @@
 
 ## Unreleased
 
+- fix(driver-manager): stale cached chromedriver auto-resolution now self-heals after a Chrome major-version update. If session creation reports the classic "ChromeDriver only supports Chrome version X" mismatch and the running driver came from the auto-resolution cache, craftdriver clears that metadata entry, stops the stale service, and retries launch once so users do not wait up to the 24h TTL.
 - fix(security): clamp user-supplied `timeout` and `idleDuration` values passed to `setTimeout` in `waitForNetworkIdle` (network.ts) and `waitForLoadState` (browser.ts) to prevent resource exhaustion from unbounded timer durations (CodeQL high-severity alerts). The `ms()` helper in `dispatcher.ts` (the socket→number boundary for the CLI daemon) now also caps at 300,000 ms so the sanitization happens at the untrusted-input boundary rather than deep in the call chain. Caps: 300,000 ms for timeouts, 60,000 ms for idle durations.
 - fix(tests): `driver-manager.test.ts` integration test was silently short-circuiting on systems where `chromedriver` is already on `PATH` (ubuntu-latest CI runners, nvm-managed Node envs). The resolution chain hit the PATH probe at step 5 before ever reaching the auto-download step, so nothing was written to the cache directory and the cache assertions failed. Fix: `beforeAll` now filters chromedriver-containing directories out of `PATH` to force the download path; `PATH` is restored in `afterAll`.
 
