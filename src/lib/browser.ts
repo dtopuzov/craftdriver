@@ -1152,6 +1152,9 @@ export class Browser {
   async quit(): Promise<void> {
     // Silently abort any running trace so we don't leak the timer.
     if (this._tracer?.isRunning) this._tracer.abort();
+    // Whether this session had a live BiDi WebSocket. Only the Firefox+BiDi
+    // combination needs the port-release pause below; capture it before close().
+    const bidiWasActive = !!this.bidiSession;
     // Close BiDi connection first
     if (this.bidiSession) {
       await this.bidiSession.close().catch(() => { });
@@ -1164,10 +1167,16 @@ export class Browser {
     this._topLevelContextCacheVersion++;
     // DELETE the WebDriver session — this tells the driver service to close the browser.
     await this.driver.quit().catch(() => { });
-    // Give the browser process a moment to fully release any ports (e.g. Firefox BiDi
-    // WebSocket port 9222) before we kill the driver service. Without this pause, a
-    // subsequent launch may see a 404 when connecting to the new session's WebSocket.
-    await new Promise((r) => setTimeout(r, PORT_RELEASE_DELAY_MS));
+    // Firefox's BiDi WebSocket binds a fixed port (9222). If we kill geckodriver
+    // before Firefox has released it, the next Firefox+BiDi launch can 404 while
+    // connecting to the new session's socket — hence this pause. Chrome has no such
+    // race: chromedriver assigns an ephemeral --remote-debugging-port=0 and our BiDi
+    // URL comes from the session's own webSocketUrl, not a fixed port. So scope the
+    // 500ms sleep to Firefox+BiDi; every other quit (all Chrome, Firefox w/o BiDi)
+    // skips straight to stopping the driver.
+    if (this._browserName === 'firefox' && bidiWasActive) {
+      await new Promise((r) => setTimeout(r, PORT_RELEASE_DELAY_MS));
+    }
     // Stop the underlying driver service (chromedriver / geckodriver)
     // so we don't leak processes between sessions.
     if (this._driverService) {
