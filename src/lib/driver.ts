@@ -15,11 +15,17 @@ export class Driver {
 
   static async create(endpoint: WebDriverEndpoint, caps: Capabilities): Promise<Driver> {
     const client = new HttpClient(endpoint);
-    const res = await client.send<SessionResponse>({
-      method: 'POST',
-      path: '/session',
-      body: { capabilities: { alwaysMatch: caps } },
-    });
+    let res: CommandResponse<SessionResponse>;
+    try {
+      res = await client.send<SessionResponse>({
+        method: 'POST',
+        path: '/session',
+        body: { capabilities: { alwaysMatch: caps } },
+      });
+    } catch (err) {
+      client.close();
+      throw err;
+    }
     const value =
       (res as CommandResponse<SessionResponse>)?.value ?? (res as unknown as SessionResponse);
     const sessionId = (value as SessionResponse)?.sessionId || (res as any)?.sessionId;
@@ -27,6 +33,7 @@ export class Driver {
       const v: any = value as any;
       const err = v?.error;
       const msg = v?.message || v?.data || JSON.stringify(res);
+      client.close();
       throw new Error(`Failed to create session${err ? ` [${err}]` : ''}: ${msg}`);
     }
 

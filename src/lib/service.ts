@@ -55,6 +55,10 @@ export class DriverService {
     return this.endpoint;
   }
 
+  getCommand(): string {
+    return this.opts.command;
+  }
+
   async start(): Promise<void> {
     if (this.proc) return; // already started
     await this.ensureBinaryAvailable();
