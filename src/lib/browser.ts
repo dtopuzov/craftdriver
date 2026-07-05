@@ -47,6 +47,7 @@ import { Tracer, type TraceStartOptions } from './tracing.js';
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { clickWithFastPath } from './clickFastPath.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -309,20 +310,6 @@ function selectorToString(sel: string | By | undefined): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-const RECOVERABLE_FAST_CLICK_ERRORS: ReadonlySet<string> = new Set([
-  'no such element',
-  'stale element reference',
-  'element not interactable',
-  'element click intercepted',
-  'move target out of bounds',
-]);
-
-function isRecoverableFastClickError(err: unknown): boolean {
-  if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
-  const code = err.detail?.webDriverError;
-  return typeof code === 'string' && RECOVERABLE_FAST_CLICK_ERRORS.has(code);
 }
 
 /** Recursively find the child context that matches an iframe's src URL. */
@@ -2120,19 +2107,11 @@ export class Browser {
     if (this._tracer?.isRunning) this._tracer.recordAction('click', undefined, selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const timeout = opts?.timeout ?? this.defaults.timeout;
-    const deadline = Date.now() + timeout;
-
-    try {
-      const el = await this.driver.findElement(by);
-      await el.click();
-      return;
-    } catch (err) {
-      if (!isRecoverableFastClickError(err)) throw err;
-      const remaining = Math.max(0, deadline - Date.now());
-      if (remaining <= 0) throw err;
-      const el = await this.driver.wait(until.elementIsVisible(by), { timeout: remaining });
-      await el.click();
-    }
+    await clickWithFastPath(
+      () => this.driver.findElement(by),
+      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+      timeout
+    );
   }
 
   async fill(

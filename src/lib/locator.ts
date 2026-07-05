@@ -7,6 +7,7 @@ import type { ExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
+import { clickWithFastPath } from './clickFastPath.js';
 
 export interface ActionOptions {
   timeout?: number;
@@ -204,6 +205,12 @@ export class Locator {
     return this._waitForVisible(timeout);
   }
 
+  /** Resolve the current final match once without waiting. */
+  private async _resolveOnce(): Promise<WebElement | null> {
+    const els = await this._findFinal();
+    return els.length > 0 ? els[0] : null;
+  }
+
   private async _resolveExisting(options?: ActionOptions): Promise<WebElement> {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._waitForAny(timeout);
@@ -226,9 +233,13 @@ export class Locator {
   }
 
   async click(options?: ActionOptions): Promise<void> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      const el = await this._waitForVisibleOrSimple(options);
-      await el.click();
+      await clickWithFastPath(
+        () => this._resolveOnce(),
+        (remaining) => this._waitForVisibleOrSimple({ timeout: remaining }),
+        timeout
+      );
     });
   }
 
