@@ -23,6 +23,7 @@ import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, STATE_POLL_INTERVAL_MS } from './timing.js';
 import type { BrowserContext } from './browserContext.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { clickWithFastPath } from './clickFastPath.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
@@ -67,11 +68,7 @@ export class Page {
 
   /** Switch the Classic driver to this window for element operations. */
   private async _activate(): Promise<string> {
-    // The current Classic window may already be closed (e.g. a sibling
-    // BrowserContext closed its window and left focus dangling). Reading it must
-    // not abort activation — there's simply no previous handle to restore to, so
-    // fall back to '' and switch to this page. Mirrors browser.ts's guarded read.
-    const prev = await this.driver.getCurrentWindowHandle().catch(() => '');
+    const prev = await this.driver.getCurrentWindowHandle();
     if (prev !== this.contextId) {
       await this.driver.switchToWindow(this.contextId);
     }
@@ -80,9 +77,7 @@ export class Page {
 
   /** Switch back to the previous window after a Classic action. */
   private async _restoreTo(handle: string): Promise<void> {
-    // Empty handle = there was no valid previous window (see _activate); leaving
-    // focus on this page is the correct fallback, so don't switch to ''.
-    if (handle && handle !== this.contextId) {
+    if (handle !== this.contextId) {
       await this.driver.switchToWindow(handle);
     }
   }
@@ -400,11 +395,13 @@ export class Page {
 
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const timeout = opts?.timeout ?? this.getDefaultTimeout();
     return this._withWindow(async () => {
-      const el = await this.driver.wait(until.elementIsVisible(by), {
-        timeout: opts?.timeout ?? this.getDefaultTimeout(),
-      });
-      await el.click();
+      await clickWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        timeout
+      );
     });
   }
 
