@@ -12,6 +12,12 @@ export interface WaitOptions {
   timeoutMsg?: string;
 }
 
+function isTransientWaitError(err: unknown): boolean {
+  if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
+  const webDriverError = err.detail?.webDriverError;
+  return webDriverError === 'no such element' || webDriverError === 'stale element reference';
+}
+
 export class WebDriverWait {
   private timeoutMs: number;
   private intervalMs: number;
@@ -49,8 +55,8 @@ export class WebDriverWait {
     }
     const errMsg = message ?? this.timeoutMsg ?? `Wait timed out after ${this.timeoutMs}ms`;
     const full = lastErr ? `${errMsg}: ${String((lastErr as any)?.message ?? lastErr)}` : errMsg;
-    // Preserve a more specific code when the inner condition already raised one.
-    if (CraftdriverError.is(lastErr)) {
+    // Preserve specific condition errors, but keep normal polling misses as TIMEOUT.
+    if (CraftdriverError.is(lastErr) && !isTransientWaitError(lastErr)) {
       throw new CraftdriverError(lastErr.code, full, {
         detail: { ...(lastErr.detail ?? {}), timeout: this.timeoutMs },
         cause: lastErr,
