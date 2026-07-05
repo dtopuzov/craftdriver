@@ -48,7 +48,7 @@ try {
 | `INVALID_ARGUMENT` | Caller passed an invalid value (bad enum, wrong shape, unparseable duration…). | Read the message; it lists the accepted forms. |
 | `UNSUPPORTED` | Feature exists but is unavailable on this browser/transport (e.g. Chromium-only over Firefox, or a BiDi-only feature with BiDi disabled). | Enable BiDi (`enableBiDi: true`) or switch browser. |
 | `STATE_INVALID` | Method called in the wrong state (e.g. `stopTrace()` without `startTrace()`). | Call the prerequisite first. |
-| `DRIVER_ERROR` | Driver-level / transport-level failure surfaced to the caller. | Inspect `error.cause`. |
+| `DRIVER_ERROR` | A WebDriver command returned a protocol error (non-200 response) — e.g. `stale element reference`, `element click intercepted`, `invalid selector` — or a transport-level failure. | `error.detail.webDriverError` carries the W3C JSON error code and `error.detail.webDriverMessage` the driver's message; recovery loops match on `webDriverError`. Also inspect `error.cause`. |
 
 ## Stability
 
