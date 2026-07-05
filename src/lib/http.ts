@@ -91,6 +91,22 @@ function buildDriverError(
   );
 }
 
+function buildTransportError(err: Error, method: string, path: string): CraftdriverError {
+  return new CraftdriverError(
+    ErrorCode.DRIVER_ERROR,
+    `WebDriver command ${method} ${path} failed — ${err.message}`,
+    {
+      detail: {
+        method,
+        path,
+        transportError: err.name,
+        transportMessage: err.message,
+      },
+      cause: err,
+    }
+  );
+}
+
 export class HttpClient {
   constructor(private endpoint: WebDriverEndpoint) {}
 
@@ -116,6 +132,7 @@ export class HttpClient {
       const req = transport.request(url, options, (res: http.IncomingMessage) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+        res.on('error', (err: Error) => reject(buildTransportError(err, method, path)));
         res.on('end', () => {
           const status = res.statusCode ?? 0;
           const text = Buffer.concat(chunks).toString('utf8');
@@ -142,7 +159,7 @@ export class HttpClient {
           }
         });
       });
-      req.on('error', reject);
+      req.on('error', (err: Error) => reject(buildTransportError(err, method, path)));
       if (payload) req.write(payload);
       req.end();
     });

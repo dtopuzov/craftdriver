@@ -223,7 +223,7 @@ async function callTool(
     value = await runTool(ctx, tool, args);
   } catch (e) {
     if (e instanceof CraftdriverError) {
-      return toolError(e.message, e.code, e.hint);
+      return toolError(e.message, e.code, e.hint, compactErrorDetail(e.detail));
     }
     return toolError((e as Error).message ?? String(e), ErrorCode.DRIVER_ERROR);
   }
@@ -297,13 +297,31 @@ function safeJson(value: unknown): string {
   }
 }
 
-function toolError(message: string, code: string, hint?: string): ToolCallResult {
+function compactErrorDetail(detail?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!detail) return undefined;
+  const compact = { ...detail };
+  delete compact.stacktrace;
+  return Object.keys(compact).length > 0 ? compact : undefined;
+}
+
+function toolError(
+  message: string,
+  code: string,
+  hint?: string,
+  detail?: Record<string, unknown>
+): ToolCallResult {
   const lines = [`error: ${message}`, `code:  ${code}`];
   if (hint) lines.push(`hint:  ${hint}`);
+  const error = {
+    code,
+    message,
+    ...(hint ? { hint } : {}),
+    ...(detail ? { detail } : {}),
+  };
   return {
     isError: true,
     content: [{ type: 'text', text: lines.join('\n') }],
-    structuredContent: { error: { code, message, hint } },
+    structuredContent: { error },
   };
 }
 
