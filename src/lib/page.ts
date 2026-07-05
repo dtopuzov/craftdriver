@@ -27,6 +27,11 @@ import { clickWithFastPath } from './clickFastPath.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
+function isNoSuchWindowError(err: unknown): boolean {
+  if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
+  return err.detail?.webDriverError === 'no such window' || err.message.includes('no such window');
+}
+
 export class Page {
   private driver: Driver;
   private getDefaultTimeout: () => number;
@@ -67,8 +72,13 @@ export class Page {
   }
 
   /** Switch the Classic driver to this window for element operations. */
-  private async _activate(): Promise<string> {
-    const prev = await this.driver.getCurrentWindowHandle();
+  private async _activate(): Promise<string | undefined> {
+    let prev: string | undefined;
+    try {
+      prev = await this.driver.getCurrentWindowHandle();
+    } catch (err) {
+      if (!isNoSuchWindowError(err)) throw err;
+    }
     if (prev !== this.contextId) {
       await this.driver.switchToWindow(this.contextId);
     }
@@ -76,9 +86,14 @@ export class Page {
   }
 
   /** Switch back to the previous window after a Classic action. */
-  private async _restoreTo(handle: string): Promise<void> {
+  private async _restoreTo(handle: string | undefined): Promise<void> {
     if (handle !== this.contextId) {
-      await this.driver.switchToWindow(handle);
+      if (!handle) return;
+      try {
+        await this.driver.switchToWindow(handle);
+      } catch (err) {
+        if (!isNoSuchWindowError(err)) throw err;
+      }
     }
   }
 
@@ -350,7 +365,7 @@ export class Page {
   private _makeContextSwitcher() {
     // Always switch Classic window to this context for element operations.
     // In Chrome, BiDi context IDs equal Classic window handles.
-    let savedHandle: string;
+    let savedHandle: string | undefined;
     return {
       in: async () => {
         savedHandle = await this._activate();
