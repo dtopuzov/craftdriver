@@ -2,6 +2,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 import type { CommandResponse, RequestOptions, WebDriverEndpoint } from './types.js';
+import { roundTrips } from './instrument.js';
 
 /**
  * One keep-alive `Agent` per endpoint, shared across every `HttpClient`
@@ -32,6 +33,7 @@ export class HttpClient {
   constructor(private endpoint: WebDriverEndpoint) {}
 
   async send<T = unknown>({ method, path, body }: RequestOptions): Promise<CommandResponse<T>> {
+    roundTrips.classicRT++;
     const base = `${this.endpoint.protocol}://${this.endpoint.hostname}:${this.endpoint.port}${this.endpoint.path ?? ''}`;
     const url = new URL(path, base);
     const isHttps = url.protocol === 'https:';

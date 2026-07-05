@@ -11,6 +11,7 @@ import type {
   BiDiEvent,
 } from './types.js';
 import { BIDI_TIMEOUT_MS, BIDI_RECONNECT_DELAY_MS } from '../timing.js';
+import { roundTrips } from '../instrument.js';
 
 export type EventHandler = (params: Record<string, unknown>) => void;
 
@@ -103,6 +104,7 @@ export class BiDiConnection {
       throw new Error('BiDi connection not established');
     }
 
+    roundTrips.bidiSent++;
     const id = ++this.messageId;
     const command: BiDiCommand = { id, method, params };
 
@@ -210,6 +212,7 @@ export class BiDiConnection {
   }
 
   private handleMessage(data: string): void {
+    roundTrips.bidiRecv++;
     let message: BiDiMessage;
     try {
       message = JSON.parse(data) as BiDiMessage;
