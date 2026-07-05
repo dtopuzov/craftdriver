@@ -84,6 +84,52 @@ describe('error codes', () => {
     expect(CraftdriverError.is(err, ErrorCode.EVAL_THREW)).toBe(true);
   });
 
+  // ── Phase 0: WebDriver protocol errors surface as DRIVER_ERROR ────────────
+  // A snapshot handle from findAll() clicks its captured element directly with
+  // no retry, so a genuine protocol failure (stale / intercepted) surfaces raw
+  // instead of being retried away — the ideal probe for the HTTP-layer fix.
+
+  it('clicking a snapshot handle whose element was removed throws DRIVER_ERROR (stale)', async () => {
+    const [handle] = await browser.findAll('#username');
+    await browser.evaluate(() => document.getElementById('username')?.remove());
+    let err: unknown;
+    try {
+      await handle.click();
+    } catch (e) {
+      err = e;
+    }
+    expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
+    expect(String((err as CraftdriverError).detail?.webDriverError)).toContain('stale element');
+  });
+
+  it('clicking a snapshot handle covered by an overlay throws DRIVER_ERROR (intercepted)', async () => {
+    const [handle] = await browser.findAll('#username');
+    await browser.evaluate(() => {
+      const overlay = document.createElement('div');
+      overlay.id = 'cover';
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.background = 'rgba(0,0,0,0.01)';
+      overlay.style.zIndex = '99999';
+      document.body.appendChild(overlay);
+    });
+    let err: unknown;
+    try {
+      await handle.click();
+    } catch (e) {
+      err = e;
+    }
+    expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
+    expect(String((err as CraftdriverError).detail?.webDriverError)).toContain('intercepted');
+  });
+
+  it('evaluate() returning error-shaped data resolves — status gating, not body shape', async () => {
+    // Regression guard: a *successful* command whose value happens to look like
+    // a WebDriver error body must NOT be misread as a protocol failure.
+    const result = await browser.evaluate(() => ({ error: 'x', message: 'y', stacktrace: 'z' }));
+    expect(result).toEqual({ error: 'x', message: 'y', stacktrace: 'z' });
+  });
+
   it('stopTrace() without startTrace() throws STATE_INVALID', async () => {
     let err: unknown;
     try {

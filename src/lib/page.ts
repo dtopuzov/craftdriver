@@ -67,7 +67,11 @@ export class Page {
 
   /** Switch the Classic driver to this window for element operations. */
   private async _activate(): Promise<string> {
-    const prev = await this.driver.getCurrentWindowHandle();
+    // The current Classic window may already be closed (e.g. a sibling
+    // BrowserContext closed its window and left focus dangling). Reading it must
+    // not abort activation — there's simply no previous handle to restore to, so
+    // fall back to '' and switch to this page. Mirrors browser.ts's guarded read.
+    const prev = await this.driver.getCurrentWindowHandle().catch(() => '');
     if (prev !== this.contextId) {
       await this.driver.switchToWindow(this.contextId);
     }
@@ -76,7 +80,9 @@ export class Page {
 
   /** Switch back to the previous window after a Classic action. */
   private async _restoreTo(handle: string): Promise<void> {
-    if (handle !== this.contextId) {
+    // Empty handle = there was no valid previous window (see _activate); leaving
+    // focus on this page is the correct fallback, so don't switch to ''.
+    if (handle && handle !== this.contextId) {
       await this.driver.switchToWindow(handle);
     }
   }
