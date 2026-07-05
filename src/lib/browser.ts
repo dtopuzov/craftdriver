@@ -311,6 +311,20 @@ function selectorToString(sel: string | By | undefined): string | undefined {
   }
 }
 
+const RECOVERABLE_FAST_CLICK_ERRORS: ReadonlySet<string> = new Set([
+  'no such element',
+  'stale element reference',
+  'element not interactable',
+  'element click intercepted',
+  'move target out of bounds',
+]);
+
+function isRecoverableFastClickError(err: unknown): boolean {
+  if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
+  const code = err.detail?.webDriverError;
+  return typeof code === 'string' && RECOVERABLE_FAST_CLICK_ERRORS.has(code);
+}
+
 /** Recursively find the child context that matches an iframe's src URL. */
 function findIframeContext(
   ctx: BidiContextInfo,
@@ -2105,8 +2119,20 @@ export class Browser {
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     if (this._tracer?.isRunning) this._tracer.recordAction('click', undefined, selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
-    await el.click();
+    const timeout = opts?.timeout ?? this.defaults.timeout;
+    const deadline = Date.now() + timeout;
+
+    try {
+      const el = await this.driver.findElement(by);
+      await el.click();
+      return;
+    } catch (err) {
+      if (!isRecoverableFastClickError(err)) throw err;
+      const remaining = Math.max(0, deadline - Date.now());
+      if (remaining <= 0) throw err;
+      const el = await this.driver.wait(until.elementIsVisible(by), { timeout: remaining });
+      await el.click();
+    }
   }
 
   async fill(
