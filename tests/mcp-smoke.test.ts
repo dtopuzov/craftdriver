@@ -194,4 +194,26 @@ describe('MCP smoke', () => {
       /^(NO_MATCH|TIMEOUT(_WAITING_(VISIBLE|STATE))?)$/,
     );
   });
+
+  it('surfaces WebDriver protocol detail in structured errors', async () => {
+    const resp = (await mcp.request('tools/call', {
+      name: 'browser_click',
+      arguments: { selector: '[', timeout_ms: 200 },
+    })) as RpcSuccess;
+    const result = resp.result as {
+      isError: boolean;
+      structuredContent: {
+        error: {
+          code: string;
+          detail?: Record<string, unknown>;
+        };
+      };
+    };
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error.code).toBe('DRIVER_ERROR');
+    expect(result.structuredContent.error.detail).toMatchObject({
+      webDriverError: 'invalid selector',
+    });
+    expect(result.structuredContent.error.detail?.stacktrace).toBeUndefined();
+  });
 });
