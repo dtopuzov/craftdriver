@@ -1,3 +1,18 @@
+## [1.0.1](https://github.com/dtopuzov/craftdriver/compare/v1.0.0...v1.0.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* keep wait and page context errors stable ([3746b84](https://github.com/dtopuzov/craftdriver/commit/3746b8437f4261216862eb160c5d214e1351e6cd))
+* preserve structured driver error detail ([b14c93f](https://github.com/dtopuzov/craftdriver/commit/b14c93f48727da38d224ca680e642cd0dbe78344))
+* surface WebDriver protocol errors as DRIVER_ERROR ([97c9b3a](https://github.com/dtopuzov/craftdriver/commit/97c9b3a264eb70b4686e08b121d690783a8d2e9b))
+
+
+### Performance Improvements
+
+* share click fast path across click APIs ([2d28d47](https://github.com/dtopuzov/craftdriver/commit/2d28d47c85337f9098c956529f054359e09aa53a))
+* try simple optimistic browser click ([f3e0514](https://github.com/dtopuzov/craftdriver/commit/f3e0514ba448c437ba36a457c5cdb8aec4a2c01c))
+
 # [1.0.0](https://github.com/dtopuzov/craftdriver/compare/v0.2.2...v1.0.0) (2026-07-04)
 
 
