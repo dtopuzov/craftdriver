@@ -32,6 +32,34 @@ describe('ElementHandle API', () => {
     });
   });
 
+  describe('click()', () => {
+    beforeEach(async () => {
+      await browser.navigateTo(`${baseUrl}/login.html`);
+    });
+
+    it('clicks an element scrolled below the fold', async () => {
+      await browser.evaluate(() => {
+        const spacer = document.createElement('div');
+        const button = document.createElement('button');
+        const status = document.createElement('div');
+        spacer.style.height = '2500px';
+        button.id = 'below-fold-click-target';
+        button.textContent = 'Click below fold';
+        status.id = 'below-fold-click-status';
+        status.textContent = 'Not clicked';
+        button.addEventListener('click', () => {
+          status.textContent = 'Clicked below fold';
+        });
+        document.body.insertBefore(spacer, document.body.firstChild);
+        spacer.after(button, status);
+        window.scrollTo(0, 0);
+      });
+
+      await browser.find('#below-fold-click-target').click();
+      await browser.expect('#below-fold-click-status').toContainText('Clicked below fold');
+    });
+  });
+
   describe('text(), value(), tagName(), getAttribute()', () => {
     beforeEach(async () => {
       await browser.navigateTo(`${baseUrl}/login.html`);
@@ -39,23 +67,23 @@ describe('ElementHandle API', () => {
 
     it('text() returns element text content', async () => {
       const heading = await browser.find('h1').text();
-      if (!heading.includes('Login')) throw new Error(`Expected heading to contain "Login"`);
+      expect(heading).toContain('Login');
     });
 
     it('value() returns input value', async () => {
       await browser.find('#username').fill('test123');
       const val = await browser.find('#username').value();
-      if (val !== 'test123') throw new Error(`Expected "test123" but got "${val}"`);
+      expect(val).toBe('test123');
     });
 
     it('tagName() returns element tag name', async () => {
       const tag = await browser.find('h1').tagName();
-      if (tag !== 'h1') throw new Error(`Expected "h1" but got "${tag}"`);
+      expect(tag).toBe('h1');
     });
 
     it('getAttribute() returns attribute value', async () => {
       const attr = await browser.find('#password').getAttribute('type');
-      if (attr !== 'password') throw new Error(`Expected "password" but got "${attr}"`);
+      expect(attr).toBe('password');
     });
   });
 
@@ -66,12 +94,12 @@ describe('ElementHandle API', () => {
 
     it('isVisible() returns true for visible elements', async () => {
       const visible = await browser.find('#username').isVisible();
-      if (!visible) throw new Error('Expected element to be visible');
+      expect(visible).toBe(true);
     });
 
     it('isEnabled() returns true for enabled inputs', async () => {
       const enabled = await browser.find('#username').isEnabled();
-      if (!enabled) throw new Error('Expected element to be enabled');
+      expect(enabled).toBe(true);
     });
   });
 
@@ -79,9 +107,9 @@ describe('ElementHandle API', () => {
     it('returns element dimensions', async () => {
       await browser.navigateTo(`${baseUrl}/login.html`);
       const box = await browser.find('#username').boundingBox();
-      if (!box || box.width <= 0 || box.height <= 0) {
-        throw new Error('Expected bounding box with positive dimensions');
-      }
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThan(0);
+      expect(box!.height).toBeGreaterThan(0);
     });
   });
 
@@ -120,31 +148,14 @@ describe('ElementHandle API', () => {
     it('selects option from dropdown', async () => {
       await browser.find('#language-select').select('es');
 
-      const value = await browser.getValue('#language-select');
-      if (value !== 'es') {
-        throw new Error(`Expected language to be "es" but got "${value}"`);
-      }
-
+      await browser.expect('#language-select').toHaveValue('es');
       await browser.expect('#select-result').toContainText('Language: es');
     });
 
     it('throws error when using select on non-select element', async () => {
-      let errorThrown = false;
-      try {
-        await browser.find('#tooltip-trigger').select('invalid');
-      } catch (error: any) {
-        errorThrown = true;
-        if (!error.message.includes('can only be used on <select> elements')) {
-          throw new Error(`Expected specific error message but got: ${error.message}`);
-        }
-        if (!error.message.includes('Found <div>')) {
-          throw new Error(`Expected error to mention element type but got: ${error.message}`);
-        }
-      }
-
-      if (!errorThrown) {
-        throw new Error('Expected select() to throw error on non-select element');
-      }
+      await expect(browser.find('#tooltip-trigger').select('invalid')).rejects.toThrow(
+        /select\(\) can only be used on <select> elements\. Found <div> instead\./
+      );
     });
   });
 
@@ -270,11 +281,11 @@ describe('Browser-level element methods', () => {
   it('getValue() returns input value', async () => {
     await browser.fill('#username', 'myvalue');
     const val = await browser.getValue('#username');
-    if (val !== 'myvalue') throw new Error(`Expected "myvalue" but got "${val}"`);
+    expect(val).toBe('myvalue');
   });
 
   it('getAttribute() returns element attribute', async () => {
     const typeAttr = await browser.getAttribute('#username', 'type');
-    if (typeAttr !== 'text') throw new Error(`Expected "text" but got "${typeAttr}"`);
+    expect(typeAttr).toBe('text');
   });
 });
