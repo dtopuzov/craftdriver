@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/dtopuzov/craftdriver/compare/v1.0.1...v1.0.2) (2026-07-06)
+
+
+### Performance Improvements
+
+* optimize fill without implicit click ([4b3c6c6](https://github.com/dtopuzov/craftdriver/commit/4b3c6c6f2976bc95a767ece1979067bb34b46760))
+
 ## [1.0.1](https://github.com/dtopuzov/craftdriver/compare/v1.0.0...v1.0.1) (2026-07-05)
 
 
