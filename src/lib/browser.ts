@@ -49,6 +49,7 @@ import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
+import { clearWithFastPath } from './clearFastPath.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -2134,10 +2135,12 @@ export class Browser {
   async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     if (this._tracer?.isRunning) this._tracer.recordAction('clear', undefined, selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const el = await this.driver.wait(until.elementIsVisible(by), {
-      timeout: opts?.timeout ?? this.defaults.timeout,
-    });
-    await el.clear();
+    const timeout = opts?.timeout ?? this.defaults.timeout;
+    await clearWithFastPath(
+      () => this.driver.findElement(by),
+      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+      timeout
+    );
   }
 
   async getValue(selector: string | By, opts?: { timeout?: number }): Promise<string> {
