@@ -9,6 +9,7 @@ import { A11y } from './a11y.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
+import { withApiCallStack } from './errors.js';
 
 export interface ElementOptions {
   timeout?: number;
@@ -39,16 +40,19 @@ export class ElementHandle {
     return this;
   }
 
-  private async _withContext<T>(fn: () => Promise<T>): Promise<T> {
-    if (this._contextSwitcher) {
-      await this._contextSwitcher.in();
-      try {
-        return await fn();
-      } finally {
-        await this._contextSwitcher.out();
+  private async _withContext<T>(fn: () => Promise<T>, callerFn?: Function): Promise<T> {
+    const run = async () => {
+      if (this._contextSwitcher) {
+        await this._contextSwitcher.in();
+        try {
+          return await fn();
+        } finally {
+          await this._contextSwitcher.out();
+        }
       }
-    }
-    return fn();
+      return fn();
+    };
+    return callerFn ? withApiCallStack(callerFn, run) : run();
   }
 
   /**
@@ -93,7 +97,7 @@ export class ElementHandle {
         (remaining) => this._resolveVisible({ timeout: remaining }),
         timeout
       );
-    });
+    }, ElementHandle.prototype.click);
   }
 
   async fill(text: string, options?: ElementOptions): Promise<void> {
@@ -107,7 +111,7 @@ export class ElementHandle {
         text,
         timeout
       );
-    });
+    }, ElementHandle.prototype.fill);
   }
 
   async clear(options?: ElementOptions): Promise<void> {
@@ -120,7 +124,7 @@ export class ElementHandle {
         (remaining) => this._resolveVisible({ timeout: remaining }),
         timeout
       );
-    });
+    }, ElementHandle.prototype.clear);
   }
 
   async press(key: KeyValue, options?: ElementOptions): Promise<void> {
@@ -137,7 +141,7 @@ export class ElementHandle {
       }
       const code = getKeyValue(key);
       await this.driver.keyPressCode(code, 1);
-    });
+    }, ElementHandle.prototype.press);
   }
 
   /**
@@ -155,14 +159,14 @@ export class ElementHandle {
       const buf = Buffer.from(b64, 'base64');
       if (opts?.path) await fs.writeFile(opts.path, buf);
       return buf;
-    });
+    }, ElementHandle.prototype.screenshot);
   }
 
   async text(options?: ElementOptions): Promise<string> {
     return this._withContext(async () => {
       const el = await this._resolveLocated(options);
       return el.getText();
-    });
+    }, ElementHandle.prototype.text);
   }
 
   async value(options?: ElementOptions): Promise<string> {
@@ -170,21 +174,21 @@ export class ElementHandle {
       const el = await this._resolveLocated(options);
       const val = await el.getProperty('value');
       return String(val ?? '');
-    });
+    }, ElementHandle.prototype.value);
   }
 
   async tagName(options?: ElementOptions): Promise<string> {
     return this._withContext(async () => {
       const el = await this._resolveLocated(options);
       return el.getTagName();
-    });
+    }, ElementHandle.prototype.tagName);
   }
 
   async getAttribute(name: string, options?: ElementOptions): Promise<string | null> {
     return this._withContext(async () => {
       const el = await this._resolveLocated(options);
       return el.getAttribute(name);
-    });
+    }, ElementHandle.prototype.getAttribute);
   }
 
   async isVisible(options?: ElementOptions): Promise<boolean> {
@@ -193,7 +197,7 @@ export class ElementHandle {
         const timeout = options?.timeout ?? Math.min(this.getDefaultTimeout(), 1000);
         const el = await this._resolveLocated({ timeout });
         return el.isDisplayed();
-      });
+      }, ElementHandle.prototype.isVisible);
     } catch {
       return false;
     }
@@ -203,14 +207,14 @@ export class ElementHandle {
     return this._withContext(async () => {
       const el = await this._resolveLocated(options);
       return el.isEnabled();
-    });
+    }, ElementHandle.prototype.isEnabled);
   }
 
   async isChecked(options?: ElementOptions): Promise<boolean> {
     return this._withContext(async () => {
       const el = await this._resolveLocated(options);
       return el.isSelected();
-    });
+    }, ElementHandle.prototype.isChecked);
   }
 
   async boundingBox(options?: ElementOptions): Promise<{ x: number; y: number; width: number; height: number } | null> {
@@ -218,7 +222,7 @@ export class ElementHandle {
       return await this._withContext(async () => {
         const el = await this._resolveLocated(options);
         return el.getRect();
-      });
+      }, ElementHandle.prototype.boundingBox);
     } catch {
       return null;
     }
@@ -228,7 +232,7 @@ export class ElementHandle {
     return this._withContext(async () => {
       const el = await this._resolveVisible(options);
       await this.driver.pointerMoveTo(el);
-    });
+    }, ElementHandle.prototype.hover);
   }
 
   async select(value: string, options?: ElementOptions): Promise<void> {
@@ -256,7 +260,7 @@ export class ElementHandle {
       `;
 
       await this.driver.executeScript(script, [el, value]);
-    });
+    }, ElementHandle.prototype.select);
   }
 
   expect() {
@@ -290,7 +294,7 @@ export class ElementHandle {
       }
 
       await el.sendKeys(paths.join('\n'));
-    });
+    }, ElementHandle.prototype.setInputFiles);
   }
 
   /**
@@ -314,7 +318,7 @@ export class ElementHandle {
         `return (${fnSrc}).apply(null, arguments)`,
         [el, ...args]
       );
-    });
+    }, ElementHandle.prototype.evaluate);
   }
 
   private _a11y?: A11y;

@@ -100,6 +100,9 @@ describe('error codes', () => {
     }
     expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
     expect(String((err as CraftdriverError).detail?.webDriverError)).toContain('stale element');
+    const stack = String((err as Error).stack);
+    expect(stack).toContain('tests/error-codes.test.ts');
+    expect(stack).not.toContain('src/lib/http.ts');
   });
 
   it('clicking a snapshot handle covered by an overlay throws DRIVER_ERROR (intercepted)', async () => {
