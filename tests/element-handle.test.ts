@@ -176,6 +176,35 @@ describe('Browser-level element methods', () => {
     await browser.expect('#username').toHaveValue('replaced');
   });
 
+  it('fill() does not click the target before typing', async () => {
+    await browser.evaluate(() => {
+      (window as any).__fillClickCount = 0;
+      document.getElementById('username')?.addEventListener('click', () => {
+        (window as any).__fillClickCount += 1;
+      });
+    });
+
+    await browser.fill('#username', 'typed');
+
+    expect(await browser.evaluate(() => (window as any).__fillClickCount)).toBe(0);
+  });
+
+  it('fill() waits for an attached input to become visible', async () => {
+    await browser.evaluate(() => {
+      const input = document.createElement('input');
+      input.id = 'delayed-fill';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      setTimeout(() => {
+        input.style.display = 'block';
+      }, 300);
+    });
+
+    await browser.fill('#delayed-fill', 'visible now', { timeout: 3000 });
+
+    await browser.expect('#delayed-fill').toHaveValue('visible now');
+  });
+
   it('clear() removes text from input', async () => {
     await browser.fill('#username', 'some text');
     await browser.clear('#username');

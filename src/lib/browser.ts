@@ -48,6 +48,7 @@ import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { clickWithFastPath } from './clickFastPath.js';
+import { fillWithFastPath } from './fillFastPath.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -2121,12 +2122,13 @@ export class Browser {
   ): Promise<void> {
     if (this._tracer?.isRunning) this._tracer.recordAction('fill', [text], selectorToString(selector));
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const el = await this.driver.wait(until.elementIsVisible(by), {
-      timeout: opts?.timeout ?? this.defaults.timeout,
-    });
-    await el.click();
-    await el.clear();
-    await el.sendKeys(text);
+    const timeout = opts?.timeout ?? this.defaults.timeout;
+    await fillWithFastPath(
+      () => this.driver.findElement(by),
+      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+      text,
+      timeout
+    );
   }
 
   async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {

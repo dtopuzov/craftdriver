@@ -8,6 +8,7 @@ import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
 import { clickWithFastPath } from './clickFastPath.js';
+import { fillWithFastPath } from './fillFastPath.js';
 
 export interface ActionOptions {
   timeout?: number;
@@ -244,11 +245,14 @@ export class Locator {
   }
 
   async fill(text: string, options?: ActionOptions): Promise<void> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      const el = await this._waitForVisibleOrSimple(options);
-      await el.click();
-      await el.clear();
-      await el.sendKeys(text);
+      await fillWithFastPath(
+        () => this._resolveOnce(),
+        (remaining) => this._waitForVisibleOrSimple({ timeout: remaining }),
+        text,
+        timeout
+      );
     });
   }
 

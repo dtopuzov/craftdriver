@@ -7,6 +7,7 @@ import { expectSelector } from './expect.js';
 import { getKeyValue, type KeyValue } from './keys.js';
 import { A11y } from './a11y.js';
 import { clickWithFastPath } from './clickFastPath.js';
+import { fillWithFastPath } from './fillFastPath.js';
 
 export interface ElementOptions {
   timeout?: number;
@@ -95,11 +96,16 @@ export class ElementHandle {
   }
 
   async fill(text: string, options?: ElementOptions): Promise<void> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      const el = await this._resolveVisible(options);
-      await el.click();
-      await el.clear();
-      await el.sendKeys(text);
+      await fillWithFastPath(
+        () => this._webElement
+          ? Promise.resolve(this._webElement)
+          : this.driver.findElement(this.by),
+        (remaining) => this._resolveVisible({ timeout: remaining }),
+        text,
+        timeout
+      );
     });
   }
 
