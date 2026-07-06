@@ -21,6 +21,7 @@ import type { BiDiConnection } from './bidi/connection.js';
 import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, STATE_POLL_INTERVAL_MS } from './timing.js';
 import { clickWithFastPath } from './clickFastPath.js';
+import { fillWithFastPath } from './fillFastPath.js';
 
 type LoadState = 'load' | 'domcontentloaded';
 
@@ -114,14 +115,15 @@ export class Frame {
 
   async fill(selector: string | By, text: string, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const timeout = opts?.timeout ?? this.getDefaultTimeout();
     await this.contextSwitcher.in();
     try {
-      const el = await this.driver.wait(until.elementIsVisible(by), {
-        timeout: opts?.timeout ?? this.getDefaultTimeout(),
-      });
-      await el.click();
-      await el.clear();
-      await el.sendKeys(text);
+      await fillWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        text,
+        timeout
+      );
     } finally {
       await this.contextSwitcher.out();
     }

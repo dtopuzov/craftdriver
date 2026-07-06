@@ -24,6 +24,7 @@ import { DEFAULT_NAVIGATION_TIMEOUT_MS, STATE_POLL_INTERVAL_MS } from './timing.
 import type { BrowserContext } from './browserContext.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { clickWithFastPath } from './clickFastPath.js';
+import { fillWithFastPath } from './fillFastPath.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
@@ -422,13 +423,14 @@ export class Page {
 
   async fill(selector: string | By, text: string, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const timeout = opts?.timeout ?? this.getDefaultTimeout();
     return this._withWindow(async () => {
-      const el = await this.driver.wait(until.elementIsVisible(by), {
-        timeout: opts?.timeout ?? this.getDefaultTimeout(),
-      });
-      await el.click();
-      await el.clear();
-      await el.sendKeys(text);
+      await fillWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        text,
+        timeout
+      );
     });
   }
 
