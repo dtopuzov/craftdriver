@@ -97,10 +97,9 @@ describe('ElementHandle API', () => {
 
     it('hovers an element scrolled below the fold', async () => {
       // Push the tooltip trigger far below the viewport, then hover it without
-      // scrolling manually. Regression guard for the pointer-move origin: moving
-      // to the element origin scrolls it into view and lands on its in-view
-      // centre, whereas computing the centre from document-relative getRect() and
-      // moving in viewport space misses a scrolled-out element (out of bounds).
+      // scrolling manually. Chrome scrolls element-origin Actions moves into
+      // view, but geckodriver may reject them as out of bounds; pointerMoveTo()
+      // should handle that by scrolling the element into view and retrying.
       await browser.evaluate(() => {
         const spacer = document.createElement('div');
         spacer.style.height = '2500px';

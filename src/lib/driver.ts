@@ -3,6 +3,12 @@ import type { Capabilities, SessionResponse, WebDriverEndpoint, CommandResponse 
 import { By } from './by.js';
 import { WebElement, W3C_ELEMENT_KEY, LEGACY_ELEMENT_KEY } from './webelement.js';
 import { WebDriverWait, type Condition, type WaitOptions } from './wait.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
+
+function isMoveTargetOutOfBounds(err: unknown): boolean {
+  if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
+  return err.detail?.webDriverError === 'move target out of bounds';
+}
 
 export class Driver {
   /** BiDi WebSocket URL if available */
@@ -268,7 +274,7 @@ export class Driver {
       pointerMove.x = x ?? 0;
       pointerMove.y = y ?? 0;
     }
-    await client.send({
+    const sendMove = () => client.send({
       method: 'POST',
       path: `/session/${this.sessionId}/actions`,
       body: {
@@ -282,6 +288,18 @@ export class Driver {
         ],
       },
     });
+
+    try {
+      await sendMove();
+    } catch (err) {
+      if (!originElement || !isMoveTargetOutOfBounds(err)) throw err;
+      // Chromedriver scrolls element-origin moves; geckodriver may require it explicitly.
+      await this.executeScript(
+        `arguments[0].scrollIntoView({ block: 'center', inline: 'center' });`,
+        [originElement]
+      );
+      await sendMove();
+    }
   }
 
   async mouseDown(button: number = 0): Promise<void> {
