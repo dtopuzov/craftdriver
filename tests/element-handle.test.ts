@@ -94,6 +94,23 @@ describe('ElementHandle API', () => {
       await browser.find('#tooltip-trigger').hover();
       await browser.expect('#tooltip-status').toContainText('Tooltip is visible');
     });
+
+    it('hovers an element scrolled below the fold', async () => {
+      // Push the tooltip trigger far below the viewport, then hover it without
+      // scrolling manually. Regression guard for the pointer-move origin: moving
+      // to the element origin scrolls it into view and lands on its in-view
+      // centre, whereas computing the centre from document-relative getRect() and
+      // moving in viewport space misses a scrolled-out element (out of bounds).
+      await browser.evaluate(() => {
+        const spacer = document.createElement('div');
+        spacer.style.height = '2500px';
+        document.body.insertBefore(spacer, document.body.firstChild);
+        window.scrollTo(0, 0);
+      });
+
+      await browser.find('#tooltip-trigger').hover();
+      await browser.expect('#tooltip-status').toContainText('Tooltip is visible');
+    });
   });
 
   describe('select()', () => {
@@ -209,6 +226,46 @@ describe('Browser-level element methods', () => {
     await browser.fill('#username', 'some text');
     await browser.clear('#username');
     await browser.expect('#username').toHaveValue('');
+  });
+
+  it('clear() skips the visibility wait when the input is already ready', async () => {
+    await browser.fill('#username', 'some text');
+
+    const driver = (browser as any).driver;
+    const originalWait = driver.wait.bind(driver);
+    let waitCalls = 0;
+    driver.wait = (...args: any[]) => {
+      waitCalls += 1;
+      return originalWait(...args);
+    };
+
+    try {
+      await browser.clear('#username');
+    } finally {
+      driver.wait = originalWait;
+    }
+
+    expect(waitCalls).toBe(0);
+    await browser.expect('#username').toHaveValue('');
+  });
+
+  it('clear() waits for an attached input to become visible', async () => {
+    await browser.evaluate(() => {
+      const input = document.createElement('input');
+      input.id = 'delayed-clear';
+      input.value = 'content';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      setTimeout(() => {
+        input.style.display = 'block';
+      }, 300);
+    });
+
+    const start = Date.now();
+    await browser.clear('#delayed-clear', { timeout: 3000 });
+
+    expect(Date.now() - start).toBeGreaterThanOrEqual(200);
+    await browser.expect('#delayed-clear').toHaveValue('');
   });
 
   it('getValue() returns input value', async () => {

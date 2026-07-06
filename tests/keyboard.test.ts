@@ -51,6 +51,25 @@ describe('Keyboard interactions on keyboard.html', () => {
     await browser.expect('#enterResult').toHaveText('submitted');
   });
 
+  it('ElementHandle.press() uses the click fast path before pressing the key', async () => {
+    const driver = (browser as any).driver;
+    const originalWait = driver.wait.bind(driver);
+    let waitCalls = 0;
+    driver.wait = (...args: any[]) => {
+      waitCalls += 1;
+      return originalWait(...args);
+    };
+
+    try {
+      await browser.find('#enterTarget').press(Key.Enter);
+    } finally {
+      driver.wait = originalWait;
+    }
+
+    expect(waitCalls).toBe(0);
+    await browser.expect('#enterResult').toHaveText('submitted');
+  });
+
   it('modifier keys update status (Shift/Ctrl/Alt)', async () => {
     await browser.click('#editor');
     await browser.keyboard.down(Key.Shift);

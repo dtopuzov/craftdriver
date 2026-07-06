@@ -8,6 +8,7 @@ import { getKeyValue, type KeyValue } from './keys.js';
 import { A11y } from './a11y.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
+import { clearWithFastPath } from './clearFastPath.js';
 
 export interface ElementOptions {
   timeout?: number;
@@ -110,16 +111,30 @@ export class ElementHandle {
   }
 
   async clear(options?: ElementOptions): Promise<void> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      const el = await this._resolveVisible(options);
-      await el.clear();
+      await clearWithFastPath(
+        () => this._webElement
+          ? Promise.resolve(this._webElement)
+          : this.driver.findElement(this.by),
+        (remaining) => this._resolveVisible({ timeout: remaining }),
+        timeout
+      );
     });
   }
 
   async press(key: KeyValue, options?: ElementOptions): Promise<void> {
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      const el = await this._resolveVisible(options);
-      await el.click();
+      if (this._webElement) {
+        await this._webElement.click();
+      } else {
+        await clickWithFastPath(
+          () => this.driver.findElement(this.by),
+          (remaining) => this._resolveVisible({ timeout: remaining }),
+          timeout
+        );
+      }
       const code = getKeyValue(key);
       await this.driver.keyPressCode(code, 1);
     });
@@ -212,10 +227,7 @@ export class ElementHandle {
   async hover(options?: ElementOptions): Promise<void> {
     return this._withContext(async () => {
       const el = await this._resolveVisible(options);
-      const rect = await el.getRect();
-      const centerX = rect.x + rect.width / 2;
-      const centerY = rect.y + rect.height / 2;
-      await this.driver.pointerMoveTo(undefined, centerX, centerY);
+      await this.driver.pointerMoveTo(el);
     });
   }
 
