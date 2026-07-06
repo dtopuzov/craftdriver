@@ -82,3 +82,35 @@ export class CraftdriverError extends Error {
     return code === undefined || err.code === code;
   }
 }
+
+type CapturedStack = { stack?: string };
+
+function captureStack(callerFn: Function): CapturedStack {
+  const captured: CapturedStack = {};
+  if (Error.captureStackTrace) {
+    Error.captureStackTrace(captured, callerFn);
+  } else {
+    captured.stack = new Error().stack;
+  }
+  return captured;
+}
+
+function applyCapturedStack(err: unknown, captured: CapturedStack): void {
+  if (!(err instanceof Error) || !captured.stack) return;
+
+  const frames = captured.stack.split('\n').slice(1);
+  err.stack = [`${err.name}: ${err.message}`, ...frames].join('\n');
+}
+
+export async function withApiCallStack<T>(
+  callerFn: Function,
+  action: () => Promise<T>
+): Promise<T> {
+  const captured = captureStack(callerFn);
+  try {
+    return await action();
+  } catch (err) {
+    applyCapturedStack(err, captured);
+    throw err;
+  }
+}
