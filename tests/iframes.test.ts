@@ -46,7 +46,7 @@ describe('Iframes', () => {
     const frame = await browser.frame('#my-frame');
     const result = await frame.evaluate(() => document.title);
     expect(typeof result).toBe('string');
-    expect(result).toBeTruthy();
+    expect(result.length).toBeGreaterThan(0);
   });
 
   it('can use frame.locator() to interact with elements', async () => {

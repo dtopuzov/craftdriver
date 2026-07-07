@@ -36,7 +36,9 @@ describe('browser.clock', () => {
     await browser.clock.install({ time: 0 });
     await browser.evaluate(() => {
       (window as any).__fired = false;
-      setTimeout(() => { (window as any).__fired = true; }, 500);
+      setTimeout(() => {
+        (window as any).__fired = true;
+      }, 500);
     });
 
     await browser.clock.tick(499);
@@ -52,7 +54,9 @@ describe('browser.clock', () => {
     await browser.clock.install({ time: 0 });
     await browser.evaluate(() => {
       (window as any).__count = 0;
-      (window as any).__id = setInterval(() => { (window as any).__count++; }, 100);
+      (window as any).__id = setInterval(() => {
+        (window as any).__count++;
+      }, 100);
     });
 
     await browser.clock.tick(500);
@@ -69,8 +73,12 @@ describe('browser.clock', () => {
     await browser.evaluate(() => {
       (window as any).__zero = false;
       (window as any).__cancelled = false;
-      setTimeout(() => { (window as any).__zero = true; }, 0);
-      const id = setTimeout(() => { (window as any).__cancelled = true; }, 0);
+      setTimeout(() => {
+        (window as any).__zero = true;
+      }, 0);
+      const id = setTimeout(() => {
+        (window as any).__cancelled = true;
+      }, 0);
       clearTimeout(id);
     });
 
@@ -84,9 +92,11 @@ describe('browser.clock', () => {
     await browser.clock.install();
     await browser.navigateTo(CLOCK_URL); // preload applies on this nav
     await browser.clock.fastForward('15:01');
-    expect(await browser.evaluate(() =>
-      document.getElementById('login-modal')!.classList.contains('visible')
-    )).toBe(true);
+    expect(
+      await browser.evaluate(() =>
+        document.getElementById('login-modal')!.classList.contains('visible')
+      )
+    ).toBe(true);
 
     // HH:MM:SS — re-install to reset, then verify the three-part parser
     await browser.clock.install({ time: 0 });
@@ -118,16 +128,16 @@ describe('browser.clock', () => {
     // One minute before — banner shows "expires today"
     await browser.clock.setFixedTime('2026-06-15T23:59:00Z');
     await browser.navigateTo(CLOCK_URL);
-    expect(await browser.evaluate(() =>
-      document.getElementById('trial-banner')!.textContent
-    )).toContain('expires today');
+    expect(
+      await browser.evaluate(() => document.getElementById('trial-banner')!.textContent)
+    ).toContain('expires today');
 
     // One second after — banner shows "expired"
     await browser.clock.setFixedTime('2026-06-16T00:00:01Z');
     await browser.navigateTo(CLOCK_URL);
-    expect(await browser.evaluate(() =>
-      document.getElementById('trial-banner')!.textContent
-    )).toContain('expired');
+    expect(
+      await browser.evaluate(() => document.getElementById('trial-banner')!.textContent)
+    ).toContain('expired');
   });
 
   it('setFixedTime() preload survives navigations', async () => {
@@ -145,7 +155,9 @@ describe('browser.clock', () => {
     await browser.clock.install({ time: 0 });
     await browser.evaluate(() => {
       (window as any).__count = 0;
-      setInterval(() => { (window as any).__count++; }, 100);
+      setInterval(() => {
+        (window as any).__count++;
+      }, 100);
     });
 
     // Jump ahead — no timers should fire during the jump
@@ -163,7 +175,9 @@ describe('browser.clock', () => {
     await browser.evaluate(() => {
       (window as any).__done = false;
       setTimeout(() => {
-        Promise.resolve().then(() => { (window as any).__done = true; });
+        Promise.resolve().then(() => {
+          (window as any).__done = true;
+        });
       }, 50);
     });
 
@@ -178,14 +192,18 @@ describe('browser.clock', () => {
     await browser.fill('#search-input', 'lap');
 
     await browser.clock.tick(299); // just before the 300 ms debounce
-    expect(await browser.evaluate(() =>
-      parseInt(document.getElementById('search-count')!.textContent || '0', 10)
-    )).toBe(0);
+    expect(
+      await browser.evaluate(() =>
+        parseInt(document.getElementById('search-count')!.textContent || '0', 10)
+      )
+    ).toBe(0);
 
     await browser.clock.tick(2); // total 301 ms — debounce fires once
-    expect(await browser.evaluate(() =>
-      parseInt(document.getElementById('search-count')!.textContent || '0', 10)
-    )).toBe(1);
+    expect(
+      await browser.evaluate(() =>
+        parseInt(document.getElementById('search-count')!.textContent || '0', 10)
+      )
+    ).toBe(1);
   });
 
   it('install() preload survives navigation; re-install resets the virtual time', async () => {
@@ -215,4 +233,3 @@ describe('browser.clock', () => {
     expect(await browser.evaluate(() => Date.now())).toBeGreaterThan(1_000_000_000_000);
   });
 });
-

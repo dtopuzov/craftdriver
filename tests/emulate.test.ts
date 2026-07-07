@@ -15,14 +15,18 @@ describe('browser.emulate()', () => {
 
   beforeEach(async () => {
     // Reset all overrides before each test so they don't leak.
-    await browser.emulate({
-      colorScheme: null,
-      reducedMotion: null,
-      forcedColors: null,
-      locale: null,
-      timezoneId: null,
-      offline: false,
-    }).catch(() => { /* Firefox may reject media/offline; ignore in reset */ });
+    await browser
+      .emulate({
+        colorScheme: null,
+        reducedMotion: null,
+        forcedColors: null,
+        locale: null,
+        timezoneId: null,
+        offline: false,
+      })
+      .catch(() => {
+        /* Firefox may reject media/offline; ignore in reset */
+      });
     await browser.navigateTo(`${EXAMPLES_BASE_URL}/emulate.html`);
   });
 
@@ -57,25 +61,32 @@ describe('browser.emulate()', () => {
     await browser.expect('#scheme-readout').toHaveText('dark');
   });
 
-  it.skipIf(!IS_CHROMIUM)('offline: true makes fetch reject and navigator.onLine false', async () => {
-    await browser.emulate({ offline: true });
-    await browser.expect('#online-readout').toHaveText('offline');
+  it.skipIf(!IS_CHROMIUM)(
+    'offline: true makes fetch reject and navigator.onLine false',
+    async () => {
+      await browser.emulate({ offline: true });
+      await browser.expect('#online-readout').toHaveText('offline');
 
-    await browser.click('#fetch-btn');
-    await browser.expect('#fetch-readout').toContainText('error');
+      await browser.click('#fetch-btn');
+      await browser.expect('#fetch-readout').toContainText('error');
 
-    // Restore so the next test's reset doesn't run while offline.
-    await browser.emulate({ offline: false });
-  });
+      // Restore so the next test's reset doesn't run while offline.
+      await browser.emulate({ offline: false });
+    }
+  );
 
   it.skipIf(IS_CHROMIUM)('throws a clear error for Chromium-only fields on Firefox', async () => {
-    await expect(browser.emulate({ colorScheme: 'dark' })).rejects.toThrow(/not supported on Firefox/);
+    await expect(browser.emulate({ colorScheme: 'dark' })).rejects.toThrow(
+      /not supported on Firefox/
+    );
   });
 
   it('throws a clear error when BiDi is disabled', async () => {
     const noBidi = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: false });
     try {
-      await expect(noBidi.emulate({ locale: 'de-DE' })).rejects.toThrow(/emulate\(\) requires BiDi/);
+      await expect(noBidi.emulate({ locale: 'de-DE' })).rejects.toThrow(
+        /emulate\(\) requires BiDi/
+      );
     } finally {
       await noBidi.quit();
     }

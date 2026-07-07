@@ -42,7 +42,7 @@ describe('driver manager — auto-download integration', () => {
   const testCacheDir = path.join(os.tmpdir(), `craftdriver-test-cache-${process.pid}`);
 
   let browser: Browser | undefined;
-  let restoreEnv: () => void;
+  let restoreEnv = () => {};
 
   beforeAll(async () => {
     // Ensure the test cache starts empty so we exercise the download path.
@@ -100,14 +100,15 @@ describe('driver manager — auto-download integration', () => {
     if (os.platform() !== 'win32') {
       const mode = fs.statSync(driverBin).mode;
       // Check owner-execute bit (0o100)
-      expect(mode & 0o100).toBeTruthy();
+      expect(mode & 0o100).toBe(0o100);
     }
   });
 
   it('starts the browser and can navigate to a page', async () => {
     expect(browser).toBeDefined();
-    await browser!.navigateTo('about:blank');
-    const url = await browser!.url();
+    const launchedBrowser = browser!;
+    await launchedBrowser.navigateTo('about:blank');
+    const url = await launchedBrowser.url();
     expect(url).toBe('about:blank');
   });
 });

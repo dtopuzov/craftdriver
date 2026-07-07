@@ -44,15 +44,16 @@ describe('evaluate()', () => {
   });
 
   it('element.evaluate() receives the DOM element as first arg', async () => {
-    const tag = await browser.find('#action-btn').evaluate((el) => (el as Element).tagName.toLowerCase());
+    const tag = await browser
+      .find('#action-btn')
+      .evaluate((el) => (el as Element).tagName.toLowerCase());
     expect(tag).toBe('button');
   });
 
   it('element.evaluate() passes extra args', async () => {
-    const has = await browser.find('#action-btn').evaluate(
-      (el, cls) => (el as Element).classList.contains(cls as string),
-      'active'
-    );
+    const has = await browser
+      .find('#action-btn')
+      .evaluate((el, cls) => (el as Element).classList.contains(cls as string), 'active');
     expect(has).toBe(true);
   });
 
@@ -60,9 +61,9 @@ describe('evaluate()', () => {
     // Returning a DOM node is not JSON-serializable via BiDi
     // (Classic executeScript silently coerces — skip that check)
     if (!browser.isBiDiEnabled()) return;
-    await expect(
-      browser.evaluate(() => document.body)
-    ).rejects.toThrow(/not JSON-serializable|node reference/i);
+    await expect(browser.evaluate(() => document.body)).rejects.toThrow(
+      /not JSON-serializable|node reference/i
+    );
   });
 
   // A Classic-first navigate returns at readyState === 'complete', which is not
@@ -79,9 +80,7 @@ describe('evaluate()', () => {
     conn.send = (method: string, params: Record<string, unknown> = {}) => {
       if (method === 'script.callFunction' && injected === 0) {
         injected++;
-        return Promise.reject(
-          new Error('BiDi error [unknown error]: execution contexts cleared')
-        );
+        return Promise.reject(new Error('BiDi error [unknown error]: execution contexts cleared'));
       }
       return original(method, params);
     };
@@ -96,7 +95,9 @@ describe('evaluate()', () => {
 
   it('does not retry a genuine in-script exception', async () => {
     await expect(
-      browser.evaluate(() => { throw new Error('boom'); })
+      browser.evaluate(() => {
+        throw new Error('boom');
+      })
     ).rejects.toThrow(/boom/);
   });
 });

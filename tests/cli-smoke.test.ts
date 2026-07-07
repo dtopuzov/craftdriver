@@ -28,6 +28,14 @@ interface RunResult {
   lines: Array<{ ok: boolean; result?: unknown; error?: { code: string; message: string } }>;
 }
 
+function parseOutputLine(line: string): RunResult['lines'][number] {
+  try {
+    return JSON.parse(line) as RunResult['lines'][number];
+  } catch {
+    return { ok: false, error: { code: 'PARSE_ERROR', message: line } };
+  }
+}
+
 /**
  * Spawn `craftdriver --ephemeral` and feed a script via stdin.
  * stdout is piped (not a TTY) so the CLI emits one JSON object per
@@ -35,14 +43,10 @@ interface RunResult {
  */
 async function runCli(script: string): Promise<RunResult> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(
-      'node',
-      [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME],
-      {
-        env: { ...process.env, HEADLESS: 'true' },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
+    const child = spawn('node', [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME], {
+      env: { ...process.env, HEADLESS: 'true' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
     let stdout = '';
     let stderr = '';
@@ -54,13 +58,7 @@ async function runCli(script: string): Promise<RunResult> {
         .split('\n')
         .map((l) => l.trim())
         .filter((l) => l.length > 0)
-        .map((l) => {
-          try {
-            return JSON.parse(l) as RunResult['lines'][number];
-          } catch {
-            return { ok: false, error: { code: 'PARSE_ERROR', message: l } };
-          }
-        });
+        .map(parseOutputLine);
       resolveRun({ exitCode: code ?? -1, stdout, stderr, lines });
     });
 
@@ -86,11 +84,11 @@ describe('CLI smoke', () => {
     expect(run.exitCode, run.stderr).toBe(0);
     // One JSON line per command — 5 commands.
     expect(run.lines).toHaveLength(5);
-    expect(run.lines.every((l) => l.ok)).toBe(true);
+    expect(run.lines.map((line) => line.ok)).toEqual([true, true, true, true, true]);
 
-    const last = run.lines[4];
-    const result = last.result as { text: string };
-    expect(result.text).toContain('Welcome back, testuser!');
+    expect(run.lines.at(-1)?.result).toMatchObject({
+      text: expect.stringContaining('Welcome back, testuser!'),
+    });
   });
 
   it('takes a snapshot listing the form controls with refs', async () => {
@@ -99,7 +97,7 @@ describe('CLI smoke', () => {
 
     expect(run.exitCode, run.stderr).toBe(0);
     expect(run.lines).toHaveLength(2);
-    expect(run.lines.every((l) => l.ok)).toBe(true);
+    expect(run.lines.map((line) => line.ok)).toEqual([true, true]);
 
     const snap = run.lines[1].result as { url: string; lines: string[] };
     expect(snap.url).toContain('/login.html');
@@ -127,10 +125,10 @@ describe('CLI smoke', () => {
     expect(run.lines).toHaveLength(4);
 
     expect(run.lines[1].ok).toBe(true);
-    expect((run.lines[1].result as { exists: boolean }).exists).toBe(true);
+    expect(run.lines[1].result).toMatchObject({ exists: true });
 
     expect(run.lines[2].ok).toBe(true);
-    expect((run.lines[2].result as { exists: boolean }).exists).toBe(false);
+    expect(run.lines[2].result).toMatchObject({ exists: false });
 
     expect(run.lines[3].ok).toBe(false);
     expect(run.lines[3].error?.code).toBe('NO_MATCH');

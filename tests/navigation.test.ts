@@ -36,7 +36,7 @@ describe('Navigation, content and viewport', () => {
     await browser.reload();
 
     const after = await browser.evaluate<number | undefined>('return window.__marker');
-    expect(after).toBeFalsy();
+    expect(after).toBeUndefined();
   });
 
   it('content() returns the serialized document', async () => {

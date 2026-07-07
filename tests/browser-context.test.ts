@@ -6,6 +6,15 @@ describe('BrowserContext (BiDi user contexts)', () => {
   let browser: Browser;
   const baseUrl = EXAMPLES_BASE_URL;
 
+  async function withContext<T>(run: (ctx: BrowserContext) => Promise<T>): Promise<T> {
+    const ctx = await browser.newContext();
+    try {
+      return await run(ctx);
+    } finally {
+      await ctx.close();
+    }
+  }
+
   beforeAll(async () => {
     browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
@@ -23,34 +32,28 @@ describe('BrowserContext (BiDi user contexts)', () => {
   it('contexts() always includes the default context', async () => {
     const ctxs = await browser.contexts();
     expect(ctxs.length).toBeGreaterThanOrEqual(1);
-    expect(ctxs.some((c) => c.id === 'default')).toBe(true);
+    expect(ctxs.map((c) => c.id)).toContain('default');
   });
 
   it('newContext() creates an isolated context with a new id', async () => {
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       expect(ctx).toBeInstanceOf(BrowserContext);
       expect(ctx.id).not.toBe('default');
       const all = await browser.contexts();
-      expect(all.some((c) => c.id === ctx.id)).toBe(true);
-    } finally {
-      await ctx.close();
-    }
+      expect(all.map((c) => c.id)).toContain(ctx.id);
+    });
   });
 
   it('newPage() opens a page bound to the context', async () => {
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
       expect(page).toBeInstanceOf(Page);
       await page.waitForLoadState('load');
       expect(await page.title()).toContain('Login');
 
       const pages = await ctx.pages();
-      expect(pages.some((p) => p.id() === page.id())).toBe(true);
-    } finally {
-      await ctx.close();
-    }
+      expect(pages.map((p) => p.id())).toContain(page.id());
+    });
   });
 
   it('two contexts isolate cookies (multi-user login)', async () => {
@@ -84,35 +87,29 @@ describe('BrowserContext (BiDi user contexts)', () => {
     }
   });
 
-  it('page.findAll() handles stay bound to a non-default context\'s window', async () => {
+  it("page.findAll() handles stay bound to a non-default context's window", async () => {
     // Regression: findAll() used to return snapshot handles with no context
     // switcher, so a later .text() call ran against whichever window
     // happened to have Classic focus by then instead of this page's own
     // window — invisible on the always-default-context happy path, real
     // once a page lives in a non-default BrowserContext.
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       const page = await ctx.newPage({ url: `${baseUrl}/locator.html` });
       const handles = await page.findAll('.product-name');
       expect(handles.length).toBe(5);
       const texts = await Promise.all(handles.map((h) => h.text()));
       expect(texts).toContain('Widget Lite');
-    } finally {
-      await ctx.close();
-    }
+    });
   });
 
-  it('page.locator(...).all() handles stay bound to a non-default context\'s window', async () => {
-    const ctx = await browser.newContext();
-    try {
+  it("page.locator(...).all() handles stay bound to a non-default context's window", async () => {
+    await withContext(async (ctx) => {
       const page = await ctx.newPage({ url: `${baseUrl}/locator.html` });
       const handles = await page.locator('.product').filter({ hasText: 'Gadget' }).all();
       expect(handles.length).toBe(2);
       const texts = await Promise.all(handles.map((h) => h.text()));
-      expect(texts.every((t) => t.includes('Gadget'))).toBe(true);
-    } finally {
-      await ctx.close();
-    }
+      expect(texts).toEqual([expect.stringContaining('Gadget'), expect.stringContaining('Gadget')]);
+    });
   });
 
   it('close() removes the context and subsequent ops throw', async () => {
@@ -122,7 +119,7 @@ describe('BrowserContext (BiDi user contexts)', () => {
     await expect(ctx.newPage()).rejects.toThrow(/closed/);
 
     const all = await browser.contexts();
-    expect(all.some((c) => c.id === ctx.id)).toBe(false);
+    expect(all.map((c) => c.id)).not.toContain(ctx.id);
   });
 
   it('defaultContext.close() throws (cannot remove default)', async () => {

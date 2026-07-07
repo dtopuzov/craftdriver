@@ -18,44 +18,37 @@ describe('Pages (tabs / popups)', () => {
     await browser.navigateTo(`${baseUrl}/popup.html`);
   });
 
+  async function openPopup(): Promise<Page> {
+    const popup = await browser.waitForPage(() => browser.click('#open-popup'));
+    await popup.waitForLoadState('load');
+    return popup;
+  }
+
   it('browser.pages() lists the current top-level page', async () => {
     const pages = await browser.pages();
     expect(pages.length).toBeGreaterThanOrEqual(1);
   });
 
   it('waitForPage() captures a popup opened by a button click', async () => {
-    const popup = await browser.waitForPage(async () => {
-      await browser.click('#open-popup');
-    });
-
-    await popup.waitForLoadState('load');
+    const popup = await openPopup();
     // Firefox may report load before document.title is populated — poll until it is.
     await expect.poll(() => popup.title(), { timeout: 5000 }).toBe('Popup Target');
   });
 
   it('popup Page.url() returns the popup URL', async () => {
-    const popup = await browser.waitForPage(async () => {
-      await browser.click('#open-popup');
-    });
-    await popup.waitForLoadState('load');
+    const popup = await openPopup();
     // Firefox may briefly report about:blank for a freshly opened popup — poll.
     await expect.poll(() => popup.url(), { timeout: 5000 }).toContain('popup-target.html');
   });
 
   it('popup Page can find elements', async () => {
-    const popup = await browser.waitForPage(async () => {
-      await browser.click('#open-popup');
-    });
-    await popup.waitForLoadState('load');
+    const popup = await openPopup();
     const text = await popup.find('#popup-heading').text();
     expect(text).toBe('Popup Window');
   });
 
   it('popup Page.evaluate() runs script in the popup', async () => {
-    const popup = await browser.waitForPage(async () => {
-      await browser.click('#open-popup');
-    });
-    await popup.waitForLoadState('load');
+    const popup = await openPopup();
     // Firefox may report load before document.title is populated — poll until it is.
     await expect
       .poll(() => popup.evaluate<string>(() => document.title), { timeout: 5000 })
@@ -75,7 +68,7 @@ describe('Pages (tabs / popups)', () => {
   it('openPage() without a url returns an empty new tab', async () => {
     const page = await browser.openPage();
     expect(page).toBeInstanceOf(Page);
-    expect(typeof page.id()).toBe('string');
+    expect(page.id()).toEqual(expect.any(String));
   });
 });
 

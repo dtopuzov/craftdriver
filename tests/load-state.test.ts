@@ -1,5 +1,4 @@
-import { describe, it, beforeAll, afterAll } from 'vitest';
-import { expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
@@ -68,8 +67,8 @@ describe('BiDi-first navigation and load states', () => {
     // Approach: wait for 'networkidle' with a tiny timeout on a fresh navigateTo('none') invocation.
     await browser.navigateTo(`${EXAMPLES_BASE_URL}/dynamic.html`, { waitUntil: 'none' });
     // networkidle on a page that just started loading will almost certainly time out at 1ms
-    await expect(
-      browser.waitForLoadState('networkidle', { timeout: 1 })
-    ).rejects.toThrow(/timed out/);
+    await expect(browser.waitForLoadState('networkidle', { timeout: 1 })).rejects.toThrow(
+      /timed out/
+    );
   });
 });

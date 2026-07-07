@@ -7,9 +7,10 @@ import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
  * width and height. We parse them directly so the test does not depend
  * on an image-processing library.
  */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
 function pngSize(buf: Buffer): { width: number; height: number } {
-  // PNG magic: 89 50 4E 47 0D 0A 1A 0A
-  if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) {
+  if (buf.length < 24 || !buf.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
     throw new Error('not a PNG');
   }
   return {
@@ -65,9 +66,9 @@ describe('screenshots', () => {
   });
 
   it('fullPage and selector are mutually exclusive', async () => {
-    await expect(
-      browser.screenshot({ fullPage: true, selector: '#s1' })
-    ).rejects.toThrow(/mutually exclusive/);
+    await expect(browser.screenshot({ fullPage: true, selector: '#s1' })).rejects.toThrow(
+      /mutually exclusive/
+    );
   });
 
   it('selector screenshot returns just the element', async () => {

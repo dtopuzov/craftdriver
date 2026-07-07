@@ -30,18 +30,13 @@ describe('a11y (axe-core wrapper)', () => {
     expect(typeof v.helpUrl).toBe('string');
     expect(['minor', 'moderate', 'serious', 'critical']).toContain(v.impact);
     expect(typeof v.nodes[0].html).toBe('string');
-    expect(Array.isArray(v.nodes[0].target)).toBe(true);
+    expect(v.nodes[0].target).toEqual(expect.any(Array));
   });
 
   it('check() throws A11yError with violations and help URLs in the message', async () => {
-    let caught: unknown;
-    try {
-      await browser.a11y.check();
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(A11yError);
-    const err = caught as A11yError;
+    const err = (await browser.a11y.check().catch((e: unknown) => e)) as A11yError;
+
+    expect(err).toBeInstanceOf(A11yError);
     expect(err.violations.length).toBeGreaterThan(0);
     expect(err.message).toMatch(/violation/);
     expect(err.message).toMatch(/https?:\/\//);
@@ -78,7 +73,7 @@ describe('a11y (axe-core wrapper)', () => {
     // image-alt is critical — must still be present (guards against vacuous pass)
     expect(report.violations.map((v) => v.id)).toContain('image-alt');
     // nothing below critical should leak through
-    expect(report.violations.every((v) => v.impact === 'critical')).toBe(true);
+    expect(new Set(report.violations.map((v) => v.impact))).toEqual(new Set(['critical']));
   });
 
   it('scoping: #bad has violations, #good is clean and check() does not throw', async () => {
