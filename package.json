@@ -1,6 +1,6 @@
 {
   "name": "craftdriver",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Modern WebDriver automation library for NodeJS",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

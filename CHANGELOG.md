@@ -1,3 +1,16 @@
+## [1.0.3](https://github.com/dtopuzov/craftdriver/compare/v1.0.2...v1.0.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* anchor element handle errors at call site ([a2d6cd3](https://github.com/dtopuzov/craftdriver/commit/a2d6cd3ace7402802ea1c48c1b99556677dc246a))
+* recover out-of-bounds element pointer moves ([a525914](https://github.com/dtopuzov/craftdriver/commit/a5259144c9ed7c1b0242d3358888fa0ad55838b2))
+
+
+### Performance Improvements
+
+* extend fast-path pattern to clear(), press(), and hover() ([1807371](https://github.com/dtopuzov/craftdriver/commit/180737148bbe4f2aa43ddcaae3dadc75d5febb08))
+
 ## [1.0.2](https://github.com/dtopuzov/craftdriver/compare/v1.0.1...v1.0.2) (2026-07-06)
 
 
