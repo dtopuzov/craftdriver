@@ -1,5 +1,4 @@
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
-import { expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
@@ -86,6 +85,6 @@ describe('Locator', () => {
     const handles = await browser.locator('.product').filter({ hasText: 'Gadget' }).all();
     expect(handles.length).toBe(2);
     const texts = await Promise.all(handles.map((h) => h.text()));
-    expect(texts.every((t) => t.includes('Gadget'))).toBe(true);
+    expect(texts).toEqual([expect.stringContaining('Gadget'), expect.stringContaining('Gadget')]);
   });
 });

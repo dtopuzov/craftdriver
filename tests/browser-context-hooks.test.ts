@@ -16,12 +16,26 @@
  */
 
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { Browser, Page } from '../src';
+import { Browser, Page, type BrowserContext } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
+
+type NewContextOptions = Parameters<Browser['newContext']>[0];
 
 describe('BrowserContext hooks & routing (Milestone B)', () => {
   let browser: Browser;
   const baseUrl = EXAMPLES_BASE_URL;
+
+  async function withContext<T>(
+    run: (ctx: BrowserContext) => Promise<T>,
+    options?: NewContextOptions
+  ): Promise<T> {
+    const ctx = await browser.newContext(options);
+    try {
+      return await run(ctx);
+    } finally {
+      await ctx.close();
+    }
+  }
 
   beforeAll(async () => {
     browser = await Browser.launch({ browserName: BROWSER_NAME });
@@ -34,16 +48,13 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   // ── page.context() back-reference ──────────────────────────────────────
 
   it('page.context() points back to the owning BrowserContext', async () => {
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
       expect(page.context()).toBe(ctx);
 
       const [listed] = await ctx.pages();
       expect(listed.context()).toBe(ctx);
-    } finally {
-      await ctx.close();
-    }
+    });
   });
 
   it('Browser-level pages report defaultContext, and context wrappers are cached', async () => {
@@ -64,28 +75,28 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   it('baseURL resolves relative paths in page.navigateTo()', async () => {
     // QA value: point one context at staging and all relative URLs in
     // tests "just work" without the hostname pasted everywhere.
-    const ctx = await browser.newContext({ baseURL: baseUrl });
-    try {
-      const page = await ctx.newPage();
-      await page.navigateTo('/login.html');
-      await page.waitForLoadState('load');
-      expect(await page.title()).toContain('Login');
-      expect((await page.url())?.endsWith('/login.html')).toBe(true);
-    } finally {
-      await ctx.close();
-    }
+    await withContext(
+      async (ctx) => {
+        const page = await ctx.newPage();
+        await page.navigateTo('/login.html');
+        await page.waitForLoadState('load');
+        expect(await page.title()).toContain('Login');
+        expect(await page.url()).toMatch(/\/login\.html$/);
+      },
+      { baseURL: baseUrl }
+    );
   });
 
   it('baseURL leaves absolute URLs untouched', async () => {
-    const ctx = await browser.newContext({ baseURL: 'https://nowhere.example.com' });
-    try {
-      const page = await ctx.newPage();
-      await page.navigateTo(`${baseUrl}/login.html`);
-      await page.waitForLoadState('load');
-      expect(await page.title()).toContain('Login');
-    } finally {
-      await ctx.close();
-    }
+    await withContext(
+      async (ctx) => {
+        const page = await ctx.newPage();
+        await page.navigateTo(`${baseUrl}/login.html`);
+        await page.waitForLoadState('load');
+        expect(await page.title()).toContain('Login');
+      },
+      { baseURL: 'https://nowhere.example.com' }
+    );
   });
 
   // ── extraHTTPHeaders ───────────────────────────────────────────────────
@@ -93,44 +104,40 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   it('extraHTTPHeaders are sent on requests from this context only', async () => {
     // QA value: tag every request from a tenant's context with
     // `X-Tenant: acme` without modifying app code or wrapping fetch.
-    const tenant = await browser.newContext({
-      extraHTTPHeaders: { 'X-Tenant': 'acme' },
-    });
     const seenHeaders: Record<string, string> = {};
-    try {
-      // Capture the headers that hit the example server by intercepting
-      // the request inside the same context.
-      await tenant.route('**/login.html', (req) => {
-        for (const [k, v] of Object.entries(req.headers)) {
-          if (k.toLowerCase() === 'x-tenant') seenHeaders[k.toLowerCase()] = v;
-        }
-        // Continue with the real response.
-      });
-      const page = await tenant.newPage({ url: `${baseUrl}/login.html` });
-      await page.waitForLoadState('load');
-      expect(seenHeaders['x-tenant']).toBe('acme');
-    } finally {
-      await tenant.close();
-    }
+    await withContext(
+      async (tenant) => {
+        // Capture the headers that hit the example server by intercepting
+        // the request inside the same context.
+        await tenant.route('**/login.html', (req) => {
+          for (const [k, v] of Object.entries(req.headers)) {
+            if (k.toLowerCase() === 'x-tenant') seenHeaders[k.toLowerCase()] = v;
+          }
+          // Continue with the real response.
+        });
+        const page = await tenant.newPage({ url: `${baseUrl}/login.html` });
+        await page.waitForLoadState('load');
+        expect(seenHeaders['x-tenant']).toBe('acme');
+      },
+      { extraHTTPHeaders: { 'X-Tenant': 'acme' } }
+    );
   });
 
   it('setExtraHTTPHeaders replaces the previous map and applies live', async () => {
-    const ctx = await browser.newContext({
-      extraHTTPHeaders: { 'X-Tenant': 'acme' },
-    });
     let captured: string | undefined;
-    try {
-      await ctx.route('**/login.html', (req) => {
-        captured = req.headers['x-tenant'] ?? req.headers['X-Tenant'];
-      });
-      await ctx.setExtraHTTPHeaders({ 'X-Tenant': 'globex' });
+    await withContext(
+      async (ctx) => {
+        await ctx.route('**/login.html', (req) => {
+          captured = req.headers['x-tenant'] ?? req.headers['X-Tenant'];
+        });
+        await ctx.setExtraHTTPHeaders({ 'X-Tenant': 'globex' });
 
-      const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
-      await page.waitForLoadState('load');
-      expect(captured).toBe('globex');
-    } finally {
-      await ctx.close();
-    }
+        const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
+        await page.waitForLoadState('load');
+        expect(captured).toBe('globex');
+      },
+      { extraHTTPHeaders: { 'X-Tenant': 'acme' } }
+    );
   });
 
   // ── addInitScript ──────────────────────────────────────────────────────
@@ -138,10 +145,9 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   it('addInitScript runs in every page of the context, including popups', async () => {
     // QA value: flip a feature-flag flag on every page (present and
     // future) without wiring per-page calls.
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       const handle = await ctx.addInitScript(`window.__E2E__ = 'yes';`);
-      expect(typeof handle.id).toBe('string');
+      expect(handle.id).toEqual(expect.any(String));
 
       const a = await ctx.newPage({ url: `${baseUrl}/login.html` });
       await a.waitForLoadState('load');
@@ -157,9 +163,7 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
       const c = await ctx.newPage({ url: `${baseUrl}/login.html` });
       await c.waitForLoadState('load');
       expect(await c.evaluate<unknown>(`return window.__E2E__;`)).toBeUndefined();
-    } finally {
-      await ctx.close();
-    }
+    });
   });
 
   it('addInitScript does NOT leak into other contexts', async () => {
@@ -217,8 +221,7 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   });
 
   it('unroute() removes a single registered route by id', async () => {
-    const ctx = await browser.newContext();
-    try {
+    await withContext(async (ctx) => {
       let calls = 0;
       const id = await ctx.route('**/api/users', () => {
         calls++;
@@ -232,19 +235,16 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
       const page = await ctx.newPage({ url: `${baseUrl}/network.html?bidi=true` });
       await page.waitForLoadState('load');
       await page.find('#fetch-users-btn').click();
-      await page.expect('#users-result').toBeVisible();
+      await page.expect('#users-result').toContainText('"users": []');
       const after1 = calls;
       expect(after1).toBeGreaterThan(0);
 
       await ctx.unroute(id);
       await page.find('#fetch-users-btn').click();
-      // Brief delay for the second fetch — no auto-wait here.
-      await page.expect('#users-result').toBeVisible();
+      await page.expect('#users-result').toContainText('Error:');
       // Counter must not have advanced.
       expect(calls).toBe(after1);
-    } finally {
-      await ctx.close();
-    }
+    });
   });
 
   // ── on('page') / on('close') ───────────────────────────────────────────
@@ -252,9 +252,8 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
   it("on('page') fires for new pages and popups", async () => {
     // QA value: attach a console-error listener to every tab the test
     // opens — including a window.open popup — without juggling refs.
-    const ctx = await browser.newContext();
     const seen: Page[] = [];
-    try {
+    await withContext(async (ctx) => {
       ctx.on('page', (page) => {
         seen.push(page);
       });
@@ -276,19 +275,17 @@ describe('BrowserContext hooks & routing (Milestone B)', () => {
 
       // We expect to have observed both the main page and the popup.
       expect(seen.length).toBeGreaterThanOrEqual(2);
-      expect(seen.every((p) => p.context() === ctx)).toBe(true);
-    } finally {
-      await ctx.close();
-    }
+      expect(new Set(seen.map((p) => p.context()))).toEqual(new Set([ctx]));
+    });
   });
 
   it("on('close') fires when the context is closed", async () => {
-    const ctx = await browser.newContext();
     let fired = 0;
-    ctx.on('close', () => {
-      fired++;
+    await withContext(async (ctx) => {
+      ctx.on('close', () => {
+        fired++;
+      });
     });
-    await ctx.close();
     expect(fired).toBe(1);
   });
 });

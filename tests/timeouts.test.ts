@@ -32,9 +32,7 @@ describe('configurable timeouts', () => {
   it('per-call { timeout } overrides the default', async () => {
     browser.setDefaultTimeout(5000);
     const start = Date.now();
-    await expect(
-      browser.waitForVisible('#missing', { timeout: 400 })
-    ).rejects.toThrow();
+    await expect(browser.waitForVisible('#missing', { timeout: 400 })).rejects.toThrow();
     expect(Date.now() - start).toBeLessThan(2500);
   });
 

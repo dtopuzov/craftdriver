@@ -25,8 +25,8 @@ describe('File upload — setInputFiles()', () => {
   });
 
   it('throws a clear error on a non-file input', async () => {
-    await expect(
-      browser.find('#text-input').setInputFiles(FIXTURE)
-    ).rejects.toThrow('setInputFiles() requires an <input type="file"> element');
+    await expect(browser.find('#text-input').setInputFiles(FIXTURE)).rejects.toThrow(
+      'setInputFiles() requires an <input type="file"> element'
+    );
   });
 });

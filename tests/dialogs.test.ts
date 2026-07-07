@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
-import { Browser } from '../src';
+import { Browser, type Dialog } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 describe('Dialog handling (alert / confirm / prompt)', () => {
@@ -17,13 +17,15 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
     await browser.navigateTo(`${EXAMPLES_BASE_URL}/dialogs.html`);
   });
 
+  async function clickAndWaitForDialog(selector: string): Promise<Dialog> {
+    const [, dialog] = await Promise.all([browser.click(selector), browser.waitForDialog()]);
+    return dialog;
+  }
+
   // ── alert ──────────────────────────────────────────────────────────────────
 
   it('accepts an alert', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-alert'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-alert');
     expect(dialog.type()).toBe('alert');
     expect(dialog.message()).toBe('Hello from alert');
     await dialog.accept();
@@ -32,10 +34,7 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   });
 
   it('dismisses an alert', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-alert'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-alert');
     await dialog.dismiss();
     await browser.expect('h1').toHaveText('Dialogs');
   });
@@ -43,10 +42,7 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   // ── confirm ────────────────────────────────────────────────────────────────
 
   it('accepting a confirm records "confirmed" on the page', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-confirm'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-confirm');
     expect(dialog.type()).toBe('confirm');
     expect(dialog.message()).toBe('Are you sure?');
     await dialog.accept();
@@ -54,10 +50,7 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   });
 
   it('dismissing a confirm records "dismissed" on the page', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-confirm'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-confirm');
     await dialog.dismiss();
     await browser.expect('#confirm-result').toHaveText('dismissed');
   });
@@ -65,10 +58,7 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   // ── prompt ─────────────────────────────────────────────────────────────────
 
   it('accepting a prompt with text echoes the value on the page', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-prompt'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-prompt');
     expect(dialog.type()).toBe('prompt');
     expect(dialog.defaultValue()).toBe('default');
     await dialog.accept('craftdriver');
@@ -76,10 +66,7 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   });
 
   it('dismissing a prompt echoes "dismissed" on the page', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-prompt'),
-      browser.waitForDialog(),
-    ]);
+    const dialog = await clickAndWaitForDialog('#show-prompt');
     await dialog.dismiss();
     await browser.expect('#prompt-result').toHaveText('dismissed');
   });
@@ -88,18 +75,23 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
 
   it('onDialog registers a persistent handler', async () => {
     let capturedMessage = '';
-    let handlerDone: () => void;
-    const handled = new Promise<void>(r => { handlerDone = r; });
+    let resolveHandled!: () => void;
+    const handled = new Promise<void>((resolve) => {
+      resolveHandled = resolve;
+    });
 
     const off = browser.onDialog(async (dialog) => {
       capturedMessage = dialog.message();
       await dialog.accept();
-      handlerDone();
+      resolveHandled();
     });
 
-    await browser.click('#show-alert');
-    await handled;
-    off();
+    try {
+      await browser.click('#show-alert');
+      await handled;
+    } finally {
+      off();
+    }
 
     expect(capturedMessage).toBe('Hello from alert');
   });
@@ -107,13 +99,9 @@ describe('Dialog handling (alert / confirm / prompt)', () => {
   // ── imperative API ─────────────────────────────────────────────────────────
 
   it('acceptDialog() imperative form works without onDialog', async () => {
-    const [, dialog] = await Promise.all([
-      browser.click('#show-alert'),
-      browser.waitForDialog(),
-    ]);
+    await clickAndWaitForDialog('#show-alert');
     // Use imperative API directly
     await browser.acceptDialog();
-    void dialog; // dialog is available if needed
     await browser.expect('h1').toHaveText('Dialogs');
   });
 });

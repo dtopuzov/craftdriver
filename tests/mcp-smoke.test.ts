@@ -28,6 +28,14 @@ interface RpcFailure {
 }
 type RpcResponse = RpcSuccess | RpcFailure;
 
+function parseRpcLine(line: string): RpcResponse | undefined {
+  try {
+    return JSON.parse(line) as RpcResponse;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Minimal MCP client over a child process. One pending request at a
  * time is enough for a smoke test — easier to reason about than
@@ -41,14 +49,10 @@ class McpHarness {
   private stderr = '';
 
   async start(): Promise<void> {
-    this.child = spawn(
-      'node',
-      [CLI_BIN, 'mcp', '--browser', BROWSER_NAME],
-      {
-        env: { ...process.env, HEADLESS: 'true' },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
+    this.child = spawn('node', [CLI_BIN, 'mcp', '--browser', BROWSER_NAME], {
+      env: { ...process.env, HEADLESS: 'true' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => {
       this.buf += chunk;
@@ -57,12 +61,8 @@ class McpHarness {
         const line = this.buf.slice(0, nl).trim();
         this.buf = this.buf.slice(nl + 1);
         if (!line) continue;
-        let msg: RpcResponse;
-        try {
-          msg = JSON.parse(line) as RpcResponse;
-        } catch {
-          continue;
-        }
+        const msg = parseRpcLine(line);
+        if (!msg) continue;
         const cb = this.pending.get(msg.id);
         if (cb) {
           this.pending.delete(msg.id);
@@ -96,16 +96,12 @@ class McpHarness {
     const id = this.nextId++;
     return new Promise<RpcResponse>((resolveReq) => {
       this.pending.set(id, resolveReq);
-      this.child.stdin.write(
-        JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n',
-      );
+      this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
   }
 
   notify(method: string, params: Record<string, unknown>): void {
-    this.child.stdin.write(
-      JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n',
-    );
+    this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
   }
 
   get capturedStderr(): string {
@@ -145,7 +141,7 @@ describe('MCP smoke', () => {
         'browser_snapshot',
         'browser_status',
         'browser_wait',
-      ].sort(),
+      ].sort()
     );
   });
 
@@ -155,7 +151,7 @@ describe('MCP smoke', () => {
       arguments: { url: loginUrl },
     })) as RpcSuccess;
     const navResult = nav.result as { isError?: boolean; structuredContent: { result: unknown } };
-    expect(navResult.isError).toBeFalsy();
+    expect(navResult.isError ?? false).toBe(false);
 
     const snap = (await mcp.request('tools/call', {
       name: 'browser_snapshot',
@@ -165,7 +161,7 @@ describe('MCP smoke', () => {
       isError?: boolean;
       structuredContent: { result: { url: string; lines: string[] } };
     };
-    expect(snapResult.isError).toBeFalsy();
+    expect(snapResult.isError ?? false).toBe(false);
     const { url, lines } = snapResult.structuredContent.result;
     expect(url).toContain('/login.html');
     const all = lines.join('\n');
@@ -191,7 +187,7 @@ describe('MCP smoke', () => {
     // NO_MATCH (zero matches at t=0), TIMEOUT_WAITING_VISIBLE (matched
     // but never actionable), or generic TIMEOUT — all valid signals.
     expect(result.structuredContent.error.code).toMatch(
-      /^(NO_MATCH|TIMEOUT(_WAITING_(VISIBLE|STATE))?)$/,
+      /^(NO_MATCH|TIMEOUT(_WAITING_(VISIBLE|STATE))?)$/
     );
   });
 

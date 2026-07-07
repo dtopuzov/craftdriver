@@ -6,15 +6,21 @@ import { Browser } from '../src';
 import type { TraceEvent } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
+function parseTraceLine(line: string): TraceEvent | null {
+  try {
+    return JSON.parse(line) as TraceEvent;
+  } catch {
+    return null;
+  }
+}
+
 /** Parse an ndjson file, tolerating a missing trailing newline / partial last line. */
 function readNdjson(path: string): TraceEvent[] {
   const text = readFileSync(path, 'utf8');
   return text
     .split('\n')
     .filter((l) => l.length > 0)
-    .map((l) => {
-      try { return JSON.parse(l) as TraceEvent; } catch { return null; }
-    })
+    .map(parseTraceLine)
     .filter((e): e is TraceEvent => e !== null);
 }
 
@@ -37,7 +43,7 @@ describe('Tracing', () => {
 
   afterEach(async () => {
     // Make sure no trace leaks across tests.
-    try { await browser.stopTrace(); } catch { /* not running */ }
+    await browser.stopTrace().catch(() => undefined);
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
@@ -55,7 +61,9 @@ describe('Tracing', () => {
     expect((metas[0] as { startedAt?: string }).startedAt).toBeDefined();
     expect((metas[1] as { endedAt?: string }).endedAt).toBeDefined();
 
-    const actions = events.filter((e): e is Extract<TraceEvent, { type: 'action' }> => e.type === 'action');
+    const actions = events.filter(
+      (e): e is Extract<TraceEvent, { type: 'action' }> => e.type === 'action'
+    );
     expect(actions.map((a) => a.name)).toEqual(['navigateTo', 'fill', 'click']);
     const fill = actions.find((a) => a.name === 'fill')!;
     expect(fill.args).toEqual(['alice']);
@@ -143,10 +151,11 @@ describe('Tracing', () => {
     await browser.stopTrace();
 
     const events = readNdjson(join(dir, 'trace.ndjson'));
-    expect(events.some((e) => e.type === 'action')).toBe(false);
-    expect(events.some((e) => e.type === 'screenshot')).toBe(false);
+    const eventTypes = events.map((e) => e.type);
+    expect(eventTypes).not.toContain('action');
+    expect(eventTypes).not.toContain('screenshot');
     // Navigation pillar still on.
-    expect(events.some((e) => e.type === 'navigation')).toBe(true);
+    expect(eventTypes).toContain('navigation');
     expect(existsSync(join(dir, 'screenshots'))).toBe(false);
   });
 

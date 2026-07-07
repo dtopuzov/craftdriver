@@ -31,7 +31,7 @@ class FakeChromeService extends ChromeService {
 
   constructor(
     private readonly staleDriverPath: string,
-    private readonly freshDriverPath: string,
+    private readonly freshDriverPath: string
   ) {
     super();
   }
@@ -72,10 +72,13 @@ class FakeChromeService extends ChromeService {
       writeJson(res, 404, { value: { error: 'unknown command', message: req.url } });
     });
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       this.server!.listen(0, '127.0.0.1', () => {
         const address = this.server!.address();
-        if (typeof address !== 'object' || !address) throw new Error('No fake service port');
+        if (typeof address !== 'object' || !address) {
+          reject(new Error('No fake service port'));
+          return;
+        }
         this.endpoint = {
           protocol: 'http',
           hostname: '127.0.0.1',
@@ -130,21 +133,20 @@ describe('chromedriver auto-resolution cache recovery', () => {
           driverPath: staleDriverPath,
           timestamp: Date.now(),
         },
-      }),
+      })
     );
 
     const service = new FakeChromeService(staleDriverPath, freshDriverPath);
     let driver: Driver | undefined;
     try {
-      driver = await new Builder()
-        .forBrowser('chrome')
-        .setChromeService(service)
-        .build();
+      driver = await new Builder().forBrowser('chrome').setChromeService(service).build();
 
       expect(service.startCalls).toBe(2);
       expect(service.stopCalls).toBe(1);
-      expect(JSON.parse(fs.readFileSync(path.join(cacheDir, 'metadata.json'), 'utf-8'))[cacheKey])
-        .toBeUndefined();
+      const metadata = JSON.parse(
+        fs.readFileSync(path.join(cacheDir, 'metadata.json'), 'utf-8')
+      ) as Record<string, unknown>;
+      expect(metadata[cacheKey]).toBeUndefined();
     } finally {
       await driver?.quit();
       await service.stop();

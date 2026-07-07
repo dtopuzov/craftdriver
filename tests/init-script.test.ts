@@ -56,7 +56,9 @@ describe('addInitScript()', () => {
     try {
       const conn = (isolated as any).bidiSession.getConnection();
       const originalSend = conn.send.bind(conn);
-      restoreSend = () => { conn.send = originalSend; };
+      restoreSend = () => {
+        conn.send = originalSend;
+      };
       const methods: string[] = [];
       conn.send = (method: string, params: Record<string, unknown> = {}) => {
         methods.push(method);
@@ -82,7 +84,9 @@ describe('addInitScript()', () => {
   it('throws a clear error when BiDi is unavailable', async () => {
     const noBidi = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: false });
     try {
-      await expect(noBidi.addInitScript(() => { })).rejects.toThrow(/addInitScript\(\) requires BiDi/);
+      await expect(noBidi.addInitScript(() => {})).rejects.toThrow(
+        /addInitScript\(\) requires BiDi/
+      );
     } finally {
       await noBidi.quit();
     }

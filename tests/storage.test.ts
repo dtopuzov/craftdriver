@@ -1,5 +1,4 @@
-import { describe, it, beforeAll, afterAll, beforeEach } from 'vitest';
-import { expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 import * as fs from 'fs';
@@ -10,17 +9,38 @@ describe('Session State Management APIs', () => {
   const baseUrl = EXAMPLES_BASE_URL;
   const statePath = path.join(__dirname, '../.test-session-state.json');
 
+  function deleteStateFile(): void {
+    fs.rmSync(statePath, { force: true });
+  }
+
+  async function cookieValue(name: string, target: Browser = browser): Promise<string | undefined> {
+    const cookies = await target.storage.getCookies();
+    return cookies.find((cookie) => cookie.name === name)?.value;
+  }
+
+  async function withStoredBrowser<T>(run: (storedBrowser: Browser) => Promise<T>): Promise<T> {
+    const storedBrowser = await Browser.launch({
+      browserName: BROWSER_NAME,
+      storageState: statePath,
+    });
+    try {
+      return await run(storedBrowser);
+    } finally {
+      await storedBrowser.quit();
+    }
+  }
+
   beforeAll(async () => {
     browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
 
   afterAll(async () => {
     await browser.quit();
-    if (fs.existsSync(statePath)) fs.unlinkSync(statePath);
+    deleteStateFile();
   });
 
   beforeEach(async () => {
-    if (fs.existsSync(statePath)) fs.unlinkSync(statePath);
+    deleteStateFile();
     await browser.navigateTo(`${baseUrl}/session.html`);
     await browser.storage.clearCookies();
   });
@@ -31,13 +51,10 @@ describe('Session State Management APIs', () => {
         name: 'test_cookie',
         value: 'test_value',
         domain: 'localhost',
-        path: '/'
+        path: '/',
       });
 
-      const cookies = await browser.storage.getCookies();
-      const testCookie = cookies.find(c => c.name === 'test_cookie');
-
-      expect(testCookie?.value).toBe('test_value');
+      expect(await cookieValue('test_cookie')).toBe('test_value');
     });
 
     it('clearCookies removes all cookies', async () => {
@@ -45,13 +62,11 @@ describe('Session State Management APIs', () => {
         name: 'clear_test',
         value: 'clear_value',
         domain: 'localhost',
-        path: '/'
+        path: '/',
       });
 
       await browser.storage.clearCookies();
-      const cookies = await browser.storage.getCookies();
-
-      expect(cookies.length).toBe(0);
+      expect(await browser.storage.getCookies()).toHaveLength(0);
     });
   });
 
@@ -61,28 +76,30 @@ describe('Session State Management APIs', () => {
         name: 'save_load_test',
         value: 'test_value',
         domain: 'localhost',
-        path: '/'
+        path: '/',
       });
 
       await browser.saveState(statePath);
       await browser.storage.clearCookies();
       await browser.loadState(statePath);
 
-      const cookies = await browser.storage.getCookies();
-      const loadedCookie = cookies.find(c => c.name === 'save_load_test');
-
-      expect(loadedCookie?.value).toBe('test_value');
+      expect(await cookieValue('save_load_test')).toBe('test_value');
     });
 
     it('respects includeLocalStorage option', async () => {
-      await browser.storage.addCookie({ name: 'test', value: 'val', domain: 'localhost', path: '/' });
+      await browser.storage.addCookie({
+        name: 'test',
+        value: 'val',
+        domain: 'localhost',
+        path: '/',
+      });
 
       await browser.saveState(statePath, { includeLocalStorage: false });
 
       const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       const localStorageKeys = state.localStorage ? Object.keys(state.localStorage) : [];
 
-      expect(localStorageKeys.length).toBe(0);
+      expect(localStorageKeys).toEqual([]);
     });
   });
 
@@ -92,20 +109,15 @@ describe('Session State Management APIs', () => {
         name: 'launch_test',
         value: 'launch_value',
         domain: 'localhost',
-        path: '/'
+        path: '/',
       });
 
       await browser.saveState(statePath);
 
-      const browser2 = await Browser.launch({ browserName: BROWSER_NAME, storageState: statePath });
-      try {
+      await withStoredBrowser(async (browser2) => {
         await browser2.navigateTo(`${baseUrl}/session.html`);
-        const cookies = await browser2.storage.getCookies();
-        const launchCookie = cookies.find(c => c.name === 'launch_test');
-        expect(launchCookie?.value).toBe('launch_value');
-      } finally {
-        await browser2.quit();
-      }
+        expect(await cookieValue('launch_test', browser2)).toBe('launch_value');
+      });
     });
   });
 
@@ -119,16 +131,12 @@ describe('Session State Management APIs', () => {
 
       await browser.saveState(statePath);
 
-      const browser2 = await Browser.launch({ browserName: BROWSER_NAME, storageState: statePath });
-      try {
+      await withStoredBrowser(async (browser2) => {
         await browser2.navigateTo(`${baseUrl}/login.html`);
         await browser2.expect('#welcome').toBeVisible();
         await browser2.expect('#welcome').toContainText('testuser');
-        expect(await browser2.find('#login-form').isVisible()).toBe(false);
-      } finally {
-        await browser2.quit();
-      }
+        await browser2.expect('#login-form').not.toBeVisible();
+      });
     });
   });
 });
-

@@ -20,12 +20,11 @@ describe('File download — waitForDownload()', () => {
 
   afterAll(async () => {
     await browser.quit();
+    fs.rmSync(downloadsDir, { recursive: true, force: true });
   });
 
   it('resolves with a Download whose path exists on disk', async () => {
-    const dl = await browser.waitForDownload(
-      () => browser.click('#download-btn')
-    );
+    const dl = await browser.waitForDownload(() => browser.click('#download-btn'));
 
     expect(dl.suggestedFilename).toBe('report.txt');
     expect(fs.existsSync(dl.path)).toBe(true);
@@ -34,16 +33,17 @@ describe('File download — waitForDownload()', () => {
   it('saveAs() copies the file to the given target', async () => {
     const target = path.join(os.tmpdir(), `craftdriver-copy-${Date.now()}.txt`);
 
-    const dl = await browser.waitForDownload(
-      () => browser.click('#download-btn'),
-      { timeout: 15000 }
-    );
+    const dl = await browser.waitForDownload(() => browser.click('#download-btn'), {
+      timeout: 15000,
+    });
 
-    await dl.saveAs(target);
-    expect(fs.existsSync(target)).toBe(true);
-    expect(fs.readFileSync(target, 'utf8')).toContain('craftdriver download test');
-
-    fs.rmSync(target);
+    try {
+      await dl.saveAs(target);
+      expect(fs.existsSync(target)).toBe(true);
+      expect(fs.readFileSync(target, 'utf8')).toContain('craftdriver download test');
+    } finally {
+      fs.rmSync(target, { force: true });
+    }
   });
 
   it('timeout rejects with a clear message', async () => {
