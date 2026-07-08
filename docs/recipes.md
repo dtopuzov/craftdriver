@@ -1,103 +1,33 @@
 # Recipes
 
-These short recipes show the shape of common CraftDriver workflows. For exact signatures, use the linked feature docs and the [API reference](./api-reference.md).
+Recipes are short, real-world patterns that combine CraftDriver features into
+common testing workflows. Use this page as the index; each recipe has its own
+page so the list can grow without turning into a wall of code.
 
-## Log In Once, Reuse The Session
+For exact signatures, use the linked feature docs and the
+[API reference](./api-reference.md).
 
-```ts
-const browser = await Browser.launch({ browserName: 'chrome' });
+## Test Structure
 
-await browser.navigateTo('http://localhost:3000/login');
-await browser.getByLabel('Email').fill('alice@example.com');
-await browser.getByLabel('Password').fill(process.env.TEST_PASSWORD!);
-await browser.getByRole('button', { name: 'Sign in' }).click();
-await browser.expect('#account').toContainText('Alice');
-await browser.saveState('./auth-state.json');
+| Scenario                  | Use when                                                                   | Recipe                                                                     |
+| ------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Vitest browser lifecycle  | You want one browser per test file and a fresh page per test.              | [Use CraftDriver With Vitest Hooks](./recipes/vitest-browser-lifecycle.md) |
+| Login once, reuse session | Login UI is slow or noisy and most tests start signed in.                  | [Log In Once And Reuse The Session](./recipes/login-once-reuse-session.md) |
+| Multi-user flows          | You need Alice and Bob signed in at the same time without leaking cookies. | [Test Multi-User Workflows](./recipes/multi-user-contexts.md)              |
 
-await browser.quit();
-```
+## App Behavior
 
-```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  storageState: './auth-state.json',
-});
-```
+| Scenario                     | Use when                                                                  | Recipe                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Mock APIs and assert traffic | A UI flow depends on backend responses or request payloads.               | [Mock APIs And Assert Network Traffic](./recipes/mock-api-and-assert-network.md)              |
+| Time-sensitive UI            | Debounces, trial banners, idle logout, or scheduled jobs make tests slow. | [Test Time-Sensitive UI With The Virtual Clock](./recipes/virtual-clock-time-sensitive-ui.md) |
+| Mobile-specific behavior     | Mobile layout depends on viewport, device headers, API config, or logs.   | [Test A Mobile Flow With API Mocks And Logs](./recipes/mobile-flow-with-network-and-logs.md)  |
+| File upload and download     | A flow uploads a file, exports a report, or verifies downloaded content.  | [Test File Uploads And Downloads](./recipes/file-upload-download.md)                          |
 
-Learn more in [Session Management](./session-management.md).
+## Quality Gates And Debugging
 
-## Mock An API Response
-
-```ts
-const browser = await Browser.launch({ browserName: 'chrome' });
-
-await browser.network.mock('**/api/users', {
-  status: 200,
-  body: {
-    users: [{ id: 1, name: 'Alice' }],
-  },
-});
-
-await browser.navigateTo('http://localhost:3000/users');
-await browser.expect('#user-list').toContainText('Alice');
-```
-
-Learn more in [Network Mocking And Request Waiting](./network.md).
-
-## Capture Evidence On Failure
-
-```ts
-await browser.startTrace({ outDir: './traces/login' });
-
-try {
-  await browser.navigateTo('http://localhost:3000/login');
-  await browser.getByLabel('Email').fill('alice@example.com');
-  await browser.getByRole('button', { name: 'Sign in' }).click();
-  await browser.expect('#account').toContainText('Alice');
-} finally {
-  await browser.stopTrace();
-}
-```
-
-Learn more in [Tracing](./tracing.md) and [Screenshots](./screenshots.md).
-
-## Run An Accessibility Gate
-
-```ts
-await browser.navigateTo('http://localhost:3000/settings');
-await browser.a11y.check({
-  minImpact: 'serious',
-  disableRules: ['color-contrast'],
-});
-```
-
-Learn more in [Accessibility](./accessibility.md).
-
-## Test A Mobile Layout
-
-```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  mobileEmulation: 'iPhone 14',
-});
-
-await browser.navigateTo('http://localhost:3000');
-await browser.getByRole('button', { name: 'Menu' }).click();
-await browser.getByRole('navigation').expect().toBeVisible();
-```
-
-Learn more in [Mobile Emulation](./mobile-emulation.md).
-
-## Give An Agent A Page Snapshot
-
-```bash
-npx craftdriver daemon start
-npx craftdriver go http://127.0.0.1:8080/login.html
-npx craftdriver snapshot
-npx craftdriver click 'ref=e7'
-npx craftdriver daemon stop
-```
-
-Refs are short-lived selectors generated by `snapshot`, useful for agents that should act on what they just observed.
-
-Learn more in [Command-line Interface](./cli.md).
+| Scenario                      | Use when                                                                        | Recipe                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Accessibility regression gate | CI should fail on serious page or component accessibility issues.               | [Run Accessibility Gates](./recipes/accessibility-gate.md)               |
+| Console and JavaScript errors | Tests should fail if the browser reports unexpected client-side errors.         | [Fail On Console And JavaScript Errors](./recipes/console-error-gate.md) |
+| Evidence on failure           | You want a replayable trail of actions, network, logs, errors, and screenshots. | [Capture Failure Evidence With Tracing](./recipes/trace-failing-test.md) |

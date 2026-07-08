@@ -65,7 +65,8 @@
   "files": [
     "dist",
     "bin",
-    "docs",
+    "docs/**/*.md",
+    "docs/public",
     "skills",
     "README.md",
     "CHANGELOG.md",
