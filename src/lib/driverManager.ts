@@ -343,31 +343,49 @@ async function downloadChromedriver(browserVersion: string): Promise<string> {
 
   const chosen = candidates[0];
   const entry = chosen.downloads.chromedriver!.find((d) => d.platform === platform)!;
-  const tmpZip = path.join(cacheDir(), `_chromedriver-${chosen.version}.zip`);
 
   process.stderr.write(
     `[craftdriver] Downloading chromedriver ${chosen.version}…\n`,
   );
   fs.mkdirSync(cacheDir(), { recursive: true });
-  await httpsDownload(entry.url, tmpZip);
 
-  // CfT zip layout: chromedriver-<platform>/chromedriver[.exe]
-  const extractDir = path.join(cacheDir(), `_extract_chromedriver_${chosen.version}`);
-  extractZip(tmpZip, extractDir);
-  fs.unlinkSync(tmpZip);
+  // Download and extract inside a per-call unique working directory. Several
+  // launches can resolve the same missing version at once (parallel test
+  // workers, each its own process, share the one on-disk cache); a fixed temp
+  // path let them clobber each other's zip mid-download or delete it
+  // mid-extract ("unzip: cannot find or open …" / "invalid compressed data").
+  // mkdtempSync hands each caller a distinct directory — safe across processes —
+  // and the finally removes it whatever happens.
+  const workDir = fs.mkdtempSync(path.join(cacheDir(), '_dl-chromedriver-'));
+  try {
+    const tmpZip = path.join(workDir, 'chromedriver.zip');
+    await httpsDownload(entry.url, tmpZip);
 
-  const innerBin = path.join(extractDir, `chromedriver-${platform}`, binName);
-  if (!fs.existsSync(innerBin)) {
-    throw new Error(
-      `Unexpected zip layout: could not find ${innerBin} after extraction.`,
-    );
+    // CfT zip layout: chromedriver-<platform>/chromedriver[.exe]
+    const extractDir = path.join(workDir, 'extract');
+    extractZip(tmpZip, extractDir);
+
+    const innerBin = path.join(extractDir, `chromedriver-${platform}`, binName);
+    if (!fs.existsSync(innerBin)) {
+      throw new Error(
+        `Unexpected zip layout: could not find ${innerBin} after extraction.`,
+      );
+    }
+
+    fs.mkdirSync(driverDir, { recursive: true });
+    // A concurrent resolver may have placed the binary first. On POSIX rename
+    // atomically replaces it; on Windows rename onto an existing file throws, so
+    // treat an already-present destination as success.
+    try {
+      fs.renameSync(innerBin, driverBin);
+    } catch (err) {
+      if (!fs.existsSync(driverBin)) throw err;
+    }
+
+    if (os.platform() !== 'win32') fs.chmodSync(driverBin, 0o755);
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
-
-  fs.mkdirSync(driverDir, { recursive: true });
-  fs.renameSync(innerBin, driverBin);
-  fs.rmSync(extractDir, { recursive: true, force: true });
-
-  if (os.platform() !== 'win32') fs.chmodSync(driverBin, 0o755);
 
   return driverBin;
 }
@@ -412,20 +430,45 @@ async function downloadGeckodriver(): Promise<string> {
       );
     }
 
-    const tmpFile = path.join(cacheDir(), `_geckodriver-${version}${ext}`);
     process.stderr.write(`[craftdriver] Downloading geckodriver ${version}…\n`);
     fs.mkdirSync(cacheDir(), { recursive: true });
-    await httpsDownload(asset.browser_download_url, tmpFile);
 
-    fs.mkdirSync(driverDir, { recursive: true });
-    if (ext === '.zip') {
-      extractZip(tmpFile, driverDir);
-    } else {
-      extractTarGz(tmpFile, driverDir);
+    // Per-call unique working directory so parallel resolvers don't share a
+    // fixed temp path and extract dir — same race, and fix, as
+    // downloadChromedriver above. (`test:firefox` runs with --maxWorkers=2.)
+    const workDir = fs.mkdtempSync(path.join(cacheDir(), '_dl-geckodriver-'));
+    try {
+      const tmpFile = path.join(workDir, `geckodriver${ext}`);
+      await httpsDownload(asset.browser_download_url, tmpFile);
+
+      // geckodriver archives contain the binary at the archive root.
+      const extractDir = path.join(workDir, 'extract');
+      if (ext === '.zip') {
+        extractZip(tmpFile, extractDir);
+      } else {
+        extractTarGz(tmpFile, extractDir);
+      }
+
+      const innerBin = path.join(extractDir, binName);
+      if (!fs.existsSync(innerBin)) {
+        throw new Error(
+          `Unexpected archive layout: could not find ${innerBin} after extraction.`,
+        );
+      }
+
+      fs.mkdirSync(driverDir, { recursive: true });
+      // See downloadChromedriver: tolerate a destination a concurrent resolver
+      // already placed (Windows rename onto an existing file throws).
+      try {
+        fs.renameSync(innerBin, driverBin);
+      } catch (err) {
+        if (!fs.existsSync(driverBin)) throw err;
+      }
+
+      if (os.platform() !== 'win32') fs.chmodSync(driverBin, 0o755);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
     }
-    fs.unlinkSync(tmpFile);
-
-    if (os.platform() !== 'win32') fs.chmodSync(driverBin, 0o755);
   }
 
   // Refresh TTL record regardless of whether we downloaded a new version.
