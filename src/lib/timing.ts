@@ -70,6 +70,20 @@ export const BIDI_TIMEOUT_MS = 30_000;
 export const DRIVER_READINESS_TIMEOUT_MS = 5_000;
 
 /**
+ * Bound on the `POST /session` request itself, separate from
+ * {@link DRIVER_READINESS_TIMEOUT_MS} (which only covers the driver's `/status`
+ * endpoint coming up). Once the driver process is ready it still has to launch
+ * and hand off control of the actual browser; if that browser hangs or crashes
+ * mid-handshake, chromedriver/geckodriver can leave the request socket open
+ * with no response and no error. Without this, `Browser.launch()` hangs
+ * indefinitely — the only thing that ever unblocks it is a *caller's* timeout
+ * (e.g. a test framework's hook timeout), which throws a generic error with no
+ * indication anything driver-related was involved. Same 30s order of magnitude
+ * as {@link BIDI_TIMEOUT_MS} / {@link DEFAULT_NAVIGATION_TIMEOUT_MS}.
+ */
+export const SESSION_CREATE_TIMEOUT_MS = 30_000;
+
+/**
  * Readiness deadline for geckodriver specifically — it takes longer than
  * chromedriver to spin up Marionette and start listening.
  */

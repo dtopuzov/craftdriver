@@ -4,6 +4,7 @@ import { By } from './by.js';
 import { WebElement, W3C_ELEMENT_KEY, LEGACY_ELEMENT_KEY } from './webelement.js';
 import { WebDriverWait, type Condition, type WaitOptions } from './wait.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { SESSION_CREATE_TIMEOUT_MS } from './timing.js';
 
 function isMoveTargetOutOfBounds(err: unknown): boolean {
   if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
@@ -27,6 +28,7 @@ export class Driver {
         method: 'POST',
         path: '/session',
         body: { capabilities: { alwaysMatch: caps } },
+        timeoutMs: SESSION_CREATE_TIMEOUT_MS,
       });
     } catch (err) {
       client.close();
