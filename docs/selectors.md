@@ -343,6 +343,28 @@ const texts = await Promise.all(handles.map(h => h.text()));
 const allButtons = await browser.findAll('.buy-btn');
 ```
 
+### Locator actions and state
+
+| Method | Description |
+| ------ | ----------- |
+| `click(options?)` | Click the first matching visible element |
+| `fill(text, options?)` | Fill the first matching visible element |
+| `text(options?)` | Get visible text |
+| `textContent(options?)` | Alias for `text()` |
+| `isVisible(options?)` | Return `true` if a matching element is visible |
+| `count()` | Count current matches without auto-wait |
+| `all()` | Return snapshot `ElementHandle`s for current matches |
+| `waitFor({ state, timeout? })` | Wait for `attached`, `detached`, `visible`, or `hidden` |
+| `expect()` | Element assertions scoped to this locator |
+| `a11y` | Accessibility audit scoped to this locator |
+
+```typescript
+await browser.locator('.toast').waitFor({ state: 'visible' });
+const shown = await browser.locator('.toast').isVisible();
+const text = await browser.locator('.toast').textContent();
+const audit = await browser.locator('#checkout').a11y.audit();
+```
+
 ### Assertions on locators
 
 ```typescript
@@ -378,5 +400,4 @@ await browser.find('nav a[href="/about"]').click();
 ```typescript
 await browser.getByRole('button', { name: 'Submit' }).click();
 await browser.getByText('Cancel').click();
-await browser.find('button:contains("Save")').click();
 ```

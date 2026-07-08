@@ -5,24 +5,34 @@ Thank you for your interest in contributing! This document provides guidelines a
 ## Development Setup
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/dtopuzov/craftdriver.git
    cd craftdriver
    ```
 
 2. **Install dependencies**
+
    ```bash
    npm install
    ```
 
 3. **Build the project**
+
    ```bash
    npm run build
    ```
 
-4. **Run tests** — chromedriver/geckodriver are auto-downloaded and cached
+4. **Run the docs locally**
+
+   ```bash
+   npm run docs:dev
+   ```
+
+5. **Run tests** — chromedriver/geckodriver are auto-downloaded and cached
    on first use, no separate install step needed (see
    [docs/driver-configuration.md](./docs/driver-configuration.md)).
+
    ```bash
    # Start the test server in one terminal
    npm run serve
@@ -36,6 +46,7 @@ Thank you for your interest in contributing! This document provides guidelines a
 We use [Conventional Commits](https://www.conventionalcommits.org/) for automatic versioning and changelog generation.
 
 ### Format
+
 ```
 <type>(<scope>): <description>
 
@@ -45,19 +56,22 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) for automati
 ```
 
 ### Types
-| Type | Description | Version Bump |
-|------|-------------|--------------|
-| `feat` | New feature | Minor (0.x.0) |
-| `fix` | Bug fix | Patch (0.0.x) |
-| `docs` | Documentation only | No release |
-| `style` | Code style (formatting) | No release |
-| `refactor` | Code refactoring | No release |
-| `perf` | Performance improvement | Patch |
-| `test` | Adding/updating tests | No release |
-| `chore` | Maintenance tasks | No release |
+
+| Type       | Description             | Version Bump  |
+| ---------- | ----------------------- | ------------- |
+| `feat`     | New feature             | Minor (0.x.0) |
+| `fix`      | Bug fix                 | Patch (0.0.x) |
+| `docs`     | Documentation only      | No release    |
+| `style`    | Code style (formatting) | No release    |
+| `refactor` | Code refactoring        | No release    |
+| `perf`     | Performance improvement | Patch         |
+| `test`     | Adding/updating tests   | No release    |
+| `chore`    | Maintenance tasks       | No release    |
 
 ### Breaking Changes
+
 Add `BREAKING CHANGE:` in the footer or `!` after the type:
+
 ```
 feat!: remove deprecated type() method
 
@@ -65,6 +79,7 @@ BREAKING CHANGE: browser.type() has been removed, use browser.fill() instead
 ```
 
 ### Examples
+
 ```bash
 # Feature (minor version bump)
 git commit -m "feat(browser): add getByRole() locator helper"
@@ -86,7 +101,8 @@ git commit -m "feat!: rename type() to fill() for consistency"
 3. Ensure all tests pass: `npm test`
 4. Ensure code is formatted: `npm run format`
 5. Ensure no lint errors: `npm run lint`
-6. Open a Pull Request with a clear description
+6. If docs or public API changed, run `npm run docs:check`
+7. Open a Pull Request with a clear description
 
 ## Code Style
 

@@ -262,19 +262,16 @@ this context.
 the listener reference than the unsubscribe function.
 
 ```typescript
-// Real-world: capture every console error across every tab a test opens,
-// including popups. No more "why did my test pass with a 500 in a popup".
-const errors: string[] = [];
+const opened: string[] = [];
 ctx.on('page', (page) => {
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`${page.url()}: ${msg.text()}`);
-  });
+  void page.url().then((url) => opened.push(url));
 });
 
 const main = await ctx.newPage({ url: '/checkout' });
 const receipt = await ctx.waitForPage(() => main.find('#print').click());
 await receipt.waitForLoadState('load');
-expect(errors).toEqual([]);
+
+expect(opened.some((url) => url.endsWith('/checkout'))).toBe(true);
 ```
 
 ### `BrowserContext.addInitScript(script): Promise<InitScriptHandle>`

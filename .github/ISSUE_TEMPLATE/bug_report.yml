@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible CraftDriver problem.
+title: 'bug: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. A small reproduction helps most.
+  - type: input
+    id: version
+    attributes:
+      label: CraftDriver version
+      description: Run `npm ls craftdriver` or `npx craftdriver --version`.
+      placeholder: '1.0.2'
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Library API
+        - CLI
+        - MCP server
+        - Agent skill/init files
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js version, OS, browser, and whether the run is headed or headless.
+      placeholder: 'Node 24, macOS 15, Chrome stable, headless'
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include code, CLI commands, or a tiny HTML page if relevant.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full error message and `CraftdriverError.code` if present.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Screenshots, traces, links, or suspected cause.

@@ -1,0 +1,51 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+title: 'feat: '
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Please describe the workflow first, then the API if you have one in mind.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Library API
+        - CLI
+        - MCP server
+        - Browser contexts
+        - WebDriver BiDi
+        - Selectors and locators
+        - Tracing and debugging
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Include a code sketch if useful.
+      render: ts
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workaround, other libraries, or why current APIs are not enough.
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to help implement or test this.
+          required: false
