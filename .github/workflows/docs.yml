@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'src/**'
+      - 'scripts/gen-api-reference.mjs'
       - '.github/workflows/docs.yml'
       - 'package.json'
       - 'package-lock.json'
@@ -35,8 +37,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build docs
-        run: npm run docs:build
+      - name: Check and build docs
+        run: npm run docs:check
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

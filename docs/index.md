@@ -61,4 +61,4 @@ await browser.quit();
 
 - [Zero-Config Drivers](./zero-config-drivers.md) explains driver resolution and caching.
 - [WebDriver Standards](./standards.md) explains how Classic and BiDi work together.
-- [Recipes](./recipes.md) gives short examples for common workflows.
+- [Recipes](./recipes.md) collects KB-style patterns for common real-world workflows.

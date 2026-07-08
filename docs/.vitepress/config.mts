@@ -15,8 +15,7 @@ export default defineConfig({
       'meta',
       {
         property: 'og:description',
-        content:
-          'Playwright-style ergonomics. WebDriver standards. AI friendly.',
+        content: 'Playwright-style ergonomics. WebDriver standards. AI friendly.',
       },
     ],
     [
@@ -72,8 +71,23 @@ export default defineConfig({
           { text: 'Why CraftDriver?', link: '/why-craftdriver' },
           { text: 'Zero-Config Drivers', link: '/zero-config-drivers' },
           { text: 'WebDriver Standards', link: '/standards' },
-          { text: 'Recipes', link: '/recipes' },
-          { text: 'Launch Kit', link: '/launch-kit' },
+          {
+            text: 'Recipes',
+            link: '/recipes',
+            collapsed: true,
+            items: [
+              { text: 'Vitest Hooks', link: '/recipes/vitest-browser-lifecycle' },
+              { text: 'Reuse Login Session', link: '/recipes/login-once-reuse-session' },
+              { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
+              { text: 'Multi-User Workflows', link: '/recipes/multi-user-contexts' },
+              { text: 'Failure Traces', link: '/recipes/trace-failing-test' },
+              { text: 'Accessibility Gates', link: '/recipes/accessibility-gate' },
+              { text: 'Console Error Gates', link: '/recipes/console-error-gate' },
+              { text: 'Virtual Clock', link: '/recipes/virtual-clock-time-sensitive-ui' },
+              { text: 'Files', link: '/recipes/file-upload-download' },
+              { text: 'Mobile Flow', link: '/recipes/mobile-flow-with-network-and-logs' },
+            ],
+          },
         ],
       },
       {
