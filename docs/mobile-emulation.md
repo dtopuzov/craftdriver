@@ -163,9 +163,9 @@ await browser.click('#mobile-menu-button');
 await browser.expect('#mobile-menu').toBeVisible();
 ```
 
-### Combine with BiDi Features
+### Combine With Network Mocking And Logs
 
-Mobile emulation works alongside BiDi features:
+Mobile emulation works alongside network mocking and browser log capture:
 
 ```typescript
 const browser = await Browser.launch({
@@ -185,6 +185,9 @@ await browser.navigateTo('https://example.com');
 const errors = browser.logs.getErrors();
 expect(errors).toHaveLength(0);
 ```
+
+Learn more in [Network Mocking And Request Waiting](./network.md) and
+[Console Logs And JavaScript Errors](./browser-logs.md).
 
 ## Limitations
 

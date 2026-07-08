@@ -11,6 +11,7 @@ export default [
   {
     ignores: [
       'dist/**',
+      'docs/.vitepress/**',
       'examples/**',
       'selenium-webdriver/**',
       'rust/**',

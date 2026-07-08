@@ -9,8 +9,10 @@ The `ElementHandle` provides methods for interacting with individual DOM element
 const element = browser.find('#my-element');
 const button = browser.find(By.text('Submit'));
 
-// Chained operations
-await browser.find('#input').fill('text').press('Enter');
+// Element-scoped operations
+const input = browser.find('#input');
+await input.fill('text');
+await input.press('Enter');
 ```
 
 > **Tip:** Use `browser.locator(selector)` instead of `find()` when you need
@@ -99,6 +101,14 @@ Get the current value of an input element.
 const inputValue = await browser.find('#email').value();
 ```
 
+### tagName()
+
+Get the element tag name.
+
+```typescript
+const tag = await browser.find('#submit').tagName(); // "button"
+```
+
 ### getAttribute(name)
 
 Get an attribute value from the element.
@@ -166,14 +176,35 @@ await browser.find('#message').expect().toHaveText('Success');
 await browser.find('#input').expect().toHaveValue('test@example.com');
 ```
 
-## Method Chaining
+### setInputFiles(filePaths, options?)
 
-ElementHandle methods that don't return values can be chained:
+Set files on an `<input type="file">`.
 
 ```typescript
-await browser.find('#username').fill('testuser').press('Tab');
+await browser.find('#avatar').setInputFiles('/absolute/path/avatar.png');
+await browser.find('#photos').setInputFiles([
+  '/absolute/path/one.jpg',
+  '/absolute/path/two.jpg',
+]);
+```
 
-await browser.find('#password').fill('secret123').press('Enter');
+### evaluate(fn, ...args)
+
+Run JavaScript with this element as the first argument.
+
+```typescript
+const tag = await browser.find('#submit').evaluate(el => el.tagName.toLowerCase());
+const active = await browser
+  .find('#submit')
+  .evaluate((el, cls) => el.classList.contains(cls), 'active');
+```
+
+### a11y
+
+Run an accessibility audit scoped to this element and its descendants.
+
+```typescript
+const result = await browser.find('#checkout').a11y.audit();
 ```
 
 ## Examples

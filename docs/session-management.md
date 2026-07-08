@@ -1,10 +1,13 @@
 # Session Management
 
-Craftdriver supports Playwright-style session persistence, allowing you to save and restore browser state including cookies and localStorage. This is perfect for:
+CraftDriver supports Playwright-style session persistence, allowing you to save and restore browser state including cookies and localStorage. This is perfect for:
 
 - **Skipping login in tests** - Log in once, reuse session across test runs
 - **Sharing auth state** - Generate auth state in setup, use in parallel tests
 - **Debugging** - Capture session state at any point
+
+Session management is the user-facing feature. Under the hood, CraftDriver uses
+the best available WebDriver transport for the browser you launched.
 
 ## Saving Session State
 
@@ -51,6 +54,15 @@ The saved file contains:
 await browser.loadState('./session.json');
 ```
 
+## Working With State Objects
+
+Use the state object directly when you do not want to write a file:
+
+```typescript
+const state = await browser.storage.getState();
+await browser.storage.setState(state);
+```
+
 ## Launching with Pre-loaded State
 
 The most common pattern - launch a browser with existing session:
@@ -88,6 +100,11 @@ const cookies = await browser.storage.getCookies();
 
 // Get cookies for specific domain
 const domainCookies = await browser.storage.getCookies({ domain: 'example.com' });
+
+// Set multiple cookies
+await browser.storage.setCookies([
+  { name: 'theme', value: 'dark', domain: 'example.com', path: '/' },
+]);
 
 // Clear all cookies
 await browser.storage.clearCookies();

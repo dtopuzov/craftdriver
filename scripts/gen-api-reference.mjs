@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Generate `docs/api-reference.md` — one canonical table of every public
- * symbol re-exported from `src/index.ts`. Designed for AI agents: a single
- * compact lookup so they never invent a method.
+ * symbol re-exported from `src/index.ts`. Designed for humans and AI agents:
+ * grouped enough to browse, strict enough that they never invent a method.
  *
  * Usage:
  *   node scripts/gen-api-reference.mjs           # write the file
@@ -41,7 +41,130 @@ const TOPIC_DOC = {
   errors: 'docs/error-codes.md',
   index: 'docs/getting-started.md',
 };
-const BIDI_DOC = 'docs/bidi-features.md';
+const BIDI_SYMBOL_DOC = {
+  ConsoleMessage: 'docs/browser-logs.md',
+  JavaScriptError: 'docs/browser-logs.md',
+  LogMessage: 'docs/browser-logs.md',
+  LogMonitor: 'docs/browser-logs.md',
+  InterceptedRequest: 'docs/network.md',
+  InterceptedResponse: 'docs/network.md',
+  MockResponse: 'docs/network.md',
+  NetworkInterceptor: 'docs/network.md',
+  Cookie: 'docs/session-management.md',
+  CookieInput: 'docs/session-management.md',
+  SessionState: 'docs/session-management.md',
+  SessionStateManager: 'docs/session-management.md',
+  StorageStateOptions: 'docs/session-management.md',
+};
+const BIDI_FILE_DOC = {
+  logs: 'docs/browser-logs.md',
+  network: 'docs/network.md',
+  storage: 'docs/session-management.md',
+};
+const CATEGORIES = [
+  {
+    title: 'Browser And Pages',
+    description: 'Launch browsers, move between pages and frames, handle dialogs, and wait for navigation.',
+    symbols: [
+      'Browser',
+      'LaunchOptions',
+      'LoadState',
+      'Page',
+      'Frame',
+      'Dialog',
+      'DialogType',
+      'Download',
+    ],
+  },
+  {
+    title: 'Locators And Elements',
+    description: 'Find page content with semantic locators and selector helpers.',
+    symbols: ['By', 'Locator'],
+  },
+  {
+    title: 'Input',
+    description: 'Drive keyboard, mouse, and low-level key values.',
+    symbols: ['Key', 'Keyboard', 'Mouse'],
+  },
+  {
+    title: 'Contexts And Sessions',
+    description: 'Isolate users, manage cookies, and save or restore browser state.',
+    symbols: [
+      'BrowserContext',
+      'BrowserContextConfig',
+      'BrowserContextHooks',
+      'ClearCookiesFilter',
+      'ContextStorageStateOptions',
+      'InitScriptHandle',
+      'RoutePattern',
+      'Cookie',
+      'CookieInput',
+      'SessionState',
+      'SessionStateManager',
+      'StorageStateOptions',
+    ],
+  },
+  {
+    title: 'Network',
+    description: 'Mock, intercept, observe, and assert browser network traffic.',
+    symbols: ['NetworkInterceptor', 'MockResponse', 'InterceptedRequest', 'InterceptedResponse'],
+  },
+  {
+    title: 'Logs And Tracing',
+    description: 'Capture console output, JavaScript errors, and trace artifacts.',
+    symbols: [
+      'LogMonitor',
+      'ConsoleMessage',
+      'JavaScriptError',
+      'LogMessage',
+      'TraceStartOptions',
+      'TraceScreenshotMode',
+      'TraceEvent',
+    ],
+  },
+  {
+    title: 'Emulation And Time',
+    description: 'Configure devices, emulation overrides, and deterministic browser time.',
+    symbols: [
+      'devices',
+      'DeviceMetrics',
+      'DeviceName',
+      'MobileEmulation',
+      'EmulateOptions',
+      'Clock',
+      'ClockInstallOptions',
+      'ClockTime',
+    ],
+  },
+  {
+    title: 'Accessibility',
+    description: 'Run axe-core accessibility checks and inspect violation details.',
+    symbols: [
+      'A11y',
+      'A11yError',
+      'A11yImpact',
+      'A11yOptions',
+      'A11yResult',
+      'A11yViolation',
+      'A11yViolationNode',
+    ],
+  },
+  {
+    title: 'Errors And Driver Services',
+    description: 'Handle stable CraftDriver errors or customize browser driver services.',
+    symbols: [
+      'CraftdriverError',
+      'CraftdriverErrorOptions',
+      'ErrorCode',
+      'ErrorCodeName',
+      'ErrorCodeValue',
+      'ChromeService',
+      'ChromeServiceOptions',
+      'FirefoxService',
+      'FirefoxServiceOptions',
+    ],
+  },
+];
 
 function loadProgram() {
   const program = ts.createProgram({
@@ -95,10 +218,11 @@ function definingFile(symbol) {
 }
 
 /** Pick a topic doc for the symbol based on its defining file. */
-function topicLink(definingPath) {
+function topicLink(definingPath, symbolName) {
   if (!definingPath) return null;
-  if (definingPath.includes('/bidi/')) return BIDI_DOC;
+  if (BIDI_SYMBOL_DOC[symbolName]) return BIDI_SYMBOL_DOC[symbolName];
   const base = path.basename(definingPath, '.ts');
+  if (definingPath.includes('/bidi/')) return BIDI_FILE_DOC[base] ?? null;
   return TOPIC_DOC[base] ?? null;
 }
 
@@ -120,7 +244,7 @@ function collectExports() {
         name: symbol.getName(),
         kind: classify(target),
         summary: jsdocSummary(target, checker) || jsdocSummary(symbol, checker),
-        topic: topicLink(definingPath),
+        topic: topicLink(definingPath, symbol.getName()),
         definingPath,
       };
     })
@@ -131,11 +255,47 @@ function renderTable(rows) {
   const lines = [];
   lines.push('# API reference');
   lines.push('');
-  lines.push('Every symbol re-exported from [`src/index.ts`](../src/index.ts). One row per export.');
+  lines.push('Every symbol re-exported from [`src/index.ts`](../src/index.ts), grouped by the feature area most users look for first.');
   lines.push('Generated by `scripts/gen-api-reference.mjs` — do not edit by hand.');
   lines.push('');
   lines.push('Run `npm run docs:api` to regenerate. CI fails when this file is out of date.');
   lines.push('');
+
+  lines.push('Start with [`Browser`](./browser-api.md), [`By`](./selectors.md) / [`Locator`](./selectors.md), and the feature guide that matches the job you are automating.');
+  lines.push('');
+
+  const rowByName = new Map(rows.map((row) => [row.name, row]));
+  const rendered = new Set();
+
+  for (const category of CATEGORIES) {
+    const categoryRows = category.symbols
+      .map((name) => rowByName.get(name))
+      .filter(Boolean);
+    if (categoryRows.length === 0) continue;
+
+    lines.push(`## ${category.title}`);
+    lines.push('');
+    lines.push(category.description);
+    lines.push('');
+    renderRows(lines, categoryRows);
+    for (const row of categoryRows) rendered.add(row.name);
+  }
+
+  const remaining = rows.filter((row) => !rendered.has(row.name));
+  if (remaining.length > 0) {
+    lines.push('## Other Exports');
+    lines.push('');
+    lines.push('Exports that are public but not yet assigned to a feature group.');
+    lines.push('');
+    renderRows(lines, remaining);
+  }
+
+  lines.push(`Total exports: **${rows.length}**.`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+function renderRows(lines, rows) {
   lines.push('| Symbol | Kind | Summary | Docs |');
   lines.push('|---|---|---|---|');
   for (const r of rows) {
@@ -149,9 +309,6 @@ function renderTable(rows) {
     lines.push(`| \`${r.name}\` | ${r.kind} | ${summary} | ${docLink} |`);
   }
   lines.push('');
-  lines.push(`Total exports: **${rows.length}**.`);
-  lines.push('');
-  return lines.join('\n');
 }
 
 function main() {

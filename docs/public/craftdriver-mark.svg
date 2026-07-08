@@ -1,0 +1,15 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">CraftDriver mark</title>
+  <desc id="desc">A browser window with a command prompt and connection nodes.</desc>
+  <rect x="12" y="24" width="136" height="112" rx="18" fill="#111827"/>
+  <rect x="24" y="42" width="112" height="78" rx="10" fill="#f8fafc"/>
+  <circle cx="34" cy="34" r="5" fill="#f97316"/>
+  <circle cx="50" cy="34" r="5" fill="#f59e0b"/>
+  <circle cx="66" cy="34" r="5" fill="#22c55e"/>
+  <path d="M44 78L60 64L44 50" stroke="#b45309" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M70 82H104" stroke="#2563eb" stroke-width="8" stroke-linecap="round"/>
+  <path d="M91 60H112C121.941 60 130 68.0589 130 78V78C130 87.9411 121.941 96 112 96H91" stroke="#94a3b8" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="88" cy="60" r="8" fill="#2563eb"/>
+  <circle cx="88" cy="96" r="8" fill="#f59e0b"/>
+  <circle cx="118" cy="78" r="8" fill="#22c55e"/>
+</svg>

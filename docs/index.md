@@ -1,0 +1,64 @@
+---
+layout: home
+title: CraftDriver
+titleTemplate: false
+hero:
+  name: CraftDriver
+  text: Crafted browser automation for Node.js.
+  tagline: Playwright-style ergonomics. WebDriver standards. AI friendly.
+  image:
+    src: /craftdriver-mark.svg
+    alt: CraftDriver
+  actions:
+    - theme: brand
+      text: Get Started
+      link: /getting-started
+    - theme: alt
+      text: API Reference
+      link: /api-reference
+    - theme: alt
+      text: AI Agent Guide
+      link: /agents
+features:
+  - title: Control network traffic
+    details: Mock APIs, block noisy requests, intercept calls, and wait for real requests or responses.
+  - title: Reuse browser state
+    details: Save cookies and localStorage, launch already signed in, and isolate users with browser contexts.
+  - title: Test time and quality
+    details: Use virtual time, axe-core accessibility checks, traces, screenshots, console logs, and JS error capture.
+  - title: Agent-friendly
+    details: CLI, MCP server, and assistant rules are there when you want coding agents to drive the browser too.
+---
+
+## One Install
+
+```bash
+npm install craftdriver --save-dev
+```
+
+```ts
+import { Browser } from 'craftdriver';
+
+const browser = await Browser.launch({ browserName: 'chrome' });
+
+await browser.navigateTo('https://example.com/login');
+await browser.getByLabel('Username').fill('alice');
+await browser.getByLabel('Password').fill('hunter2');
+await browser.getByRole('button', { name: 'Sign in' }).click();
+await browser.expect('#result').toHaveText('Welcome alice');
+
+await browser.quit();
+```
+
+## Choose Your Path
+
+| You want to...                    | Start                                   |
+| --------------------------------- | --------------------------------------- |
+| Write browser automation          | [Getting Started](./getting-started.md) |
+| Give an AI coding agent a browser | [AI Agent Guide](./agents.md)           |
+
+## Good Stuff To Read Next
+
+- [Zero-Config Drivers](./zero-config-drivers.md) explains driver resolution and caching.
+- [WebDriver Standards](./standards.md) explains how Classic and BiDi work together.
+- [Recipes](./recipes.md) gives short examples for common workflows.

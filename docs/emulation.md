@@ -65,7 +65,9 @@ JavaScript-only patch.
 await browser.emulate({ colorScheme: 'dark' });
 await browser.navigateTo('https://app.example.com');
 
-const bg = await browser.find('body').getCssValue('background-color');
+const bg = await browser.evaluate(() =>
+  getComputedStyle(document.body).backgroundColor
+);
 expect(bg).toBe('rgb(17, 17, 17)');
 ```
 
@@ -108,7 +110,9 @@ Confirm animations are actually suppressed for users who request it.
 await browser.emulate({ reducedMotion: 'reduce' });
 await browser.navigateTo('https://app.example.com');
 
-const anim = await browser.find('.hero').getCssValue('animation-name');
+const anim = await browser.evaluate(() =>
+  getComputedStyle(document.querySelector('.hero')!).animationName
+);
 expect(anim).toBe('none');
 ```
 

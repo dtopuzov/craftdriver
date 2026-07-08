@@ -83,21 +83,21 @@ Run `craftdriver --help` for the full list.
 
 CSS is the default. Switch kind with a `prefix=value` form:
 
-| Prefix          | Maps to                                  | Example                              |
-| --------------- | ---------------------------------------- | ------------------------------------ |
-| _none_, `css=`  | `By.css`                                 | `'.product-list li'`                 |
-| `xpath=`        | `By.xpath`                               | `'xpath=//button[1]'`                |
-| `role=`         | `By.role` (+ `[name=...]` for the name)  | `'role=button[name=Submit]'`         |
-| `text=`         | `By.text` (exact)                        | `'text=Sign In'`                     |
-| `text*=`        | `By.partialText`                         | `'text*=Sign'`                       |
-| `label=`        | `By.labelText`                           | `'label=Email'`                      |
-| `placeholder=`  | `By.placeholder`                         | `'placeholder=name@example.com'`     |
-| `alt=`          | `By.altText`                             | `'alt=Logo'`                         |
-| `title=`        | `By.title`                               | `'title=Help'`                       |
-| `testid=`       | `By.testId`                              | `'testid=login-btn'`                 |
-| `id=`           | `By.id`                                  | `'id=submit'`                        |
-| `name=`         | `By.name`                                | `'name=email'`                       |
-| `ref=`          | snapshot ref (`craftdriver snapshot`)    | `'ref=e5'`                           |
+| Prefix         | Maps to                                 | Example                          |
+| -------------- | --------------------------------------- | -------------------------------- |
+| _none_, `css=` | `By.css`                                | `'.product-list li'`             |
+| `xpath=`       | `By.xpath`                              | `'xpath=//button[1]'`            |
+| `role=`        | `By.role` (+ `[name=...]` for the name) | `'role=button[name=Submit]'`     |
+| `text=`        | `By.text` (exact)                       | `'text=Sign In'`                 |
+| `text*=`       | `By.partialText`                        | `'text*=Sign'`                   |
+| `label=`       | `By.labelText`                          | `'label=Email'`                  |
+| `placeholder=` | `By.placeholder`                        | `'placeholder=name@example.com'` |
+| `alt=`         | `By.altText`                            | `'alt=Logo'`                     |
+| `title=`       | `By.title`                              | `'title=Help'`                   |
+| `testid=`      | `By.testId`                             | `'testid=login-btn'`             |
+| `id=`          | `By.id`                                 | `'id=submit'`                    |
+| `name=`        | `By.name`                               | `'name=email'`                   |
+| `ref=`         | snapshot ref (`craftdriver snapshot`)   | `'ref=e5'`                       |
 
 Anything else is treated as a CSS selector, so attribute selectors with
 `=` inside (e.g. `'button[type=submit]'`) work as expected.
@@ -148,11 +148,11 @@ code:  NO_MATCH
 
 ## Exit codes
 
-| Code | Meaning                                                                 |
-| ---- | ----------------------------------------------------------------------- |
-| `0`  | success (or `exists` matched at least one element)                      |
-| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero elements       |
-| `2`  | usage error (missing argument, unknown command)                         |
+| Code | Meaning                                                           |
+| ---- | ----------------------------------------------------------------- |
+| `0`  | success (or `exists` matched at least one element)                |
+| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero elements |
+| `2`  | usage error (missing argument, unknown command)                   |
 
 ## Fail-fast defaults
 
@@ -221,12 +221,12 @@ For agents that load skills explicitly (Claude Code's Skills system,
 Copilot agent customization, custom orchestrators), the npm tarball
 ships a tiered skill pack under `skills/craftdriver/`:
 
-| File                                                          | Purpose                                                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [`SKILL.md`](../skills/craftdriver/SKILL.md)                  | Always-on, ≤ 500 tokens. Selector order, error-code-first, auto-wait.   |
-| [`cheatsheet.md`](../skills/craftdriver/cheatsheet.md)        | Command-by-command reference for writing tests.                          |
-| [`patterns.md`](../skills/craftdriver/patterns.md)            | Worked recipes (login, upload, network-wait, a11y, tracing, clock).      |
-| [`cli.md`](../skills/craftdriver/cli.md)                      | Agent-facing CLI reference.                                              |
+| File                                                                                                  | Purpose                                                               |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [`SKILL.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/SKILL.md)           | Always-on, ≤ 500 tokens. Selector order, error-code-first, auto-wait. |
+| [`cheatsheet.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cheatsheet.md) | Command-by-command reference for writing tests.                       |
+| [`patterns.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/patterns.md)     | Worked recipes (login, upload, network-wait, a11y, tracing, clock).   |
+| [`cli.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cli.md)               | Agent-facing CLI reference.                                           |
 
 Point your agent at `node_modules/craftdriver/skills/craftdriver/SKILL.md`
 or copy it into your project. The other files are referenced from

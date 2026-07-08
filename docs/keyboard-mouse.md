@@ -48,6 +48,15 @@ Release a held key.
 await browser.keyboard.up('Shift');
 ```
 
+### chord(...keys)
+
+Press a key combination.
+
+```typescript
+await browser.keyboard.chord('Control', 'a');
+await browser.keyboard.chord('Shift', 'Tab');
+```
+
 ### Key Combinations
 
 Combine `down()` and `up()` for modifier key combinations:
@@ -129,23 +138,25 @@ await browser.mouse.move({ x: 150, y: 300 });
 await browser.mouse.move('#target');
 ```
 
-### down()
+### down(button?)
 
 Press the mouse button.
 
 ```typescript
 await browser.mouse.down();
+await browser.mouse.down('right');
 ```
 
-### up()
+### up(button?)
 
 Release the mouse button.
 
 ```typescript
 await browser.mouse.up();
+await browser.mouse.up('right');
 ```
 
-### wheel(deltaX, deltaY)
+### wheel(deltaX, deltaY, target?)
 
 Scroll the page.
 
@@ -158,6 +169,9 @@ await browser.mouse.wheel(0, -100);
 
 // Scroll right
 await browser.mouse.wheel(100, 0);
+
+// Scroll while targeting an element
+await browser.mouse.wheel(0, 300, '#scroll-panel');
 ```
 
 ### dragAndDrop(from, to)
@@ -194,14 +208,14 @@ await browser.mouse.dragAndDrop({ x: startX, y: startY }, { x: endX, y: endY });
 
 ```typescript
 // Move to start position
-await browser.mouse.move(100, 100);
+await browser.mouse.move({ x: 100, y: 100 });
 await browser.mouse.down();
 
 // Draw a line
-await browser.mouse.move(200, 100);
-await browser.mouse.move(200, 200);
-await browser.mouse.move(100, 200);
-await browser.mouse.move(100, 100);
+await browser.mouse.move({ x: 200, y: 100 });
+await browser.mouse.move({ x: 200, y: 200 });
+await browser.mouse.move({ x: 100, y: 200 });
+await browser.mouse.move({ x: 100, y: 100 });
 
 await browser.mouse.up();
 ```
@@ -227,10 +241,14 @@ For element-scoped key presses, use the `press()` method on ElementHandle:
 
 ```typescript
 // Press Enter in a specific input
-await browser.find('#search').fill('query').press('Enter');
+const search = browser.find('#search');
+await search.fill('query');
+await search.press('Enter');
 
 // Tab out of a field
-await browser.find('#username').fill('user').press('Tab');
+const username = browser.find('#username');
+await username.fill('user');
+await username.press('Tab');
 ```
 
 This is often more convenient than using the global keyboard API.
