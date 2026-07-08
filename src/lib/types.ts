@@ -16,6 +16,8 @@ export interface RequestOptions {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
   body?: unknown;
+  /** Abort the request and reject if no response arrives within this many ms. Unbounded when omitted. */
+  timeoutMs?: number;
 }
 
 export interface WebDriverEndpoint {

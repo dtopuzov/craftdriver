@@ -110,7 +110,12 @@ function buildTransportError(err: Error, method: string, path: string): Craftdri
 export class HttpClient {
   constructor(private endpoint: WebDriverEndpoint) {}
 
-  async send<T = unknown>({ method, path, body }: RequestOptions): Promise<CommandResponse<T>> {
+  async send<T = unknown>({
+    method,
+    path,
+    body,
+    timeoutMs,
+  }: RequestOptions): Promise<CommandResponse<T>> {
     const base = `${this.endpoint.protocol}://${this.endpoint.hostname}:${this.endpoint.port}${this.endpoint.path ?? ''}`;
     const url = new URL(path, base);
     const isHttps = url.protocol === 'https:';
@@ -129,10 +134,26 @@ export class HttpClient {
     const transport = isHttps ? (https as unknown as typeof http) : http;
 
     return await new Promise<CommandResponse<T>>((resolve, reject) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+
+      const settleResolve = (value: CommandResponse<T>): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      };
+      const settleReject = (err: unknown): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        reject(err);
+      };
+
       const req = transport.request(url, options, (res: http.IncomingMessage) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
-        res.on('error', (err: Error) => reject(buildTransportError(err, method, path)));
+        res.on('error', (err: Error) => settleReject(buildTransportError(err, method, path)));
         res.on('end', () => {
           const status = res.statusCode ?? 0;
           const text = Buffer.concat(chunks).toString('utf8');
@@ -141,15 +162,15 @@ export class HttpClient {
           // error response. Gate on status alone (see buildDriverError) so a
           // successful command returning error-shaped data is never misread.
           if (status !== 200) {
-            return reject(buildDriverError(status, text, method, path));
+            return settleReject(buildDriverError(status, text, method, path));
           }
 
-          if (!text) return resolve({ value: undefined as unknown as T });
+          if (!text) return settleResolve({ value: undefined as unknown as T });
           try {
             const json = JSON.parse(text) as CommandResponse<T>;
-            resolve(json);
+            settleResolve(json);
           } catch {
-            reject(
+            settleReject(
               new CraftdriverError(
                 ErrorCode.DRIVER_ERROR,
                 `Invalid JSON in WebDriver response for ${method} ${path}: ${text}`,
@@ -159,7 +180,25 @@ export class HttpClient {
           }
         });
       });
-      req.on('error', (err: Error) => reject(buildTransportError(err, method, path)));
+      req.on('error', (err: Error) => settleReject(buildTransportError(err, method, path)));
+
+      // Only armed when the caller opts in (timeoutMs is undefined for every
+      // regular WebDriver command today) — a hung connection otherwise waits
+      // forever with no way for the caller to recover. See Driver.create(),
+      // the one call site that currently sets this.
+      if (timeoutMs) {
+        timer = setTimeout(() => {
+          settleReject(
+            new CraftdriverError(
+              ErrorCode.DRIVER_ERROR,
+              `WebDriver command ${method} ${path} timed out after ${timeoutMs}ms waiting for a response`,
+              { detail: { method, path, timeoutMs } }
+            )
+          );
+          req.destroy();
+        }, timeoutMs);
+      }
+
       if (payload) req.write(payload);
       req.end();
     });
