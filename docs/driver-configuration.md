@@ -8,10 +8,11 @@ Craftdriver resolves the WebDriver binary through a chain — first match wins:
 | 2 | `CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` env var |
 | 3 | `CRAFTDRIVER_DRIVER_PATH` env var (generic fallback for either browser) |
 | 4 | Legacy/Selenium-compatible env vars: `CHROMEDRIVER_PATH`, `SE_CHROMEDRIVER` (chromedriver) or `GECKODRIVER_PATH`, `GECKODRIVER_FILEPATH`, `SE_GECKODRIVER` (geckodriver) |
-| 5 | **Cached auto-resolution** — the path a previous auto-resolve settled on, reused within the `CRAFTDRIVER_DRIVER_TTL` window |
-| 6 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
-| 7 | `chromedriver` / `geckodriver` on `PATH` |
-| 8 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
+| 5 | Known CI-provided driver directories (e.g. GitHub Actions' `CHROMEWEBDRIVER` / `GECKOWEBDRIVER`) — see [CI platform detection](#ci-platform-detection) |
+| 6 | **Cached auto-resolution** — the path a previous auto-resolve settled on, reused within the `CRAFTDRIVER_DRIVER_TTL` window |
+| 7 | `chromedriver` / `geckodriver` in `node_modules/.bin` |
+| 8 | `chromedriver` / `geckodriver` on `PATH` |
+| 9 | **Auto-download from Chrome for Testing / GitHub** ← the zero-config default |
 
 Downloaded drivers are cached in `~/.cache/craftdriver`, and so is the
 *resolution itself* — which driver path to use. Within the
@@ -26,6 +27,23 @@ major version after a browser upgrade, the driver is re-resolved and
 re-downloaded if needed. Only the driver binary is ever downloaded, never the
 browser itself. Explicit configuration (steps 1–4) always takes precedence over
 the cache.
+
+## CI platform detection
+
+On **GitHub Actions**, craftdriver recognizes the runner's own pre-installed,
+version-matched driver automatically — no configuration needed. GitHub's
+`ubuntu-latest`, `macos-latest`, and `windows-latest` images all publish a
+driver directory via `CHROMEWEBDRIVER` / `GECKOWEBDRIVER` env vars (see
+[actions/runner-images](https://github.com/actions/runner-images)); craftdriver
+checks those directories as step 5 above, before falling back to its own
+cache/PATH-probe/download machinery.
+
+This is best-effort: if a future runner image drops or renames these vars,
+craftdriver falls through safely to the next resolution step rather than
+erroring. No other CI platform is auto-detected yet — set
+`CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` explicitly on
+other providers (or to pin a non-default driver even on GitHub Actions;
+explicit config always wins, per the chain above).
 
 ## Environment variables
 

@@ -6,9 +6,10 @@ export type ChromeServiceOptions = Omit<DriverServiceOptions, 'command'> & {
    * Absolute path to a `chromedriver` binary.
    * When omitted, craftdriver resolves the driver automatically:
    *   1. CRAFTDRIVER_DRIVER_PATH / CHROMEDRIVER_PATH / SE_CHROMEDRIVER env vars
-   *   2. node_modules/.bin/chromedriver (if chromedriver npm package is installed)
-   *   3. chromedriver on PATH
-   *   4. Detect system Chrome version → download matching chromedriver from CfT
+   *   2. Known CI-provided driver directories (e.g. GitHub Actions' CHROMEWEBDRIVER)
+   *   3. node_modules/.bin/chromedriver (if chromedriver npm package is installed)
+   *   4. chromedriver on PATH
+   *   5. Detect system Chrome version → download matching chromedriver from CfT
    */
   binaryPath?: string;
 };

@@ -24,15 +24,24 @@ CraftDriver checks for the driver in this order:
 | ---- | ----------------------------------------------------------------------- |
 | 1    | Explicit `ChromeService` / `FirefoxService` configuration               |
 | 2    | Environment variables such as `CHROMEDRIVER_PATH` or `GECKODRIVER_PATH` |
-| 3    | Project-local binaries in `node_modules/.bin`                           |
-| 4    | Binaries already available on `PATH`                                    |
-| 5    | Auto-resolved and cached driver matching the installed browser          |
+| 3    | Known CI-provided driver directories (e.g. GitHub Actions' `CHROMEWEBDRIVER` / `GECKOWEBDRIVER`) |
+| 4    | Project-local binaries in `node_modules/.bin`                           |
+| 5    | Binaries already available on `PATH`                                    |
+| 6    | Auto-resolved and cached driver matching the installed browser          |
 
 If a browser update leaves a cached driver stale, CraftDriver retries once with a refreshed driver instead of making you clear the cache manually.
 
 ## CI Friendly
 
-The default setup works well on CI runners that already include Chrome or Firefox. For stricter environments, you can pin the driver path or run offline:
+The default setup works well on CI runners that already include Chrome or
+Firefox. On **GitHub Actions** specifically, craftdriver auto-detects the
+runner's own pre-installed, version-matched driver out of the box (via
+`CHROMEWEBDRIVER` / `GECKOWEBDRIVER`) — no configuration needed, and it's
+faster than the fallback probes since it skips version detection entirely (see
+[Driver Configuration → CI platform detection](./driver-configuration.md#ci-platform-detection)).
+
+For platforms without built-in detection, or to pin a driver other than the
+runner's default, set the path manually:
 
 ```bash
 CRAFTDRIVER_CHROMEDRIVER_PATH=/usr/bin/chromedriver npm test

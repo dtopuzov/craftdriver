@@ -5,6 +5,8 @@
  *   1. options.binaryPath (explicit)
  *   2. CRAFTDRIVER_DRIVER_PATH
  *   3. Legacy env vars (CHROMEDRIVER_PATH, SE_CHROMEDRIVER, etc.)
+ *   3.5. Known CI-provided driver directories (e.g. GitHub Actions'
+ *        CHROMEWEBDRIVER / GECKOWEBDRIVER)
  *   4. node_modules/.bin/chromedriver|geckodriver
  *   5. PATH probe
  *   [CRAFTDRIVER_OFFLINE → throw here if no match yet]
@@ -478,6 +480,15 @@ async function downloadGeckodriver(): Promise<string> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+// CI platforms that pre-install a version-matched driver and publish its
+// directory via an env var. Not craftdriver-specific — these are the
+// platform's own convention — so this step ranks below explicit config
+// (steps 1-3) and only fills a gap when nothing more specific was set.
+// Confirmed present with matching semantics on GitHub Actions' Ubuntu, macOS,
+// and Windows runner images (see actions/runner-images per-image READMEs).
+const CHROME_CI_DIR_ENV_VARS = ['CHROMEWEBDRIVER'];   // GitHub Actions
+const GECKO_CI_DIR_ENV_VARS  = ['GECKOWEBDRIVER'];    // GitHub Actions
+
 /** Resolves the path to a chromedriver binary, downloading if necessary. */
 export async function resolveChromeDriver(options?: {
   binaryPath?: string;
@@ -497,6 +508,19 @@ export async function resolveChromeDriver(options?: {
   for (const envVar of ['CHROMEDRIVER_PATH', 'SE_CHROMEDRIVER']) {
     const p = process.env[envVar];
     if (p && fs.existsSync(p)) return p;
+  }
+
+  // 3.5. Known CI-provided driver directories (e.g. GitHub Actions'
+  //      CHROMEWEBDRIVER). Cheaper than a cache read (fs.existsSync) and a
+  //      stronger signal than anything below: the CI platform vendor
+  //      guarantees this driver matches the pre-installed browser version.
+  //      Not cached — it's already as cheap as a cache read, so caching it
+  //      would only add stale-path risk for no benefit.
+  for (const envVar of CHROME_CI_DIR_ENV_VARS) {
+    const dir = process.env[envVar];
+    if (!dir) continue;
+    const candidate = path.join(dir, driverBinName());
+    if (fs.existsSync(candidate)) return candidate;
   }
 
   // 4. Auto-resolution cache. Once we've auto-resolved a chromedriver (step 7
@@ -572,6 +596,16 @@ export async function resolveFirefoxDriver(options?: {
     if (p && fs.existsSync(p)) return p;
   }
 
+  // 3.5. Known CI-provided driver directories (e.g. GitHub Actions'
+  //      GECKOWEBDRIVER). See resolveChromeDriver's equivalent step for why
+  //      this ranks here and isn't cached.
+  for (const envVar of GECKO_CI_DIR_ENV_VARS) {
+    const dir = process.env[envVar];
+    if (!dir) continue;
+    const candidate = path.join(dir, geckoBinName());
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
   // 4. Auto-resolution cache. Once geckodriver has been auto-resolved (step 8
   //    below writes this record), reuse it for a TTL window instead of probing
   //    PATH (a blocking `which` spawn) and re-detecting Firefox on every
@@ -590,8 +624,11 @@ export async function resolveFirefoxDriver(options?: {
   );
   if (fs.existsSync(localBin)) return localBin;
 
-  // 6. PATH probe.
-  if (commandOnPath('geckodriver')) return 'geckodriver';
+  // 6. PATH probe (skipped when CRAFTDRIVER_SKIP_PATH_PROBE is set, e.g. in
+  //    integration tests that need to exercise the auto-download path even on
+  //    systems where geckodriver is already installed). Mirrors
+  //    resolveChromeDriver's equivalent step.
+  if (!process.env.CRAFTDRIVER_SKIP_PATH_PROBE && commandOnPath('geckodriver')) return 'geckodriver';
 
   // 7. Offline guard.
   if (process.env.CRAFTDRIVER_OFFLINE) {
