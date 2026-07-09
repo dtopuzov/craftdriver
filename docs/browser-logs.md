@@ -12,35 +12,20 @@ emitted a known log message.
 
 ## Capture Timing
 
-Capture is lazy by default. CraftDriver subscribes to log events the first time
-you touch `browser.logs.onLog()`, `.onConsole()`, `.onError()`, `.on()`,
-`.waitForConsole()`, or `.waitForError()`.
-
-Messages emitted before that first touch are not captured, so this can return an
-empty array:
+Capture is automatic. CraftDriver subscribes to log events at launch, so
+messages emitted at any point — including during the first navigation, before you
+ever touch `browser.logs` — are captured. There is nothing to enable and no
+listener to pre-arm:
 
 ```typescript
 await browser.navigateTo('https://example.com');
-const messages = browser.logs.getMessages();
-```
-
-Start capture before the action that logs:
-
-```typescript
-const warning = browser.logs.waitForConsole((msg) => msg.level === 'warn');
-
 await browser.getByRole('button', { name: 'Show warning' }).click();
-expect((await warning).text).toContain('Heads up');
+const messages = browser.logs.getMessages(); // includes the warning
 ```
 
-Or start capture immediately at launch:
-
-```typescript
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  captureLogs: true,
-});
-```
+The subscription rides the connect-time batch, so it costs no extra round trip
+and no measurable overhead. Use `clearLogs()` if you want to assert only on
+messages emitted after a certain point.
 
 ## Read Collected Messages
 

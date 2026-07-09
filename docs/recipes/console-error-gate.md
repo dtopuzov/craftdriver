@@ -1,17 +1,14 @@
 # Fail On Console And JavaScript Errors
 
 A flow can look correct in the DOM while quietly throwing in the console — a
-failed fetch, an undefined access, a rejected promise. Capture logs at launch,
-run the flow, then assert no JavaScript errors were reported so those failures
-break the test instead of reaching users. This recipe uses the live
+failed fetch, an undefined access, a rejected promise. Logs are captured
+automatically from launch, so you can run the flow and then assert no JavaScript
+errors were reported, breaking the test instead of reaching users. This recipe
+uses the live
 [console errors example](https://dtopuzov.github.io/craftdriver/examples/console-errors.html).
-It enables `captureLogs` at launch, so it shows the `launch` call.
 
 ```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  captureLogs: true,
-});
+const browser = await Browser.launch({ browserName: 'chrome' });
 
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/console-errors.html');
 browser.logs.clearLogs();
@@ -38,7 +35,7 @@ await logged;
 
 ## Notes
 
-- `assertNoErrors()` checks captured JavaScript errors, so keep `captureLogs: true`.
+- `assertNoErrors()` checks captured JavaScript errors — capture is automatic, nothing to enable.
 - Call `clearLogs()` before the flow so errors from earlier tests don't bleed in.
 - Use `waitForConsole()` / `waitForError()` when a specific message is the thing you're asserting.
 

@@ -12,7 +12,6 @@ Because mobile emulation is a launch-time capability, this recipe shows the
 const browser = await Browser.launch({
   browserName: 'chrome', // mobile emulation is Chrome/Chromium only
   mobileEmulation: 'Pixel 7',
-  captureLogs: true,
 });
 
 // ?bidi=true makes the demo page issue real requests for interception.
@@ -33,7 +32,7 @@ browser.logs.assertNoErrors();
 
 - Mobile emulation is currently Chrome/Chromium only.
 - Mock before the action if the page reads data during that step.
-- Keep `captureLogs: true` so `assertNoErrors()` has something to check.
+- Console/error capture is automatic, so `assertNoErrors()` always has the full picture.
 
 ## Learn More
 

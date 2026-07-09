@@ -56,11 +56,10 @@ export class BiDiSession {
    *
    * Fetches the initial context tree and arms every event subscription every
    * session needs unconditionally in a single parallel batch (one `getTree`,
-   * one `session.subscribe` covering context-lifecycle + network events —
-   * down from the previous six serial round trips). `log.entryAdded` is
-   * intentionally NOT subscribed here — log capture stays lazy, armed on
-   * first `browser.logs`/`onConsole`/`onError`/`on()` access (see
-   * `LogMonitor`).
+   * one `session.subscribe` covering context-lifecycle + network + log events —
+   * down from the previous six serial round trips). `log.entryAdded` rides this
+   * same batch, so console/error capture is always armed at launch at zero extra
+   * round trips — no opt-in, no lazy first-touch race.
    *
    * Network subscription is bundled into this same batch (not deferred)
    * because it's provably race-free here — `waitForRequest`/`waitForResponse`
@@ -96,6 +95,10 @@ export class BiDiSession {
         'network.responseCompleted',
         'network.fetchError',
         'network.authRequired',
+        // Console/error capture is always on. Folded in here so it costs no
+        // extra round trip and is armed before connect() resolves — it can't
+        // race a fast launch→quit (measured free; see docs/browser-logs.md).
+        'log.entryAdded',
       ]),
     ]);
 
@@ -110,9 +113,12 @@ export class BiDiSession {
     this._network = new NetworkInterceptor(this.connection, this.context);
     this._network.markSubscribed();
 
-    // Logs stay lazy: no construction, no subscribe. `get logs()` below
-    // constructs `LogMonitor` on first access; its own `.initialize()` fires
-    // on the first `onLog`/`onConsole`/`onError`/`on()` registration.
+    // Logs: `log.entryAdded` was subscribed in the batch above, so construct
+    // the monitor pre-marked as subscribed and wire its handler now (a
+    // same-tick no-op subscribe) — capture is live before connect() resolves.
+    this._logs = new LogMonitor(this.connection, this.context);
+    this._logs.markSubscribed();
+    await this._logs.initialize();
 
     opts?.onContextTree?.(contexts);
 
@@ -148,7 +154,11 @@ export class BiDiSession {
    */
   get logs(): LogMonitor {
     if (!this._logs) {
+      // Defensive: connect() always constructs + arms the monitor, so this
+      // only runs if BiDi came up through some other path. Self-arm here so
+      // capture works without the caller pre-arming a listener.
       this._logs = new LogMonitor(this.connection, this.context);
+      void this._logs.initialize();
     }
     return this._logs;
   }
