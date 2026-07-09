@@ -1,3 +1,11 @@
+## [1.0.4](https://github.com/dtopuzov/craftdriver/compare/v1.0.3...v1.0.4) (2026-07-09)
+
+
+### Bug Fixes
+
+* bound session creation with a request timeout ([5b67d24](https://github.com/dtopuzov/craftdriver/commit/5b67d2496293ad174540c33bd827b2b262fc0d5a))
+* isolate driver downloads to per-call temp dirs ([11e38ad](https://github.com/dtopuzov/craftdriver/commit/11e38adfb4e65a6b6787cb35f89c2570ed7cd339))
+
 ## [1.0.3](https://github.com/dtopuzov/craftdriver/compare/v1.0.2...v1.0.3) (2026-07-07)
 
 
