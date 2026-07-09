@@ -1,3 +1,16 @@
+# [1.1.0](https://github.com/dtopuzov/craftdriver/compare/v1.0.4...v1.1.0) (2026-07-09)
+
+
+### Features
+
+* add browserPath to launch a custom browser binary (Chrome/Chromium/Firefox) ([127d11d](https://github.com/dtopuzov/craftdriver/commit/127d11d9db2877d764253c7359c543abcef8fd0c))
+* auto-detect CI-provided driver directories (GitHub Actions) ([bcd389f](https://github.com/dtopuzov/craftdriver/commit/bcd389f4e180e32cc034e0ace61898195f8f7837))
+
+
+### Performance Improvements
+
+* measure CI-detection savings vs the PATH-probe/version-detect fallback ([a64c2df](https://github.com/dtopuzov/craftdriver/commit/a64c2df51f14be71c791b6c4549f5827df9abb2e))
+
 ## [1.0.4](https://github.com/dtopuzov/craftdriver/compare/v1.0.3...v1.0.4) (2026-07-09)
 
 
