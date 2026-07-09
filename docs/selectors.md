@@ -1,317 +1,394 @@
 # Selectors & Locators
 
-CraftDriver provides multiple ways to locate elements on the page.
+Every interaction — a click, a fill, an assertion — starts by pointing at an
+element. This page is the complete guide to **naming** the element you want.
+What you do with it afterwards lives in the [Element API](./element-api.md) and
+[Assertions](./assertions.md).
 
-## CSS Selectors
+## Three ways to name an element
 
-The most common way to find elements is using CSS selectors as strings:
-
-> String selectors are always parsed as CSS selectors. Craftdriver does not
-> support Playwright-style selector strings such as `text=Save` or `role=button`.
-> For semantic queries, use `By.*` or `browser.getBy*()`.
+CraftDriver accepts three kinds of "where is it?", and they all resolve to the
+same kind of element handle:
 
 ```typescript
-// By ID
-await browser.click('#submit-button');
+import { Browser, By } from 'craftdriver';
 
-// By class
-await browser.click('.btn-primary');
+// 1. A CSS string — quickest for structural matching
+await browser.click('#submit');
 
-// By tag and attribute
-await browser.click('input[type="email"]');
+// 2. A By.* locator — a strategy object for one specific way of matching
+await browser.find(By.role('button', { name: 'Save' })).click();
 
-// Complex selectors
-await browser.click('form.login #username');
-await browser.click('ul.nav > li:first-child a');
+// 3. A getBy* shortcut — the common semantic strategies, straight on the browser
+await browser.getByRole('button', { name: 'Save' }).click();
 ```
 
-## By Locators
+A few rules tie these together:
 
-The `By` helper provides semantic locator strategies:
+- **A bare string is always a CSS selector.** There is no `text=` or `role=`
+  string shorthand — to match by text or role, use a `By.*` locator or a
+  `getBy*` method.
+- **`getByRole(...)` is exactly `find(By.role(...))`.** The `getBy*` methods are
+  ergonomic shortcuts for the most common semantic `By.*` strategies. Use
+  whichever reads better; they resolve identically.
+- **`find()` vs `locator()`.** `find()` returns a one-shot handle. `locator()`
+  returns a lazy, re-resolving handle you can filter, index (`.nth()`), and
+  scope — see [Locators (lazy & chainable)](#locators-lazy--chainable). Both
+  accept a string or a `By`.
+
+> **Which one should I reach for?** Prefer locators that describe an element the
+> way a person perceives it — its role, label, or visible text — plus test IDs
+> for anything ambiguous. They keep working when the surrounding markup changes.
+> Drop to CSS for structural matching, and to XPath only when nothing else fits.
+
+## Quick reference
+
+| To find an element by…    | Use                                      | It matches, e.g.                  |
+| ------------------------- | ---------------------------------------- | --------------------------------- |
+| Role + its label          | `getByRole('button', { name: 'Save' })`  | `<button>Save</button>`           |
+| Visible text              | `getByText('Save')`                      | `<span>Save</span>`               |
+| A form field's label      | `getByLabel('Email')`                    | `<label>Email</label><input>`     |
+| Placeholder text          | `getByPlaceholder('Search')`             | `<input placeholder="Search">`    |
+| Image `alt` text          | `getByAltText('Logo')`                   | `<img alt="Logo">`                |
+| Tooltip (`title`)         | `getByTitle('Delete')`                   | `<button title="Delete">`         |
+| Test id                   | `getByTestId('checkout')`                | `<button data-testid="checkout">` |
+| Id                        | `By.id('email')` · `'#email'`            | `<input id="email">`              |
+| Class                     | `By.className('primary')` · `'.primary'` | `<button class="primary">`        |
+| `name` attribute          | `By.name('email')`                       | `<input name="email">`            |
+| Tag                       | `By.tagName('h1')`                       | `<h1>…</h1>`                       |
+| Any attribute             | `By.attr('role', 'dialog')`              | `<div role="dialog">`             |
+| `data-*` attribute        | `By.dataAttr('state', 'open')`           | `<div data-state="open">`         |
+| `aria-*` attribute        | `By.aria('expanded', 'true')`            | `<button aria-expanded="true">`   |
+| Link text                 | `By.linkText('Docs')`                    | `<a href="/docs">Docs</a>`        |
+| A CSS selector            | `By.css(…)` · any string                 | anything CSS can express          |
+| An XPath expression       | `By.xpath(…)`                            | anything XPath can express        |
+
+## Semantic locators
+
+These describe an element by what it *is* to the user — its role, label, or
+text — not by where it sits in the markup. They're the most readable and the
+most resilient, so reach for them first. Each is a `getBy*` method on the
+browser (and on any [locator](#locators-lazy--chainable)); the `By.*` form named
+in each heading is the same strategy as an object you can pass to `find()`,
+`locator()`, `click()`, or a filter.
+
+> **Exact by default.** `getByRole`'s `name`, `getByText`, `getByLabel`,
+> `getByPlaceholder`, `getByAltText`, and `getByTitle` all match the **whole**
+> (whitespace-normalised) string by default. Pass `{ exact: false }` to match a
+> substring instead.
+
+### getByRole(role, options?)
+
+Find an element by its **ARIA role** and, optionally, CraftDriver's practical
+accessible-name approximation.
+
+```html
+<button>Sign in</button>
+```
 
 ```typescript
-import { By } from 'craftdriver';
+browser.getByRole('button', { name: 'Sign in' });
+```
+
+- A **role** is the kind of control an element represents — `button`, `link`,
+  `checkbox`, `textbox`, `heading`, and so on. Native elements carry an
+  *implicit* role, so `getByRole('button')` matches a plain `<button>` and
+  `<input type="submit">`, not only elements with an explicit `role="button"`.
+- The **name** is the short label a user would recognize. CraftDriver matches
+  the common sources: `aria-label`, simple `aria-labelledby`, visible text,
+  associated `<label>` text for form controls, `value`, `alt`, and `title`.
+  Pass it as `name` to pick one element out of several with the same role.
+
+```html
+<!-- the role is textbox; the name comes from the associated label -->
+<label for="email">Email</label>
+<input id="email" type="email" />
+```
+
+```typescript
+browser.getByRole('textbox', { name: 'Email' });
+browser.getByRole('checkbox', { name: 'Remember me' });
+browser.getByRole('link', { name: 'Learn more' });
+browser.getByRole('heading', { name: 'Welcome' });
+```
+
+> `getByRole` is an approximation of browser accessible-name computation, not a
+> full ARIA engine. If the label itself is the thing you want to select by, use
+> [`getByLabel()`](#getbylabel-text-options). To match
+> `<input name="email">` by the HTML `name` attribute, use
+> [`By.name()`](#by-name-name).
+
+Options:
+
+| Option          | Type      | Default | Description                                                          |
+| --------------- | --------- | ------- | ------------------------------------------------------------------- |
+| `name`          | `string`  | —       | Name to match (`aria-label`, simple `aria-labelledby`, text, label, `value`, `alt`, `title`). |
+| `exact`         | `boolean` | `true`  | When `false`, match the name as a substring.                        |
+| `includeHidden` | `boolean` | `false` | Also match elements hidden from assistive tech (see below).         |
+
+By default an element is skipped when it — or any ancestor — carries `hidden` or
+`aria-hidden="true"`, mirroring how those attributes remove a whole subtree from
+the accessibility tree. Set `includeHidden: true` to match them anyway
+(off-canvas menus, collapsed panels). CSS hiding such as `display:none` is
+handled separately by the locator's visibility wait, not by this check.
+
+```typescript
+// Default: skip elements hidden from assistive tech (self or ancestor)
+browser.getByRole('button', { name: 'Close' });
+
+// Include hidden elements
+browser.getByRole('button', { name: 'Close', includeHidden: true });
+```
+
+### getByText(text, options?)
+
+Find the innermost element whose visible text matches.
+
+```html
+<p>Welcome back, Alice!</p>
+```
+
+```typescript
+browser.getByText('Welcome back, Alice!');          // exact (default)
+browser.getByText('Welcome back', { exact: false }); // substring
+```
+
+Text is whitespace-normalised — runs of spaces and line breaks collapse to a
+single space — before matching. For case-insensitive or non-normalised matching,
+use the `By.text` form, which also accepts `caseSensitive` and `trim`:
+
+```typescript
+browser.find(By.text('submit', { caseSensitive: false }));
+browser.find(By.partialText('Submit')); // lower-level alias for { exact: false }
+```
+
+### getByLabel(text, options?)
+
+Find a form control by its associated `<label>` — whether the label wraps the
+control or points to it with `for`.
+
+```html
+<label for="pw">Password</label>
+<input id="pw" type="password" />
+```
+
+```typescript
+browser.getByLabel('Password');
+browser.getByLabel('Pass', { exact: false });
+```
+
+### getByPlaceholder(text, options?)
+
+Find an `<input>` or `<textarea>` by its placeholder.
+
+```html
+<input placeholder="Search products…" />
+```
+
+```typescript
+browser.getByPlaceholder('Search products…');
+```
+
+### getByAltText(text, options?)
+
+Find an `<img>`, `<area>`, or `<input type="image">` by its `alt` text.
+
+```html
+<img src="/logo.svg" alt="Company logo" />
+```
+
+```typescript
+browser.getByAltText('Company logo');
+```
+
+### getByTitle(text, options?)
+
+Find an element by its `title` attribute (the native browser tooltip).
+
+```html
+<button title="Delete row">🗑</button>
+```
+
+```typescript
+browser.getByTitle('Delete row');
+```
+
+### getByTestId(testId)
+
+Find an element by its `data-testid`. Test ids are invisible to users and
+untouched by design changes, so they're the most stable choice for elements with
+no meaningful role or text.
+
+```html
+<button data-testid="checkout">Proceed to checkout</button>
+```
+
+```typescript
+browser.getByTestId('checkout');
+```
+
+> Each `getBy*` method has a `By.*` twin — `By.role`, `By.text`, `By.labelText`,
+> `By.placeholder`, `By.altText`, `By.title`, `By.testId` — for when you're
+> passing a locator into `find()`, `locator()`, `click()`, or a filter.
+
+## Attribute and structural locators
+
+When an element has no meaningful role or text, match it by id, class,
+attribute, or position. These come as `By.*` locators (a plain string already
+covers the CSS cases).
+
+### By.id(id)
+
+```html
+<input id="email" />
+```
+
+```typescript
+browser.find(By.id('email')); // same as browser.find('#email')
 ```
 
 ### By.css(selector)
 
-Locate by CSS selector (equivalent to passing a string).
+Locate by any CSS selector — identical to passing the selector as a string.
 
 ```typescript
-browser.find(By.css('#my-button'));
-```
-
-### By.id(id)
-
-Locate by element ID.
-
-```typescript
-browser.find(By.id('username'));
-// Equivalent to: browser.find('#username')
+browser.find(By.css('input[type="email"]'));
+browser.find(By.css('form.login #username'));
 ```
 
 ### By.className(name)
 
-Locate by CSS class name.
+```html
+<button class="primary">Save</button>
+```
 
 ```typescript
-browser.find(By.className('btn-primary'));
-// Equivalent to: browser.find('.btn-primary')
+browser.find(By.className('primary')); // same as browser.find('.primary')
 ```
 
 ### By.name(name)
 
-Locate by the `name` attribute (matches the canonical Selenium
-`By.name` locator).
+Locate by the HTML `name` attribute.
+
+```html
+<input name="email" />
+```
 
 ```typescript
 browser.find(By.name('email'));
-// Finds: <input name="email">
 ```
+
+This is the `name` **attribute** — not the `name` option of
+[`getByRole()`](#getbyrole-role-options), which matches the accessible name.
 
 ### By.tagName(tag)
 
-Locate by HTML tag name.
+```html
+<h1>Page title</h1>
+```
 
 ```typescript
-browser.find(By.tagName('h1'));
-// Finds the first <h1> element
+browser.find(By.tagName('h1')); // the first <h1>
 ```
 
 ### By.attr(name, value)
 
-Locate by an arbitrary attribute and value.
+Locate by any attribute and value.
+
+```html
+<div role="dialog">…</div>
+```
 
 ```typescript
-browser.find(By.attr('role', 'dialog'));
-// Equivalent to: browser.find('[role="dialog"]')
+browser.find(By.attr('role', 'dialog')); // same as '[role="dialog"]'
 ```
 
 ### By.dataAttr(name, value)
 
-Locate by a `data-*` attribute. Pass the suffix only — `data-` is added
-for you.
+Locate by a `data-*` attribute — pass the suffix only, `data-` is added for you.
+
+```html
+<div data-state="open">…</div>
+```
 
 ```typescript
-browser.find(By.dataAttr('state', 'open'));
-// Equivalent to: browser.find('[data-state="open"]')
+browser.find(By.dataAttr('state', 'open')); // same as '[data-state="open"]'
 ```
 
 ### By.aria(name, value)
 
-Locate by an `aria-*` attribute. Pass the suffix only — `aria-` is added
-for you. Use `By.role()` / `getByRole()` for role + accessible-name
-matching; use this helper when you need a specific ARIA state or
-property.
+Locate by an `aria-*` attribute — pass the suffix only, `aria-` is added for
+you. Use this for a specific ARIA **state or property**; for role + name
+matching use [`getByRole()`](#getbyrole-role-options).
 
-```typescript
-browser.find(By.aria('expanded', 'true'));
-// Equivalent to: browser.find('[aria-expanded="true"]')
+```html
+<button aria-expanded="true">Menu</button>
 ```
 
-### By.testId(value)
-
-Locate by `data-testid` attribute.
-
 ```typescript
-browser.find(By.testId('submit-button'));
-// Equivalent to: browser.find('[data-testid="submit-button"]')
+browser.find(By.aria('expanded', 'true')); // same as '[aria-expanded="true"]'
 ```
 
-### By.text(text, options?)
+### By.linkText(text) · By.partialLinkText(text)
 
-Locate by visible text content. Defaults: `exact: true`,
-`caseSensitive: true`, `trim: true`.
+Locate an `<a>` by its rendered text — exact for `linkText`, substring for
+`partialLinkText`. These match only anchors, and compare the browser-rendered
+text (so CSS `text-transform` is respected). For non-links or richer text
+options, use [`getByText`](#getbytext-text-options) / `By.text`.
 
-```typescript
-// Exact match (whitespace-normalised)
-browser.find(By.text('Submit Order'));
-
-// Substring match — equivalent to By.partialText('Submit')
-browser.find(By.text('Submit', { exact: false }));
-
-// Case-insensitive
-browser.find(By.text('submit order', { caseSensitive: false }));
+```html
+<a href="/docs">Documentation</a>
 ```
 
-> **`By.text` and `getByText` are the same vocabulary.**
-> `getByText(text, opts)` is just `By.text(text, opts)`. Pass
-> `{ exact: false }` on either to get substring matching;
-> `By.partialText` remains as the lower-level entry point if you prefer
-> to be explicit.
-
-### By.partialText(substring, options?)
-
-Locate the innermost element whose visible text contains `substring`.
-Equivalent to `By.text(substring, { exact: false })`. Defaults:
-`caseSensitive: true`, `trim: true`.
-
 ```typescript
-browser.find(By.partialText('Submit'));
-browser.find(By.partialText('error', { caseSensitive: false }));
-```
-
-### By.altText(text, options?)
-
-Locate `<img>`, `<area>`, or `<input type="image">` by `alt` text.
-Defaults: `exact: true`.
-
-```typescript
-browser.find(By.altText('Company logo'));
-browser.find(By.altText('logo', { exact: false }));
-```
-
-### By.title(text, options?)
-
-Locate by the `title` attribute (browser tooltip text). Defaults:
-`exact: true`.
-
-```typescript
-browser.find(By.title('Open in new tab'));
-browser.find(By.title('Open', { exact: false }));
+browser.find(By.linkText('Documentation'));   // exact anchor text
+browser.find(By.partialLinkText('Read the')); // substring of anchor text
 ```
 
 ### By.xpath(expression)
 
-Locate using XPath expression.
+The escape hatch for queries the other strategies can't express.
 
 ```typescript
 browser.find(By.xpath('//button[@data-testid="submit"]'));
 browser.find(By.xpath('//div[contains(@class, "error")]'));
 ```
 
-## Playwright-Style Locators
+## Choosing a locator
 
-CraftDriver also supports Playwright-style semantic locators directly on the browser:
-
-### getByRole(role, options?)
-
-Locate by ARIA role.
+Prefer locators that describe intent; avoid ones that pin to incidental
+structure.
 
 ```typescript
-browser.getByRole('button', { name: 'Submit' });
-browser.getByRole('textbox', { name: 'Email' });
-browser.getByRole('checkbox', { name: 'Remember me' });
-browser.getByRole('link', { name: 'Learn more' });
-```
-
-Options:
-
-| Option          | Type      | Default | Description                                           |
-| --------------- | --------- | ------- | ----------------------------------------------------- |
-| `name`          | `string`  | —       | Accessible name (`aria-label` or visible text).       |
-| `exact`         | `boolean` | `true`  | If `false`, substring-match the accessible name.      |
-| `includeHidden` | `boolean` | `false` | Match elements with `hidden` or `aria-hidden="true"`. |
-
-```typescript
-// Default: skip elements marked hidden / aria-hidden
-browser.getByRole('button', { name: 'Close' });
-
-// Include hidden elements (e.g., off-canvas menus, collapsed sections)
-browser.getByRole('button', { name: 'Close', includeHidden: true });
-```
-
-### getByText(text, options?)
-
-Locate by visible text.
-
-```typescript
-// Exact match (default)
-browser.getByText('Welcome to our site');
-
-// Partial match
-browser.getByText('Welcome', { exact: false });
-```
-
-> **Heads-up for Playwright users.** Craftdriver's `getByText` defaults
-> to **exact** matching, while Playwright's defaults to substring. Pass
-> `{ exact: false }` for substring behaviour.
-
-### getByLabel(text, options?)
-
-Locate form controls by their associated label.
-
-```typescript
-browser.getByLabel('Email address');
-browser.getByLabel('Password');
-```
-
-### getByPlaceholder(text, options?)
-
-Locate inputs by placeholder text.
-
-```typescript
-browser.getByPlaceholder('Enter your email');
-browser.getByPlaceholder('Search...');
-```
-
-### getByTestId(testId)
-
-Locate by `data-testid` attribute.
-
-```typescript
-browser.getByTestId('submit-button');
-browser.getByTestId('user-profile');
-```
-
-## Selector Best Practices
-
-### Prefer Stable Selectors
-
-```typescript
-// ✅ Good - specific and stable
+// ✅ Resilient — tracks what the element is
+browser.getByRole('button', { name: 'Log in' });
+browser.getByLabel('Email');
+browser.getByTestId('checkout');
 browser.find('#login-button');
-browser.find('[data-testid="submit"]');
-browser.getByRole('button', { name: 'Login' });
 
-// ❌ Avoid - fragile, depends on structure
+// ❌ Fragile — breaks when markup or styling shifts
 browser.find('div > div > button:nth-child(3)');
-browser.find('.btn.mt-4.px-6'); // CSS utility classes change
+browser.find('.btn.mt-4.px-6'); // utility classes churn
 ```
 
-### Use Test IDs for Complex UIs
+A rough order of preference:
 
-Add `data-testid` attributes to elements that are hard to select:
-
-```html
-<button class="btn btn-primary mx-2" data-testid="checkout-button">Proceed to Checkout</button>
+```
+getByTestId  >  getByRole({ name })  >  getByLabel  >
+getByText  >  By.id / By.css  >  By.xpath
 ```
 
-```typescript
-await browser.find('[data-testid="checkout-button"]').click();
-// or
-await browser.getByTestId('checkout-button').click();
-```
-
-### Semantic Locators for Accessibility
-
-Using role-based locators ensures your UI is accessible:
-
-```typescript
-// This only works if the button is properly labeled
-browser.getByRole('button', { name: 'Add to cart' });
-```
-
-## Examples
-
-### Finding Multiple Elements
-
-```typescript
-// Click the first matching element
-await browser.find('.product-card .add-to-cart').click();
-
-// For multiple elements, use specific selectors
-await browser.find('.product-card:nth-child(1) .add-to-cart').click();
-await browser.find('.product-card:nth-child(2) .add-to-cart').click();
-```
+The first few say *what the element is*; the last two pin to *how the page is
+built* and break more easily. When an element is genuinely hard to select, add a
+`data-testid` to it rather than reaching for a brittle CSS or XPath path.
 
 ## Locators (lazy & chainable)
 
-`browser.locator(selector)` returns a `Locator` — a lazy, re-resolving handle that
-supports composition, filtering, and indexed access.
+`browser.locator(selector)` returns a `Locator` — a lazy, re-resolving handle
+that supports composition, filtering, and indexed access.
 
-Use `find()` for a single one-shot element, `findAll()` for the simple array case,
-and `locator()` when you need composition or want to pick from a list.
+Use `find()` for a single one-shot element, `findAll()` for the simple array
+case, and `locator()` when you need composition or want to pick from a list.
 
 ```typescript
 import { Browser } from 'craftdriver';
@@ -337,26 +414,41 @@ await browser.locator('.card').nth(0).locator('button').click();
 
 // Get all matching elements as snapshot handles
 const handles = await browser.locator('.product').all();
-const texts = await Promise.all(handles.map(h => h.text()));
+const texts = await Promise.all(handles.map((h) => h.text()));
 
 // Simple array shortcut (no filtering)
 const allButtons = await browser.findAll('.buy-btn');
 ```
 
+### Scoped semantic locators
+
+`Locator` also exposes `getByRole` / `getByText` / `getByLabel` /
+`getByPlaceholder` / `getByAltText` / `getByTitle` / `getByTestId`, each scoped
+to that locator's match — the composable equivalent of the `browser.getBy*()`
+methods above, for when you need to find something *within* a specific row,
+card, or dialog rather than anywhere on the page.
+
+```typescript
+// Scope a role/text query to one product card, not the whole page
+const card = browser.locator('.product-card').nth(2);
+await card.getByRole('button', { name: 'Buy' }).click();
+await card.getByText('In stock').expect().toBeVisible();
+```
+
 ### Locator actions and state
 
-| Method | Description |
-| ------ | ----------- |
-| `click(options?)` | Click the first matching visible element |
-| `fill(text, options?)` | Fill the first matching visible element |
-| `text(options?)` | Get visible text |
-| `textContent(options?)` | Alias for `text()` |
-| `isVisible(options?)` | Return `true` if a matching element is visible |
-| `count()` | Count current matches without auto-wait |
-| `all()` | Return snapshot `ElementHandle`s for current matches |
-| `waitFor({ state, timeout? })` | Wait for `attached`, `detached`, `visible`, or `hidden` |
-| `expect()` | Element assertions scoped to this locator |
-| `a11y` | Accessibility audit scoped to this locator |
+| Method                          | Description                                            |
+| ------------------------------- | ----------------------------------------------------- |
+| `click(options?)`               | Click the first matching visible element              |
+| `fill(text, options?)`          | Fill the first matching visible element               |
+| `text(options?)`                | Get visible text                                      |
+| `textContent(options?)`         | Alias for `text()`                                    |
+| `isVisible(options?)`           | Return `true` if a matching element is visible        |
+| `count()`                       | Count current matches without auto-wait               |
+| `all()`                         | Return snapshot `ElementHandle`s for current matches  |
+| `waitFor({ state, timeout? })`  | Wait for `attached`, `detached`, `visible`, `hidden`  |
+| `expect()`                      | Element assertions scoped to this locator             |
+| `a11y`                          | Accessibility audit scoped to this locator            |
 
 ```typescript
 await browser.locator('.toast').waitFor({ state: 'visible' });
@@ -370,34 +462,4 @@ const audit = await browser.locator('#checkout').a11y.audit();
 ```typescript
 await browser.locator('#result').expect().toHaveText('Done');
 await browser.locator('.error').expect().not.toBeVisible();
-```
-
-
-### Form Controls
-
-```typescript
-// By label
-await browser.getByLabel('Email').fill('test@example.com');
-await browser.getByLabel('Password').fill('secret');
-
-// By placeholder
-await browser.getByPlaceholder('Search products...').fill('laptop');
-
-// By role
-await browser.getByRole('button', { name: 'Search' }).click();
-```
-
-### Navigation Links
-
-```typescript
-await browser.getByRole('link', { name: 'Products' }).click();
-await browser.getByText('Contact Us').click();
-await browser.find('nav a[href="/about"]').click();
-```
-
-### Buttons by Text
-
-```typescript
-await browser.getByRole('button', { name: 'Submit' }).click();
-await browser.getByText('Cancel').click();
 ```

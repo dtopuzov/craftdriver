@@ -69,6 +69,7 @@ async function runCli(script: string): Promise<RunResult> {
 
 describe('CLI smoke', () => {
   const loginUrl = `${EXAMPLES_BASE_URL}/login.html`;
+  const selectorsUrl = `${EXAMPLES_BASE_URL}/selectors.html`;
 
   it('drives a login flow end-to-end', async () => {
     const script = [
@@ -106,6 +107,25 @@ describe('CLI smoke', () => {
     expect(all).toMatch(/e\d+: textbox .*Username/);
     expect(all).toMatch(/e\d+: textbox .*Password/);
     expect(all).toMatch(/e\d+: button .*Sign in/i);
+  });
+
+  it('uses the same common role mappings in snapshots as By.role()', async () => {
+    const script = [`go ${selectorsUrl}`, `snapshot`].join('\n');
+    const run = await runCli(script);
+
+    expect(run.exitCode, run.stderr).toBe(0);
+    expect(run.lines).toHaveLength(2);
+    expect(run.lines.map((line) => line.ok)).toEqual([true, true]);
+
+    const snap = run.lines[1].result as { url: string; lines: string[] };
+    expect(snap.url).toContain('/selectors.html');
+    const all = snap.lines.join('\n');
+    expect(all).toMatch(/e\d+: combobox .*#single-select/);
+    expect(all).toMatch(/e\d+: listbox .*#multi-select/);
+    expect(all).toMatch(/e\d+: banner .*#page-header/);
+    expect(all).toMatch(/e\d+: contentinfo .*#page-footer/);
+    expect(all).not.toContain('article-header');
+    expect(all).not.toContain('article-footer');
   });
 
   it('surfaces stable error codes for missing selectors', async () => {

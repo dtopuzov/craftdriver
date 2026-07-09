@@ -54,6 +54,44 @@ export class Locator {
     return child;
   }
 
+  /** Return a child Locator matching a descendant by ARIA role, scoped within this locator's first match. */
+  getByRole(
+    role: string,
+    opts?: { name?: string; exact?: boolean; includeHidden?: boolean }
+  ): Locator {
+    return this.locator(By.role(role, opts));
+  }
+
+  /** Return a child Locator matching a descendant by visible text, scoped within this locator's first match. */
+  getByText(text: string, opts?: { exact?: boolean }): Locator {
+    return this.locator(By.text(text, opts));
+  }
+
+  /** Return a child Locator matching a descendant by associated label, scoped within this locator's first match. */
+  getByLabel(text: string, opts?: { exact?: boolean }): Locator {
+    return this.locator(By.labelText(text, opts));
+  }
+
+  /** Return a child Locator matching a descendant by placeholder text, scoped within this locator's first match. */
+  getByPlaceholder(text: string, opts?: { exact?: boolean }): Locator {
+    return this.locator(By.placeholder(text, opts));
+  }
+
+  /** Return a child Locator matching a descendant by alt text, scoped within this locator's first match. */
+  getByAltText(text: string, opts?: { exact?: boolean }): Locator {
+    return this.locator(By.altText(text, opts));
+  }
+
+  /** Return a child Locator matching a descendant by title attribute, scoped within this locator's first match. */
+  getByTitle(text: string, opts?: { exact?: boolean }): Locator {
+    return this.locator(By.title(text, opts));
+  }
+
+  /** Return a child Locator matching a descendant by data-testid, scoped within this locator's first match. */
+  getByTestId(id: string): Locator {
+    return this.locator(By.testId(id));
+  }
+
   /** Return a new Locator targeting the element at position `index` (0-based). */
   nth(index: number): Locator {
     const l = this._clone();
