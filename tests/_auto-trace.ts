@@ -6,7 +6,7 @@
  * Usage:
  *   describe('my feature', () => {
  *     let browser: Browser;
- *     beforeAll(async () => { browser = await Browser.launch({ enableBiDi: true }); });
+ *     beforeAll(async () => { browser = await Browser.launch(); });
  *     afterAll(async () => { await browser.quit(); });
  *     autoTrace(() => browser);   // ← one line
  *     // ... tests

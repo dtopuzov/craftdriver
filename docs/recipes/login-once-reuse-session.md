@@ -15,7 +15,7 @@ Run this once as a setup step. It is one of the few recipes that shows
 ```ts
 import { Browser } from 'craftdriver';
 
-const browser = await Browser.launch({ browserName: 'chrome' });
+const browser = await Browser.launch();
 
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
 await browser.getByLabel('Username').fill('alice');
@@ -32,10 +32,7 @@ await browser.quit();
 Launch with `storageState` and the browser starts already signed in.
 
 ```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  storageState: '.auth/alice.json',
-});
+const browser = await Browser.launch({ storageState: '.auth/alice.json' });
 
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
 await browser.expect('#welcome').toContainText('Welcome back, alice!');

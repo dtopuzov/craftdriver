@@ -9,10 +9,7 @@ Because mobile emulation is a launch-time capability, this recipe shows the
 `launch` call.
 
 ```ts
-const browser = await Browser.launch({
-  browserName: 'chrome', // mobile emulation is Chrome/Chromium only
-  mobileEmulation: 'Pixel 7',
-});
+const browser = await Browser.launch({ mobileEmulation: 'Pixel 7' });
 
 // ?bidi=true makes the demo page issue real requests for interception.
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/network.html?bidi=true');

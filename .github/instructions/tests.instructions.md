@@ -57,11 +57,12 @@ describe('feature name', () => {
 });
 ```
 
-For BiDi-only features, add `enableBiDi: true` and clear state between tests:
+For BiDi-only features, no extra launch option is needed — BiDi is on by
+default. Just clear state between tests:
 
 ```typescript
 beforeAll(async () => {
-  browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: true });
+  browser = await Browser.launch({ browserName: BROWSER_NAME });
 });
 
 afterEach(async () => {

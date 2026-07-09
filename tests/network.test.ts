@@ -9,10 +9,7 @@ describe('Network Mocking and Interception', () => {
   const networkPageUrl = `${baseUrl}/network.html?bidi=true`;
 
   beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: BROWSER_NAME,
-      enableBiDi: true,
-    });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
 
   afterEach(async () => {
