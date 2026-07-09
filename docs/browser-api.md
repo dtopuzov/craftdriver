@@ -33,6 +33,7 @@ const browser = await Browser.launch({
 | `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
 | `downloadsDir` | `string` | temp dir | Directory where downloaded files are saved |
+| `browserPath` | `string` | — | Custom browser binary to launch (Chrome/Chromium/Firefox) — see [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration) |
 
 ## Navigation
 

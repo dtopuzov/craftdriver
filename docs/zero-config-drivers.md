@@ -57,5 +57,8 @@ Manual configuration is useful when:
 - network access is blocked
 - you need custom driver logging
 - you want to avoid any version detection during launch
+- you're launching a non-default Chrome/Chromium/Firefox build via
+  `browserPath` / `CRAFTDRIVER_CHROME_PATH` — see
+  [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration)
 
 See [Driver Configuration](./driver-configuration.md) for the full reference.
