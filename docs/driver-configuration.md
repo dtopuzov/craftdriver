@@ -45,6 +45,70 @@ erroring. No other CI platform is auto-detected yet — set
 other providers (or to pin a non-default driver even on GitHub Actions;
 explicit config always wins, per the chain above).
 
+## Browser Binary Configuration
+
+Everything above resolves the **driver** (chromedriver/geckodriver). A
+separate, independent chain resolves the **browser** binary itself — useful
+for a non-default Chrome/Chromium install or a portable Firefox build.
+
+The `browserPath` option itself is opt-in: craftdriver never sets it for you,
+and omitting it changes nothing. Steps 4–5 below are **not** craftdriver-opt-in
+the same way, though — `CHROME_BIN`, `FIREFOX_BIN`, `SE_CHROME_PATH`, and
+`SE_FIREFOX_PATH` are conventions other tools (Karma, Selenium Manager) already
+set in CI images and local environments for their own purposes. If one of
+those happens to already be exported in your environment, craftdriver will
+start forwarding it as of this version — a behavior change you didn't ask
+craftdriver for, even though you didn't touch any craftdriver config either.
+If you don't want that, set `CRAFTDRIVER_OFFLINE`-style pinning instead, or
+simply don't rely on those four var names for anything craftdriver-adjacent.
+
+| Step | Source |
+|---|---|
+| 1 | `browserPath` option in `Browser.launch()` |
+| 2 | `CRAFTDRIVER_CHROME_PATH` / `CRAFTDRIVER_FIREFOX_PATH` env var |
+| 3 | `CRAFTDRIVER_BROWSER_PATH` env var (generic fallback for either browser) |
+| 4 | `CHROME_BIN` / `FIREFOX_BIN` env var (common CI/tooling convention, e.g. Karma) |
+| 5 | `SE_CHROME_PATH` / `SE_FIREFOX_PATH` env var (Selenium Manager convention) |
+
+Each step is validated (the file must exist) before use; an invalid path falls
+through to the next step rather than being forwarded to the driver as-is (and
+logs a `[craftdriver]` note to stderr when it does, so a typo doesn't silently
+launch the wrong browser).
+
+`CRAFTDRIVER_BROWSER_PATH` (step 3) is forwarded verbatim regardless of
+whether the browser being launched is Chrome or Firefox — it's a single path,
+so it can only ever be correct for one of them. Don't set it in a process or
+CI job that launches both browsers; use the browser-specific `CRAFTDRIVER_CHROME_PATH`
+/ `CRAFTDRIVER_FIREFOX_PATH` instead.
+
+```typescript
+// Launch a custom Chromium build
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  browserPath: '/opt/chromium-custom/chrome',
+});
+```
+
+```bash
+# Equivalent via env var — no code change needed
+CRAFTDRIVER_CHROME_PATH=/opt/chromium-custom/chrome npm test
+```
+
+If chromedriver itself also has to be auto-downloaded (no driver pinned
+anywhere in the chain above), its version is detected from *this* binary
+instead of probing for system Chrome — a custom Chromium build's version
+routinely doesn't match system Chrome, so using the right binary for version
+detection avoids downloading a mismatched chromedriver. Firefox has no
+equivalent concern: geckodriver's own download isn't gated on the Firefox
+version.
+
+Version detection runs the binary with `--version` and parses its output, the
+same way craftdriver already probes system Chrome/Firefox — so `browserPath`
+is supported for Chrome/Chromium and Firefox builds only. Anything that
+doesn't answer `--version` the way those browsers do (Electron apps and other
+Chromium embedders) is out of scope for now; point `CRAFTDRIVER_CHROMEDRIVER_PATH`
+at a pinned driver instead of relying on auto-detection in that case.
+
 ## Environment variables
 
 | Variable | Description | Default |
@@ -52,6 +116,9 @@ explicit config always wins, per the chain above).
 | `CRAFTDRIVER_CHROMEDRIVER_PATH` | Absolute path to a chromedriver binary | — |
 | `CRAFTDRIVER_GECKODRIVER_PATH` | Absolute path to a geckodriver binary | — |
 | `CRAFTDRIVER_DRIVER_PATH` | Generic fallback path (either browser) | — |
+| `CRAFTDRIVER_CHROME_PATH` | Absolute path to a Chrome/Chromium binary — see [Browser Binary Configuration](#browser-binary-configuration) | — |
+| `CRAFTDRIVER_FIREFOX_PATH` | Absolute path to a Firefox binary | — |
+| `CRAFTDRIVER_BROWSER_PATH` | Generic browser-binary fallback path (either browser) | — |
 | `CRAFTDRIVER_CACHE_DIR` | Directory for cached driver downloads | `~/.cache/craftdriver` |
 | `CRAFTDRIVER_OFFLINE` | Set to `1` to disable all network calls | — |
 | `CRAFTDRIVER_DRIVER_TTL` | Driver-resolution cache lifetime, in seconds (both browsers). `0` disables the cache | `86400` (24 h) |

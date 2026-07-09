@@ -1,6 +1,7 @@
 import { Builder } from './builder.js';
 import { ChromeService } from './chrome.js';
 import { FirefoxService } from './firefox.js';
+import { resolveBrowserBinaryPath } from './driverManager.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
@@ -172,6 +173,28 @@ export interface LaunchOptions {
    * `FirefoxService`.
    */
   args?: string[];
+  /**
+   * A custom **browser** binary to launch — Chrome, Chromium, or Firefox.
+   * Distinct from `chromeService`/`firefoxService`'s `binaryPath`, which names
+   * the *driver* (chromedriver/geckodriver), not the browser.
+   *
+   * When omitted, craftdriver resolves it from (first match wins):
+   *   1. `CRAFTDRIVER_CHROME_PATH` / `CRAFTDRIVER_FIREFOX_PATH` env var
+   *   2. `CRAFTDRIVER_BROWSER_PATH` env var (generic fallback — forwarded as-is
+   *      regardless of browser, so avoid it when launching both in one job)
+   *   3. `CHROME_BIN` / `FIREFOX_BIN` env var (common CI convention)
+   *   4. `SE_CHROME_PATH` / `SE_FIREFOX_PATH` env var (Selenium Manager convention)
+   *
+   * This option itself is opt-in, but steps 2–4 read ambient env vars other
+   * tools (Karma, Selenium Manager) may already export for their own
+   * purposes — if one happens to be set, craftdriver forwards it even though
+   * you never touched craftdriver config. If none resolve, craftdriver
+   * forwards nothing and chromedriver/geckodriver fall back to their own
+   * built-in browser discovery. An invalid candidate at any step logs a
+   * `[craftdriver]` note to stderr and falls through rather than failing
+   * silently. See "Browser Binary Configuration" in docs/driver-configuration.md.
+   */
+  browserPath?: string;
 }
 
 /**
@@ -410,6 +433,13 @@ export class Browser {
     );
     await fs.mkdir(downloadsDir, { recursive: true });
 
+    // Custom browser binary (Chrome/Chromium/Firefox). When unresolved,
+    // nothing is forwarded and the driver uses its own built-in browser
+    // discovery — but see resolveBrowserBinaryPath's doc: some of the env
+    // vars in this chain aren't craftdriver-opt-in, they're ambient
+    // conventions other tools may already have set.
+    const browserPath = resolveBrowserBinaryPath(isChromeFamily ? 'chrome' : 'firefox', options.browserPath);
+
     let caps: Capabilities = {};
 
     if (isChromeFamily) {
@@ -421,6 +451,7 @@ export class Browser {
           'safebrowsing.enabled': true,
         },
       };
+      if (browserPath) chromeOptions.binary = browserPath;
 
       // Add mobile emulation if specified
       if (options.mobileEmulation) {
@@ -468,6 +499,7 @@ export class Browser {
             'application/octet-stream,application/pdf,text/plain,text/csv,application/zip',
           'pdfjs.disabled': true,
         },
+        ...(browserPath ? { binary: browserPath } : {}),
       };
     }
 
@@ -486,7 +518,10 @@ export class Browser {
     const builder = new Builder().forBrowser(name);
     let driverService: ChromeService | FirefoxService;
     if (isChromeFamily) {
-      driverService = options.chromeService ?? new ChromeService();
+      // Only thread browserPath into a default ChromeService — a
+      // caller-supplied one is expected to already pin what it needs (same
+      // reasoning as explicit config always winning over auto-detection).
+      driverService = options.chromeService ?? new ChromeService({ browserPath });
       builder.setChromeService(driverService as ChromeService);
     } else {
       driverService = options.firefoxService ?? new FirefoxService();

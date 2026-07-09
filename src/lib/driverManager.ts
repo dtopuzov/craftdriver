@@ -15,6 +15,10 @@
  * Only the driver binary is downloaded by default, never the browser itself.
  * This avoids CfT's OS-dependency problems on lean Linux containers.
  * See research/driver-manager.md for the full strategy.
+ *
+ * A separate, independent chain resolves a custom **browser** binary (Chrome/
+ * Chromium/Firefox) — see `resolveBrowserBinaryPath()` below. It's opt-in
+ * only: nothing resolving there changes any of the above.
  */
 
 import fs from 'fs';
@@ -489,9 +493,64 @@ async function downloadGeckodriver(): Promise<string> {
 const CHROME_CI_DIR_ENV_VARS = ['CHROMEWEBDRIVER'];   // GitHub Actions
 const GECKO_CI_DIR_ENV_VARS  = ['GECKOWEBDRIVER'];    // GitHub Actions
 
+/**
+ * Resolves a custom **browser** binary (Chrome/Chromium/Firefox) — distinct
+ * from `resolveChromeDriver`/`resolveFirefoxDriver`, which resolve the
+ * *driver* (chromedriver/geckodriver). Returns `undefined` when
+ * nothing resolves, in which case the caller forwards nothing and
+ * chromedriver/geckodriver fall back to their own built-in browser discovery
+ * (craftdriver's zero-config default, unchanged).
+ *
+ * Resolution chain (first match wins), each step validated with
+ * `fs.existsSync` — an invalid path falls through rather than being forwarded:
+ *   1. `explicitPath` (e.g. LaunchOptions.browserPath)
+ *   2. CRAFTDRIVER_CHROME_PATH / CRAFTDRIVER_FIREFOX_PATH (browser-specific)
+ *   3. CRAFTDRIVER_BROWSER_PATH (generic fallback, either browser)
+ *   4. Legacy/compatible env vars: CHROME_BIN / FIREFOX_BIN (community
+ *      convention), SE_CHROME_PATH / SE_FIREFOX_PATH (Selenium Manager)
+ */
+export function resolveBrowserBinaryPath(
+  kind: 'chrome' | 'firefox',
+  explicitPath?: string,
+): string | undefined {
+  if (explicitPath) {
+    if (fs.existsSync(explicitPath)) return explicitPath;
+    // A candidate was actually supplied here, so a silent fallthrough would
+    // hide a typo behind a browser that quietly launches from somewhere else
+    // entirely. Everything below the auto-download path already announces
+    // itself the same way (see downloadChromedriver/downloadGeckodriver).
+    process.stderr.write(
+      `[craftdriver] browserPath "${explicitPath}" does not exist; falling back to the next resolution step.\n`,
+    );
+  }
+
+  const specificEnvVar = kind === 'chrome' ? 'CRAFTDRIVER_CHROME_PATH' : 'CRAFTDRIVER_FIREFOX_PATH';
+  const legacyBinEnvVar = kind === 'chrome' ? 'CHROME_BIN' : 'FIREFOX_BIN';
+  const legacySeEnvVar = kind === 'chrome' ? 'SE_CHROME_PATH' : 'SE_FIREFOX_PATH';
+
+  for (const envVar of [specificEnvVar, 'CRAFTDRIVER_BROWSER_PATH', legacyBinEnvVar, legacySeEnvVar]) {
+    const p = process.env[envVar];
+    if (!p) continue;
+    if (fs.existsSync(p)) return p;
+    process.stderr.write(
+      `[craftdriver] ${envVar}="${p}" does not exist; falling back to the next resolution step.\n`,
+    );
+  }
+
+  return undefined;
+}
+
 /** Resolves the path to a chromedriver binary, downloading if necessary. */
 export async function resolveChromeDriver(options?: {
   binaryPath?: string;
+  /**
+   * A custom browser binary (see {@link resolveBrowserBinaryPath}). When the
+   * driver itself has to be auto-downloaded (step 8), its version is detected
+   * from *this* binary instead of the system Chrome candidate list — so a
+   * custom Chromium build (whose version routinely doesn't match system
+   * Chrome) gets a matching chromedriver, not the wrong one.
+   */
+  browserPath?: string;
 }): Promise<string> {
   // 1. Explicit constructor argument.
   if (options?.binaryPath && fs.existsSync(options.binaryPath)) {
@@ -557,15 +616,25 @@ export async function resolveChromeDriver(options?: {
     );
   }
 
-  // 8. Detect system Chrome + download matching driver from CfT, then record
-  //    the result in the auto-resolution cache read at step 4.
+  // 8. Detect the browser + download a matching driver from CfT, then record
+  //    the result in the auto-resolution cache read at step 4. If a custom
+  //    browser binary was given, detect its version directly instead of
+  //    probing the system Chrome candidate list (see resolveChromeDriver's
+  //    `browserPath` option doc). This assumes the binary answers `--version`
+  //    the way Chrome/Chromium does — untested against anything that doesn't
+  //    (e.g. Electron), so `browserPath` is documented as Chrome/Chromium-only
+  //    for now.
   const p = os.platform() as SupportedPlatform;
-  const candidates = CHROME_CANDIDATES[p] ?? ['google-chrome'];
+  const candidates = options?.browserPath ? [options.browserPath] : (CHROME_CANDIDATES[p] ?? ['google-chrome']);
   const detected = detectBrowserVersion(candidates);
   if (!detected) {
     throw new Error(
-      'Could not detect a system Chrome or Chromium installation.\n' +
-      'Install Chrome, or set CRAFTDRIVER_DRIVER_PATH to a local chromedriver binary.',
+      options?.browserPath
+        ? `Could not read a Chrome/Chromium version from browserPath "${options.browserPath}" ` +
+          '(it did not respond to --version the way Chrome/Chromium does).\n' +
+          'Set CRAFTDRIVER_CHROMEDRIVER_PATH to a chromedriver binary that matches it instead of relying on auto-detection.'
+        : 'Could not detect a system Chrome or Chromium installation.\n' +
+          'Install Chrome, or set CRAFTDRIVER_DRIVER_PATH to a local chromedriver binary.',
     );
   }
   const driverPath = await downloadChromedriver(detected.version);
