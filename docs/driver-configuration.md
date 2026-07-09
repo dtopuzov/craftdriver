@@ -133,6 +133,20 @@ but the direction holds):
 
 Run it yourself with `npm run bench -- launch-critical-path`.
 
+A separate micro-benchmark (`tests/perf/driver-resolution.perf.ts`) isolates
+just the CI-provided driver directory step from the rest of the resolution
+chain — `resolveChromeDriver()` alone, cache isolated so both paths are
+measured cold:
+
+| Scenario | Time |
+|---|---|
+| `CHROMEWEBDRIVER` set (new) | ~0ms (an `fs.existsSync` check) |
+| PATH-probe + Chrome-version-detect fallback (old) | ~360ms |
+
+That's the cost every cold `Browser.launch()` used to pay once per process on
+a GitHub Actions runner before this step existed — now skipped entirely. Run
+it yourself with `npm run bench -- driver-resolution`.
+
 ### Browser startup flags (advanced, opt-in)
 
 craftdriver launches the browser with **no performance flags of its own** — it
