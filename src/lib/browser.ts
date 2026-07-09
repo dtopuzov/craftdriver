@@ -2331,6 +2331,14 @@ export class Browser {
     return new ElementHandle(this.driver, By.testId(id), this.getDefaultTimeout);
   }
 
+  getByAltText(text: string, opts?: { exact?: boolean }): ElementHandle {
+    return new ElementHandle(this.driver, By.altText(text, opts), this.getDefaultTimeout);
+  }
+
+  getByTitle(text: string, opts?: { exact?: boolean }): ElementHandle {
+    return new ElementHandle(this.driver, By.title(text, opts), this.getDefaultTimeout);
+  }
+
   // Keyboard controller and enum for nicer usage: browser.keyboard.press(Key.Enter)
   keyboard: Keyboard;
 

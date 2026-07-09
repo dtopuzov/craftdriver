@@ -87,4 +87,48 @@ describe('Locator', () => {
     const texts = await Promise.all(handles.map((h) => h.text()));
     expect(texts).toEqual([expect.stringContaining('Gadget'), expect.stringContaining('Gadget')]);
   });
+
+  describe('scoped getBy* convenience methods', () => {
+    it('getByRole() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#scope-card-1').getByRole('button', { name: 'Submit' });
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByText() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#scope-card-2').getByText('Submit');
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByLabel() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#area-label').getByLabel('Email Address');
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByPlaceholder() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#area-label').getByPlaceholder('Enter email');
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByTestId() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#area-attrs').getByTestId('by-testid');
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByAltText() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#area-attrs').getByAltText('Logo ALT');
+      expect(await scoped.count()).toBe(1);
+    });
+
+    it('getByTitle() scopes to the locator', async () => {
+      await browser.navigateTo(`${EXAMPLES_BASE_URL}/selectors.html`);
+      const scoped = browser.locator('#area-attrs').getByTitle('Hint title');
+      expect(await scoped.count()).toBe(1);
+    });
+  });
 });

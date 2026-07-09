@@ -73,6 +73,49 @@
     <label>Wrapped Label<input id="wrapped" type="text" /></label>
   </section>
 
+  <section class="card" id="area-scope">
+    <h2>Scoped composition</h2>
+    <div id="scope-card-1" class="product-card"><button id="scope-card-1-btn">Submit</button></div>
+    <div id="scope-card-2" class="product-card"><button id="scope-card-2-btn">Submit</button></div>
+    <div id="scope-card-3" class="product-card"><button id="scope-card-3-btn">Cancel</button></div>
+  </section>
+
+  <section class="card" id="area-roles-extra">
+    <h2>Extra roles</h2>
+    <select id="single-select">
+      <option>One</option>
+      <option>Two</option>
+    </select>
+    <select id="multi-select" multiple>
+      <option>One</option>
+      <option>Two</option>
+    </select>
+    <article id="article-with-header"><header id="article-header">Article Header</header></article>
+    <article id="article-with-footer"><footer id="article-footer">Article Footer</footer></article>
+  </section>
+
+  <!-- Outside any sectioning content (article/aside/main/nav/section) on purpose:
+       a <header>/<footer> here keeps the banner/contentinfo role, unlike the
+       ones nested in <article> above. -->
+  <header id="page-header">Page Header</header>
+  <footer id="page-footer">Page Footer</footer>
+
+  <section class="card" id="area-links">
+    <h2>Links</h2>
+    <a id="link-exact" href="#docs">Documentation</a>
+    <a id="link-partial" href="#guide">Read the Guide Now</a>
+  </section>
+
+  <section class="card" id="area-hidden">
+    <h2>Accessibility-hidden</h2>
+    <!-- aria-hidden on the wrapper removes the whole subtree from the a11y
+         tree; the button is still visually rendered (aria-hidden != display). -->
+    <div aria-hidden="true">
+      <button id="hidden-btn">Ghost</button>
+    </div>
+    <button id="visible-btn">Ghost</button>
+  </section>
+
   <section class="card" id="result">
     <h2>Result</h2>
     <div id="status" class="muted">idle</div>

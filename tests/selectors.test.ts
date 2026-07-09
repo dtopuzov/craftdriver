@@ -61,6 +61,16 @@ describe('By locator strategies (selectors.html)', () => {
     await browser.expect('#status').toHaveText('by-alt');
   });
 
+  it('By.linkText matches an <a> by exact rendered text', async () => {
+    expect(await browser.find(By.linkText('Documentation')).getAttribute('id')).toBe('link-exact');
+  });
+
+  it('By.partialLinkText matches an <a> by substring', async () => {
+    expect(await browser.find(By.partialLinkText('Read the Guide')).getAttribute('id')).toBe(
+      'link-partial'
+    );
+  });
+
   it('By.placeholder', async () => {
     await browser.click(By.placeholder('Enter email'));
     await browser.expect('#status').toHaveText('email');
@@ -104,6 +114,16 @@ describe('By locator strategies (selectors.html)', () => {
       await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
       const tagName = await browser.getByText('Login').tagName();
       expect(tagName).toBe('h1');
+    });
+
+    it('getByAltText() finds an <img> by its alt attribute', async () => {
+      await browser.getByAltText('Logo ALT').click();
+      await browser.expect('#status').toHaveText('by-alt');
+    });
+
+    it('getByTitle() finds an element by its title attribute', async () => {
+      await browser.getByTitle('Hint title').click();
+      await browser.expect('#status').toHaveText('by-title');
     });
   });
 });

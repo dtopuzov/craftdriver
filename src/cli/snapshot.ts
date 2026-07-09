@@ -121,9 +121,32 @@ function visible(el) {
   if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') return false;
   return true;
 }
+function firstRoleToken(el) {
+  const role = (el.getAttribute('role') || '').trim();
+  return role ? role.split(/\\s+/)[0] : null;
+}
+function hasSectioningAncestor(el) {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const t = p.tagName.toLowerCase();
+    if (t === 'article' || t === 'aside' || t === 'main' || t === 'nav' || t === 'section') {
+      return true;
+    }
+    const role = firstRoleToken(p);
+    if (
+      role === 'article' ||
+      role === 'complementary' ||
+      role === 'main' ||
+      role === 'navigation' ||
+      role === 'region'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 function impliedRole(el) {
   const t = el.tagName.toLowerCase();
-  const explicit = el.getAttribute('role');
+  const explicit = firstRoleToken(el);
   if (explicit) return explicit;
   if (t === 'a' && el.hasAttribute('href')) return 'link';
   if (t === 'button') return 'button';
@@ -135,12 +158,15 @@ function impliedRole(el) {
     return 'textbox';
   }
   if (t === 'textarea') return 'textbox';
-  if (t === 'select') return 'combobox';
+  if (t === 'select') {
+    const size = Number(el.getAttribute('size') || '0');
+    return el.multiple || size > 1 ? 'listbox' : 'combobox';
+  }
   if (/^h[1-6]$/.test(t)) return 'heading';
   if (t === 'nav') return 'navigation';
   if (t === 'main') return 'main';
-  if (t === 'header') return 'banner';
-  if (t === 'footer') return 'contentinfo';
+  if (t === 'header') return hasSectioningAncestor(el) ? null : 'banner';
+  if (t === 'footer') return hasSectioningAncestor(el) ? null : 'contentinfo';
   if (t === 'form') return 'form';
   if (t === 'img') return 'img';
   return t;
@@ -188,6 +214,7 @@ for (let i = 0; i < nodes.length && out.length < MAX_NODES; i++) {
   const el = nodes[i];
   if (!visible(el)) continue;
   const role = impliedRole(el);
+  if (!role) continue;
   let name = accName(el);
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME - 1) + '…';
   const hint = locatorHint(el);

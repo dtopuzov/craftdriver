@@ -194,7 +194,10 @@ const button = browser.find(By.text('Click me'));
 const input = browser.find(By.placeholder('Enter email'));
 ```
 
-## Playwright-style Locators
+## Semantic locators (getBy*)
+
+Shortcuts for the most common semantic strategies — see
+[Selectors & Locators](./selectors.md#semantic-locators) for the full set.
 
 ```typescript
 // By role
