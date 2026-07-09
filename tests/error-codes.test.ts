@@ -17,7 +17,7 @@ describe('error codes', () => {
   let browser: Browser;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: true });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
     browser.setDefaultTimeout(500);
   });
 

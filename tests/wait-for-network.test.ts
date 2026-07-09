@@ -26,7 +26,7 @@ describe('waitForRequest and waitForResponse', () => {
   }
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: BROWSER_NAME, enableBiDi: true });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
     await browser.navigateTo(networkPageUrl);
   });
 

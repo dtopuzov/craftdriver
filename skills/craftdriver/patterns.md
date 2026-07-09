@@ -6,7 +6,7 @@ Worked recipes. Each is ≤ ~200 tokens; load on demand from
 ## 1. Login, save storage state for reuse
 
 ```ts
-const browser = await Browser.launch({ enableBiDi: true });
+const browser = await Browser.launch();
 await browser.navigateTo('https://app.example.com/login');
 await browser.locator(By.labelText('Email')).fill('jane@example.com');
 await browser.locator(By.labelText('Password')).fill(process.env.PW!);
@@ -23,10 +23,7 @@ await browser.quit();
 
 ```ts
 const state = JSON.parse(await fs.readFile('.auth/state.json', 'utf8'));
-const browser = await Browser.launch({
-  enableBiDi: true,
-  storageState: state,
-});
+const browser = await Browser.launch({ storageState: state });
 await browser.navigateTo('https://app.example.com/dashboard');
 await browser.locator(By.testId('dashboard')).expect().toBeVisible();
 ```

@@ -8,7 +8,7 @@ uses the live
 [console errors example](https://dtopuzov.github.io/craftdriver/examples/console-errors.html).
 
 ```ts
-const browser = await Browser.launch({ browserName: 'chrome' });
+const browser = await Browser.launch();
 
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/console-errors.html');
 browser.logs.clearLogs();

@@ -34,8 +34,9 @@ break the moment markup shifts.
 3. `instanceof CraftdriverError` is true on every public throw;
    `instanceof Error` is also true.
 4. BiDi features (`network`, `logs`, tracing, init scripts, true load
-   events) require `Browser.launch({ enableBiDi: true })`. The error
-   code on the wrong transport is `UNSUPPORTED`.
+   events) work out of the box — `enableBiDi` defaults to `true`. They only
+   break if you explicitly pass `enableBiDi: false`; the error code on the
+   wrong transport is `UNSUPPORTED`.
 5. Tests fetch from the example server. Start it in a separate
    terminal: `npm run examples:start` before `npm test`.
 

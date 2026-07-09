@@ -12,7 +12,8 @@ import { Browser } from 'craftdriver';
 const browser = await Browser.launch({
   browserName: 'chrome',   // 'chrome' | 'chromium' | 'firefox'
   headless: true,
-  enableBiDi: true,        // required for network / logs / tracing / init scripts
+  // enableBiDi defaults to true — network / logs / tracing / init scripts
+  // all need it, so only set enableBiDi: false if you must disable it.
 });
 try {
   await browser.navigateTo('https://example.com');

@@ -7,10 +7,7 @@ describe('Console Logs and JavaScript Errors', () => {
   const baseUrl = EXAMPLES_BASE_URL;
 
   beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: BROWSER_NAME,
-      enableBiDi: true,
-    });
+    browser = await Browser.launch({ browserName: BROWSER_NAME });
   });
 
   beforeEach(async () => {

@@ -14,7 +14,7 @@ process crash cannot lose the evidence that led up to it.
 ```ts
 import { chromium } from 'craftdriver';
 
-const browser = await chromium.launch({ enableBiDi: true });
+const browser = await chromium.launch();
 
 await browser.startTrace({ outDir: './artefacts/login' });
 try {
@@ -202,7 +202,7 @@ import { autoTrace } from './auto-trace';
 
 describe('Login', () => {
   let browser: Browser;
-  beforeAll(async () => { browser = await Browser.launch({ enableBiDi: true }); });
+  beforeAll(async () => { browser = await Browser.launch(); });
   afterAll(async () => { await browser.quit(); });
 
   autoTrace(() => browser);   // ← that's it

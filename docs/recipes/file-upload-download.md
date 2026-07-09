@@ -10,10 +10,7 @@ then downloads a report from the
 It sets `downloadsDir` at launch, so it shows the `launch` call.
 
 ```ts
-const browser = await Browser.launch({
-  browserName: 'chrome',
-  downloadsDir: '.tmp/downloads',
-});
+const browser = await Browser.launch({ downloadsDir: '.tmp/downloads' });
 
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/upload.html');
 await browser.find('#file-input').setInputFiles('tests/fixtures/sample.txt');

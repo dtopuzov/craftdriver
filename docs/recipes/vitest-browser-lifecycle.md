@@ -16,9 +16,7 @@ describe('login page', () => {
   let browser: Browser;
 
   beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: 'chrome',
-    });
+    browser = await Browser.launch();
   });
 
   beforeEach(async () => {
