@@ -48,7 +48,12 @@ describe('driver manager — auto-download integration', () => {
     // Ensure the test cache starts empty so we exercise the download path.
     fs.rmSync(testCacheDir, { recursive: true, force: true });
 
-    // Unset every env var that could short-circuit auto-resolution.
+    // Unset every env var that could short-circuit auto-resolution, including
+    // CI-provided driver directories (CHROMEWEBDRIVER/GECKOWEBDRIVER) — GitHub
+    // Actions runners set these natively, and step 3.5 in driverManager.ts
+    // ranks them above the auto-download path this test exercises, so leaving
+    // them set makes this "downloads chromedriver" test pass without ever
+    // downloading anything on CI.
     restoreEnv = unsetEnvVars([
       'CRAFTDRIVER_CHROMEDRIVER_PATH',
       'CRAFTDRIVER_GECKODRIVER_PATH',
@@ -58,6 +63,8 @@ describe('driver manager — auto-download integration', () => {
       'CHROMEDRIVER_PATH',
       'SE_CHROMEDRIVER',
       'CRAFTDRIVER_SKIP_PATH_PROBE',
+      'CHROMEWEBDRIVER',
+      'GECKOWEBDRIVER',
     ]);
 
     // Skip the PATH probe so pre-installed chromedriver on CI runners

@@ -7,9 +7,10 @@ export type FirefoxServiceOptions = Omit<DriverServiceOptions, 'command'> & {
    * Absolute path to a `geckodriver` binary.
    * When omitted, craftdriver resolves the driver automatically:
    *   1. CRAFTDRIVER_DRIVER_PATH / GECKODRIVER_PATH / GECKODRIVER_FILEPATH / SE_GECKODRIVER env vars
-   *   2. node_modules/.bin/geckodriver (if geckodriver npm package is installed)
-   *   3. geckodriver on PATH
-   *   4. Download latest geckodriver from GitHub releases
+   *   2. Known CI-provided driver directories (e.g. GitHub Actions' GECKOWEBDRIVER)
+   *   3. node_modules/.bin/geckodriver (if geckodriver npm package is installed)
+   *   4. geckodriver on PATH
+   *   5. Download latest geckodriver from GitHub releases
    */
   binaryPath?: string;
 };
