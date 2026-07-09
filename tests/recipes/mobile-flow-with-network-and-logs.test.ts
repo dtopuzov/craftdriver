@@ -13,7 +13,6 @@ describe('mobile flow with a mocked backend and log gate', () => {
     browser = await Browser.launch({
       browserName: 'chrome', // mobile emulation is Chrome/Chromium only
       mobileEmulation: 'Pixel 7',
-      captureLogs: true,
     });
   });
 

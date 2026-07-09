@@ -13,7 +13,6 @@ describe('fail on console and JavaScript errors', () => {
   beforeAll(async () => {
     browser = await Browser.launch({
       browserName: BROWSER_NAME,
-      captureLogs: true,
     });
   });
 

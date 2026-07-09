@@ -43,6 +43,7 @@ export type ErrorHandler = (error: JavaScriptError) => void;
 export class LogMonitor {
   private connection: BiDiConnection;
   private subscribed = false;
+  private handlersWired = false;
   private context?: BrowsingContext;
 
   private allHandlers = new Set<LogHandler>();
@@ -59,21 +60,37 @@ export class LogMonitor {
   }
 
   /**
-   * Initialize log event subscriptions
+   * Mark the `log.entryAdded` subscription as already armed — used when
+   * `BiDiSession.connect()` folds it into the merged connect-time batch so a
+   * later `initialize()` skips the redundant `session.subscribe` and only
+   * wires the event handler. Mirrors `NetworkInterceptor.markSubscribed()`.
+   */
+  markSubscribed(): void {
+    this.subscribed = true;
+  }
+
+  /**
+   * Wire the `log.entryAdded` handler. Normally called once from
+   * `BiDiSession.connect()` after `markSubscribed()`, so the subscribe step is
+   * a same-tick no-op; the subscribe branch only runs for the defensive
+   * `get logs()` fallback that constructs a monitor outside connect().
    */
   async initialize(): Promise<void> {
-    if (this.subscribed) return;
+    if (this.handlersWired) return;
 
-    await this.connection.subscribe(
-      ['log.entryAdded'],
-      this.context ? [this.context] : undefined
-    );
+    if (!this.subscribed) {
+      await this.connection.subscribe(
+        ['log.entryAdded'],
+        this.context ? [this.context] : undefined
+      );
+      this.subscribed = true;
+    }
 
     this.connection.on('log.entryAdded', (params) => {
       this.handleLogEntry(params as unknown as LogEntry);
     });
 
-    this.subscribed = true;
+    this.handlersWired = true;
   }
 
   /**
@@ -81,7 +98,6 @@ export class LogMonitor {
    */
   onLog(handler: LogHandler): () => void {
     this.allHandlers.add(handler);
-    void this.initialize();
     return () => this.allHandlers.delete(handler);
   }
 
@@ -90,7 +106,6 @@ export class LogMonitor {
    */
   onConsole(handler: ConsoleHandler): () => void {
     this.consoleHandlers.add(handler);
-    void this.initialize();
     return () => this.consoleHandlers.delete(handler);
   }
 
@@ -99,7 +114,6 @@ export class LogMonitor {
    */
   onError(handler: ErrorHandler): () => void {
     this.errorHandlers.add(handler);
-    void this.initialize();
     return () => this.errorHandlers.delete(handler);
   }
 
@@ -111,7 +125,6 @@ export class LogMonitor {
       this.levelHandlers.set(level, new Set());
     }
     this.levelHandlers.get(level)!.add(handler);
-    void this.initialize();
     return () => this.levelHandlers.get(level)?.delete(handler);
   }
 

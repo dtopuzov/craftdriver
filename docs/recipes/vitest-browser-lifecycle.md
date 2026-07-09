@@ -18,7 +18,6 @@ describe('login page', () => {
   beforeAll(async () => {
     browser = await Browser.launch({
       browserName: 'chrome',
-      captureLogs: true,
     });
   });
 

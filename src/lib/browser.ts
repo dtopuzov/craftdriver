@@ -144,15 +144,6 @@ export interface LaunchOptions {
    * throws a `requires BiDi (enableBiDi: true)` error if called).
    */
   enableBiDi?: boolean;
-  /**
-   * Start console/error log capture immediately at launch instead of lazily
-   * on first `browser.logs`/`onConsole`/`onError`/`waitForConsole` access.
-   * **Defaults to `false`** — log capture is lazy by default so sessions that
-   * never touch `browser.logs` don't pay its subscription cost. Set `true` if
-   * you need to guarantee capture of console/error output emitted between
-   * `Browser.launch()` and your first `browser.logs` touch.
-   */
-  captureLogs?: boolean;
   /** Load session state from file on launch. BiDi is always used when this is set. */
   storageState?: string;
   /** Enable mobile device emulation (Chrome/Chromium only) */
@@ -538,10 +529,6 @@ export class Browser {
     const wsUrl = (driver as any).__wsUrl;
     if (wsUrl && options.enableBiDi !== false) {
       await browser.initBiDi(wsUrl);
-      if (options.captureLogs && browser.bidiSession?.isConnected()) {
-        // Arm log capture now instead of lazily on first browser.logs touch.
-        void browser.bidiSession.logs.initialize();
-      }
     }
 
     // Load session state if provided
