@@ -44,3 +44,62 @@ jobs:
         run: npm run test:firefox
         env:
           HEADLESS: true
+
+  cross-platform-smoke:
+    # Fast confidence check that craftdriver can launch and drive a session at
+    # all on macOS/Windows — not full coverage (build-and-test above already
+    # runs everything on Ubuntu). Also the real-world proof that the
+    # CI-provided driver directory detection (CHROMEWEBDRIVER/GECKOWEBDRIVER,
+    # see driverManager.ts) actually engages on these runner images, not just
+    # doc-research.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start test server
+        shell: bash
+        run: npm run serve &
+
+      # No top-level `timeout` command here (unlike build-and-test's `timeout 2m
+      # bash -c "..."` above): macOS runners don't ship GNU coreutils' `timeout`
+      # (only BSD userland). A portable retry-count loop works on macOS, Windows
+      # (via Git Bash), and Ubuntu alike.
+      - name: Wait for server
+        shell: bash
+        run: |
+          for i in $(seq 1 120); do
+            curl -sf http://127.0.0.1:8080/login.html && exit 0
+            sleep 1
+          done
+          echo "Server did not start in time" >&2
+          exit 1
+
+      # shell: bash on every step below: GitHub Actions defaults to PowerShell
+      # on Windows runners, where background `&` doesn't mean what the steps
+      # above assume. Git Bash ships on windows-latest, so forcing `shell: bash`
+      # makes these steps behave identically across macOS/Windows.
+      - name: Chrome smoke test
+        shell: bash
+        run: npx vitest run tests/chrome-smoke.test.ts
+        env:
+          HEADLESS: true
+
+      - name: Firefox smoke test
+        shell: bash
+        run: npx vitest run tests/firefox-smoke.test.ts
+        env:
+          HEADLESS: true
+          BROWSER_NAME: firefox
