@@ -107,6 +107,9 @@ dist
 # vitepress temp directory
 **/.vitepress/.temp
 
+# example pages copied into the docs site at build time (source: examples/)
+docs/public/examples/
+
 # Docusaurus cache and generated files
 .docusaurus
 

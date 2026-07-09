@@ -1,58 +1,42 @@
 # Test Time-Sensitive UI With The Virtual Clock
 
-Use this pattern for debounced search, trial banners, idle logout, countdowns,
-and other UI that normally makes tests sleep.
+Debounced search, trial banners, idle logout, and countdowns all force tests to
+either sleep (slow, flaky) or never test the timing at all. Install a virtual
+clock and you control time directly: advance it to the exact millisecond a timer
+should fire, or freeze it on a fixed date. This recipe drives the live
+[clock example](https://dtopuzov.github.io/craftdriver/examples/clock.html),
+whose search input debounces for 300 ms.
 
 ```ts
-import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from 'vitest';
-import { Browser } from 'craftdriver';
+await browser.clock.install();
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/clock.html');
 
-describe('debounced search', () => {
-  let browser: Browser;
+await browser.fill('#search-input', 'lap');
 
-  beforeAll(async () => {
-    browser = await Browser.launch({ browserName: 'chrome' });
-  });
+await browser.clock.tick(299); // just before the debounce threshold
+await browser.expect('#search-count').toHaveText('0');
 
-  beforeEach(async () => {
-    await browser.clock.install({ time: '2030-01-01T00:00:00Z' });
-    await browser.navigateTo('http://localhost:3000/search');
-  });
-
-  afterEach(async () => {
-    await browser.clock.uninstall();
-  });
-
-  afterAll(async () => {
-    await browser.quit();
-  });
-
-  it('fires search only after the debounce window', async () => {
-    await browser.network.mock('**/api/search?q=lap', {
-      status: 200,
-      body: { results: ['Laptop stand'] },
-    });
-
-    await browser.getByLabel('Search').fill('lap');
-
-    await browser.clock.tick(299);
-    await browser.expect('#results').toHaveText('');
-
-    await browser.clock.tick(1);
-    await browser.expect('#results').toContainText('Laptop stand');
-  });
-});
+await browser.clock.tick(2); // crosses 300ms — the search fires exactly once
+await browser.expect('#search-count').toHaveText('1');
 ```
 
 ## Fixed Dates
 
-For date-dependent UI, freeze the wall clock before navigation:
+For date-dependent UI, freeze the wall clock before navigation so the page
+renders as if it were that moment:
 
 ```ts
 await browser.clock.setFixedTime('2026-06-15T23:59:00Z');
-await browser.navigateTo('http://localhost:3000/billing');
-await browser.expect('#trial-banner').toContainText('expires today');
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/clock.html');
+
+await browser.expect('#trial-banner').toContainText('Trial expires today');
 ```
+
+## Notes
+
+- `install()` fakes timers so `tick()` advances them deterministically; `uninstall()` restores the real clock.
+- `setFixedTime()` freezes `Date.now()` and `new Date()` without touching timers — ideal for date-keyed UI.
+- Install the clock before navigation so the page picks up the fake timers on load.
 
 ## Learn More
 

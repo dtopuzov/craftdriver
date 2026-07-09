@@ -1,70 +1,50 @@
 # Log In Once And Reuse The Session
 
-Use this pattern when login is slow, rate-limited, or not the thing most tests
-are trying to prove. Log in once, save cookies and localStorage, then launch
-future tests already signed in.
+Signing in through the UI in every test is slow, and for most tests logging in
+is not the thing being proven. Do it once, save the resulting cookies and
+localStorage, then launch later tests already authenticated with `storageState`.
+Both halves below run against the live
+[login example](https://dtopuzov.github.io/craftdriver/examples/login.html),
+which persists its session in a cookie.
 
 ## Generate Auth State
 
-Run this as a setup step before the tests that need an authenticated user.
+Run this once as a setup step. It is one of the few recipes that shows
+`launch`/`quit`, because saving state is a self-contained script, not a test.
 
 ```ts
-import { mkdir } from 'node:fs/promises';
 import { Browser } from 'craftdriver';
-
-const authState = '.auth/alice.json';
-
-await mkdir('.auth', { recursive: true });
 
 const browser = await Browser.launch({ browserName: 'chrome' });
 
-try {
-  await browser.navigateTo('http://localhost:3000/login');
-  await browser.getByLabel('Email').fill('alice@example.com');
-  await browser.getByLabel('Password').fill(process.env.TEST_PASSWORD!);
-  await browser.getByRole('button', { name: 'Sign in' }).click();
-  await browser.expect('#account').toContainText('Alice');
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
+await browser.getByLabel('Username').fill('alice');
+await browser.getByLabel('Password').fill('secret');
+await browser.getByRole('button', { name: 'Sign in' }).click();
+await browser.expect('#welcome').toContainText('Welcome back, alice!');
 
-  await browser.saveState(authState);
-} finally {
-  await browser.quit();
-}
+await browser.saveState('.auth/alice.json');
+await browser.quit();
 ```
 
 ## Use Auth State In Tests
 
+Launch with `storageState` and the browser starts already signed in.
+
 ```ts
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
-import { Browser } from 'craftdriver';
-
-describe('authenticated dashboard', () => {
-  let browser: Browser;
-
-  beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: 'chrome',
-      storageState: '.auth/alice.json',
-    });
-  });
-
-  beforeEach(async () => {
-    await browser.navigateTo('http://localhost:3000/dashboard');
-  });
-
-  afterAll(async () => {
-    await browser.quit();
-  });
-
-  it('shows account data', async () => {
-    await browser.expect('#account').toContainText('Alice');
-  });
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  storageState: '.auth/alice.json',
 });
+
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
+await browser.expect('#welcome').toContainText('Welcome back, alice!');
 ```
 
 ## Notes
 
 - Keep generated auth files out of source control if they contain real secrets.
-- Regenerate auth state when the app changes login/session behavior.
+- Regenerate auth state when the app changes its login or session behavior.
 - Use separate files such as `.auth/admin.json` and `.auth/customer.json` for different roles.
 
 ## Learn More

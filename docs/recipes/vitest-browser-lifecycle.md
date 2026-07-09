@@ -1,17 +1,19 @@
 # Use CraftDriver With Vitest Hooks
 
-Use this pattern when a test file should launch one browser, navigate to a clean
-page before each test, and fail if the page reports unexpected JavaScript errors.
+Most test files want the same shape: launch one browser, start each test from a
+known page, and fail loudly if the browser logged an error. This recipe is that
+skeleton — one browser per file, a fresh navigation per test, and an error gate
+in `afterEach`. The rest of the recipes on this site build on it, so they can
+show only the flow they are teaching and assume a launched `browser`.
 
-This keeps tests fast without sharing dirty page state.
+It drives the live [login example](https://dtopuzov.github.io/craftdriver/examples/login.html).
 
 ```ts
 import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from 'vitest';
 import { Browser } from 'craftdriver';
 
-describe('settings page', () => {
+describe('login page', () => {
   let browser: Browser;
-  const baseUrl = 'http://localhost:3000';
 
   beforeAll(async () => {
     browser = await Browser.launch({
@@ -23,7 +25,7 @@ describe('settings page', () => {
   beforeEach(async () => {
     browser.logs.clearLogs();
     await browser.network.removeAllIntercepts();
-    await browser.navigateTo(`${baseUrl}/settings`);
+    await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
   });
 
   afterEach(() => {
@@ -34,10 +36,11 @@ describe('settings page', () => {
     await browser.quit();
   });
 
-  it('updates the display name', async () => {
-    await browser.getByLabel('Display name').fill('Alice');
-    await browser.getByRole('button', { name: 'Save' }).click();
-    await browser.expect('#toast').toContainText('Saved');
+  it('signs the user in', async () => {
+    await browser.getByLabel('Username').fill('alice');
+    await browser.getByLabel('Password').fill('secret');
+    await browser.getByRole('button', { name: 'Sign in' }).click();
+    await browser.expect('#welcome').toContainText('Welcome back, alice!');
   });
 });
 ```
@@ -47,7 +50,7 @@ describe('settings page', () => {
 - Launch in `beforeAll()` when tests in the file can share one browser process.
 - Navigate in `beforeEach()` so each test starts from a known URL.
 - Clear network mocks and logs before each test so one test cannot influence the next.
-- Use `afterAll()` for `browser.quit()` so local driver and browser processes are cleaned up.
+- Use `afterAll()` for `browser.quit()` so the local driver and browser processes are cleaned up.
 
 ## Learn More
 

@@ -19,6 +19,7 @@ export default [
       'vitest.config.ts',
       'vitest.perf.config.ts',
       'vitest.perf.realapp.config.ts',
+      'vitest.recipes.config.ts',
     ],
   },
   {
