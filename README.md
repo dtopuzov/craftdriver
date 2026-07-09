@@ -120,7 +120,7 @@ await browser.a11y.check();
 
 - [Documentation site](https://dtopuzov.github.io/craftdriver/)
 - [API reference](https://dtopuzov.github.io/craftdriver/api-reference)
-- [Recipes](https://dtopuzov.github.io/craftdriver/recipes)
+- [Recipes](https://dtopuzov.github.io/craftdriver/recipes) — recipes for brewing great tests 🍺
 - [Changelog](./CHANGELOG.md)
 - [Contributing guide](./CONTRIBUTING.md)
 

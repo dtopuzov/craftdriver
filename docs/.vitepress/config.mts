@@ -76,7 +76,9 @@ export default defineConfig({
             link: '/recipes',
             collapsed: true,
             items: [
+              { text: 'Find Elements', link: '/recipes/find-elements' },
               { text: 'Vitest Hooks', link: '/recipes/vitest-browser-lifecycle' },
+              { text: 'Page Objects', link: '/recipes/page-objects' },
               { text: 'Reuse Login Session', link: '/recipes/login-once-reuse-session' },
               { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
               { text: 'Multi-User Workflows', link: '/recipes/multi-user-contexts' },

@@ -40,6 +40,11 @@ jobs:
         env:
           HEADLESS: true
 
+      - name: Run recipe snippets (Chrome)
+        run: npm run test:recipes
+        env:
+          HEADLESS: true
+
       - name: Run tests (Firefox)
         run: npm run test:firefox
         env:

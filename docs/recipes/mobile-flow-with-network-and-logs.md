@@ -1,54 +1,39 @@
 # Test A Mobile Flow With API Mocks And Logs
 
-Use this pattern when mobile layout depends on a device preset and a backend
-configuration response. This combines mobile emulation, network mocking, and log
-capture in one test.
+Mobile bugs often need three things set up at once: a real device viewport, a
+predictable backend response, and a check that nothing errored in the console on
+the smaller layout. This recipe combines all three — it launches with a Pixel 7
+preset, mocks the API, and gates on browser errors — against the live
+[network example](https://dtopuzov.github.io/craftdriver/examples/network.html).
+Because mobile emulation is a launch-time capability, this recipe shows the
+`launch` call.
 
 ```ts
-import { afterAll, beforeAll, describe, it } from 'vitest';
-import { Browser } from 'craftdriver';
-
-describe('mobile navigation', () => {
-  let browser: Browser;
-
-  beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: 'chrome',
-      mobileEmulation: 'Pixel 7',
-      captureLogs: true,
-    });
-  });
-
-  afterAll(async () => {
-    await browser.quit();
-  });
-
-  it('shows the mobile menu from mocked config', async () => {
-    browser.logs.clearLogs();
-
-    await browser.network.mock('**/api/mobile-config', {
-      status: 200,
-      body: {
-        navigation: 'bottom-tabs',
-        showInstallPrompt: false,
-      },
-    });
-
-    await browser.navigateTo('http://localhost:3000');
-    await browser.getByRole('button', { name: 'Menu' }).click();
-
-    await browser.expect('#mobile-menu').toBeVisible();
-    await browser.expect('#desktop-nav').not.toBeVisible();
-    browser.logs.assertNoErrors();
-  });
+const browser = await Browser.launch({
+  browserName: 'chrome', // mobile emulation is Chrome/Chromium only
+  mobileEmulation: 'Pixel 7',
+  captureLogs: true,
 });
+
+// ?bidi=true makes the demo page issue real requests for interception.
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/network.html?bidi=true');
+
+await browser.network.mock('**/api/users', {
+  status: 200,
+  body: { users: [{ id: 1, name: 'Alice', plan: 'Pro' }] },
+});
+
+await browser.getByRole('button', { name: 'Fetch Users' }).click();
+await browser.expect('#users-result').toContainText('Alice');
+
+browser.logs.assertNoErrors();
 ```
 
 ## Notes
 
 - Mobile emulation is currently Chrome/Chromium only.
-- Mock before navigation when the page reads mobile config during startup.
-- Keep `captureLogs: true` if startup logs matter.
+- Mock before the action if the page reads data during that step.
+- Keep `captureLogs: true` so `assertNoErrors()` has something to check.
 
 ## Learn More
 

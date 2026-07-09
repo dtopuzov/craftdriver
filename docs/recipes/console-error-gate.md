@@ -1,55 +1,46 @@
 # Fail On Console And JavaScript Errors
 
-Use this pattern when a flow can look correct in the DOM while still logging
-client-side errors. Start log capture early, run the flow, then fail on
-unexpected JavaScript errors.
+A flow can look correct in the DOM while quietly throwing in the console — a
+failed fetch, an undefined access, a rejected promise. Capture logs at launch,
+run the flow, then assert no JavaScript errors were reported so those failures
+break the test instead of reaching users. This recipe uses the live
+[console errors example](https://dtopuzov.github.io/craftdriver/examples/console-errors.html).
+It enables `captureLogs` at launch, so it shows the `launch` call.
 
 ```ts
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
-import { Browser } from 'craftdriver';
-
-describe('critical browser flows', () => {
-  let browser: Browser;
-
-  beforeAll(async () => {
-    browser = await Browser.launch({
-      browserName: 'chrome',
-      captureLogs: true,
-    });
-  });
-
-  beforeEach(async () => {
-    browser.logs.clearLogs();
-  });
-
-  afterAll(async () => {
-    await browser.quit();
-  });
-
-  it('saves settings without browser errors', async () => {
-    await browser.navigateTo('http://localhost:3000/settings');
-    await browser.getByLabel('Display name').fill('Alice');
-    await browser.getByRole('button', { name: 'Save' }).click();
-
-    await browser.expect('#toast').toContainText('Saved');
-    browser.logs.assertNoErrors();
-  });
+const browser = await Browser.launch({
+  browserName: 'chrome',
+  captureLogs: true,
 });
+
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/console-errors.html');
+browser.logs.clearLogs();
+
+await browser.click('#btn-console-log'); // your real user flow goes here
+
+// Fails the test if the page reported any JavaScript error during the flow.
+browser.logs.assertNoErrors();
 ```
 
 ## Wait For A Known Log
 
-When the log itself is part of the expected behavior, arm the wait before the
+When a log line is itself part of the expected behavior, arm the wait before the
 action that emits it:
 
 ```ts
-const saved = browser.logs.waitForConsole((message) => {
-  return message.level === 'info' && message.text.includes('settings:saved');
-});
+const logged = browser.logs.waitForConsole((message) =>
+  message.text.includes('Hello from console.log')
+);
 
-await browser.getByRole('button', { name: 'Save' }).click();
-await saved;
+await browser.click('#btn-console-log');
+await logged;
 ```
+
+## Notes
+
+- `assertNoErrors()` checks captured JavaScript errors, so keep `captureLogs: true`.
+- Call `clearLogs()` before the flow so errors from earlier tests don't bleed in.
+- Use `waitForConsole()` / `waitForError()` when a specific message is the thing you're asserting.
 
 ## Learn More
 

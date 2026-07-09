@@ -1,46 +1,33 @@
 # Mock APIs And Assert Network Traffic
 
-Use this pattern when the UI should be tested independently from unstable,
-slow, or expensive backend services. Mock the response the app needs, then wait
-for the request or response caused by the user action.
+Testing the UI against a real backend makes tests slow and flaky and couples them
+to data you do not control. Mock the response the page needs, then wait for the
+request or response the user action triggers so you can assert both the UI and
+the traffic. This recipe drives the live
+[network example](https://dtopuzov.github.io/craftdriver/examples/network.html).
 
 ```ts
-import { expect, it } from 'vitest';
-import { Browser } from 'craftdriver';
+// The ?bidi=true query just tells this demo page to make real network
+// requests instead of its built-in stub, so the mock below is what answers.
+await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/network.html?bidi=true');
 
-it('loads mocked users and verifies the request', async () => {
-  const browser = await Browser.launch({ browserName: 'chrome' });
-
-  try {
-    await browser.navigateTo('http://localhost:3000/users');
-
-    await browser.network.mock('**/api/users', {
-      status: 200,
-      body: {
-        users: [{ id: 1, name: 'Alice', plan: 'Pro' }],
-      },
-    });
-
-    const [request, response] = await Promise.all([
-      browser.waitForRequest((req) => {
-        return req.url.includes('/api/users') && req.method === 'GET';
-      }),
-      browser.waitForResponse('**/api/users'),
-      browser.getByRole('button', { name: 'Load users' }).click(),
-    ]);
-
-    expect(request.method).toBe('GET');
-    expect(response.status).toBe(200);
-    await browser.expect('#user-list').toContainText('Alice');
-  } finally {
-    await browser.quit();
-  }
+await browser.network.mock('**/api/users', {
+  status: 200,
+  body: { users: [{ id: 1, name: 'Alice', plan: 'Pro' }] },
 });
+
+const [response] = await Promise.all([
+  browser.waitForResponse('**/api/users'),
+  browser.getByRole('button', { name: 'Fetch Users' }).click(),
+]);
+
+expect(response.status).toBe(200);
+await browser.expect('#users-result').toContainText('Alice');
 ```
 
 ## Keep Mocks Isolated
 
-If you share a browser across tests, clear intercepts in `afterEach()`:
+When a browser is shared across tests, clear intercepts between them:
 
 ```ts
 afterEach(async () => {
@@ -50,7 +37,7 @@ afterEach(async () => {
 
 ## Notes
 
-- Register waits before the click that triggers the request.
+- Register the wait before the click that triggers the request (the `Promise.all` above).
 - Use a glob for simple URL matching and a predicate when method, status, or headers matter.
 - Mock before navigation if the page fetches data during initial load.
 
