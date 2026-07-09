@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/dtopuzov/craftdriver/compare/v1.1.0...v1.1.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **selectors:** align semantic locator behavior ([2c73b74](https://github.com/dtopuzov/craftdriver/commit/2c73b74d1ba0e18eba1fdadea89b1544fb52f0e7))
+
 # [1.1.0](https://github.com/dtopuzov/craftdriver/compare/v1.0.4...v1.1.0) (2026-07-09)
 
 
