@@ -7,7 +7,6 @@ rust/
 *.log
 *.md
 !README.md
-.eslintrc.cjs
 .prettierrc
 vitest.config.ts
 *.map

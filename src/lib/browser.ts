@@ -647,13 +647,13 @@ export class Browser {
   }
 
   /**
-   * Accessibility audits via axe-core (optional peer dependency).
+   * Accessibility audits via axe-core.
    *
    * ```ts
    * await browser.a11y.check({ disableRules: ['color-contrast'] });
    * ```
    *
-   * Requires `axe-core` to be installed: `npm install --save-dev axe-core`.
+   * axe-core ships as a direct dependency of craftdriver.
    */
   get a11y(): A11y {
     if (!this._a11y) {
