@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/dtopuzov/craftdriver/compare/v1.2.0...v1.3.0) (2026-07-11)
+
+
+### Features
+
+* make traces Playwright and Vibium compatible ([c6c0746](https://github.com/dtopuzov/craftdriver/commit/c6c0746dcecc671d1d6d6cd26badf6a8432a7f37))
+
 ## Unreleased
 
 ### Features
