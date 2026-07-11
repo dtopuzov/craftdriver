@@ -6,11 +6,8 @@ import { defineConfig } from 'vitest/config';
 // single worker/fork so CPU contention from parallel test workers doesn't skew
 // wall-clock measurements.
 //
-// Only matches the top-level tests/perf/*.perf.ts files — deliberately not
-// recursive. tests/perf/realapp/**/*.perf.ts benchmarks against an external
-// sibling repo + Docker + a running dev server and has its own
-// vitest.perf.realapp.config.ts / `npm run bench:realapp`, so it never runs
-// as a side effect of the plain `npm run bench` most environments can use.
+// Only matches the top-level tests/perf/*.perf.ts files. Keep perf harnesses
+// self-contained so `npm run bench` is reproducible from this repo alone.
 export default defineConfig({
   test: {
     globals: true,
