@@ -159,8 +159,10 @@ const download = await browser.waitForDownload(() => browser.click('#download'))
 ```ts
 await browser.screenshot({ path: 'out.png', fullPage: true });
 
-await browser.startTrace({ outDir: './artefacts/run' });
-try { /* ... */ } finally { await browser.stopTrace(); }
+await browser.startTrace({ outDir: './artefacts/run', title: 'Smoke flow' });
+try { /* ... */ } finally {
+  await browser.stopTrace({ path: './artefacts/run.zip' }); // player.vibium.dev
+}
 ```
 
 ## Accessibility

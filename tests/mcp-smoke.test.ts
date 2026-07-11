@@ -10,7 +10,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -112,6 +114,7 @@ class McpHarness {
 describe('MCP smoke', () => {
   const mcp = new McpHarness();
   const loginUrl = `${EXAMPLES_BASE_URL}/login.html`;
+  const traceRoot = mkdtempSync(join(tmpdir(), 'craftdriver-mcp-trace-'));
 
   beforeAll(async () => {
     await mcp.start();
@@ -119,9 +122,10 @@ describe('MCP smoke', () => {
 
   afterAll(async () => {
     await mcp.stop();
+    rmSync(traceRoot, { recursive: true, force: true });
   });
 
-  it('tools/list returns the 14 documented tools', async () => {
+  it('tools/list returns the 15 documented tools', async () => {
     const resp = (await mcp.request('tools/list', {})) as RpcSuccess;
     const tools = resp.result.tools as Array<{ name: string }>;
     const names = tools.map((t) => t.name).sort();
@@ -140,9 +144,32 @@ describe('MCP smoke', () => {
         'browser_screenshot',
         'browser_snapshot',
         'browser_status',
+        'browser_trace',
         'browser_wait',
       ].sort()
     );
+  });
+
+  it('records a Vibium-compatible session trace', async () => {
+    const outDir = join(traceRoot, 'raw');
+    const zipPath = join(traceRoot, 'mcp-session.zip');
+    const start = (await mcp.request('tools/call', {
+      name: 'browser_trace',
+      arguments: { action: 'start', out_dir: outDir, title: 'MCP login' },
+    })) as RpcSuccess;
+    expect((start.result as { isError?: boolean }).isError ?? false).toBe(false);
+
+    await mcp.request('tools/call', {
+      name: 'browser_navigate',
+      arguments: { url: loginUrl },
+    });
+    const stop = (await mcp.request('tools/call', {
+      name: 'browser_trace',
+      arguments: { action: 'stop', path: zipPath },
+    })) as RpcSuccess;
+    expect((stop.result as { isError?: boolean }).isError ?? false).toBe(false);
+    expect(existsSync(zipPath)).toBe(true);
+    expect(readFileSync(zipPath).subarray(0, 2).toString('ascii')).toBe('PK');
   });
 
   it('navigate + snapshot returns refs for known controls', async () => {

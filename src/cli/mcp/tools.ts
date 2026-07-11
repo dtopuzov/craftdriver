@@ -8,8 +8,7 @@
  * identically when given the same selector.
  *
  * Compact set per §6 of the AI-productivity plan: ~12 tools, one-line
- * descriptions, merged variants behind options. `browser_trace` is
- * intentionally absent in v1 — it ships with Item 7 (trace summaries).
+ * descriptions and merged variants behind options.
  */
 import type { DispatchContext } from '../dispatcher.js';
 import { dispatch } from '../dispatcher.js';
@@ -240,6 +239,25 @@ export const TOOLS: ToolDef[] = [
         ...(a.path ? { path: a.path } : {}),
       },
     }),
+  },
+  {
+    name: 'browser_trace',
+    description:
+      'Start or stop browser tracing. Stop with path to create a zip playable at player.vibium.dev.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['start', 'stop'] },
+        out_dir: { type: 'string', description: 'Raw trace directory; required for start.' },
+        path: { type: 'string', description: 'Vibium-compatible zip path; used for stop.' },
+        title: { type: 'string', description: 'Viewer title; used for start.' },
+      },
+      required: ['action'],
+    },
+    mutating: false,
+    toDispatch: (a) => a.action === 'start'
+      ? { cmd: 'trace-start', args: { outDir: a.out_dir, title: a.title } }
+      : { cmd: 'trace-stop', args: { path: a.path } },
   },
   {
     name: 'browser_status',

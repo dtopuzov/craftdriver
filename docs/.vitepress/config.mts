@@ -82,7 +82,7 @@ export default defineConfig({
               { text: 'Reuse Login Session', link: '/recipes/login-once-reuse-session' },
               { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
               { text: 'Multi-User Workflows', link: '/recipes/multi-user-contexts' },
-              { text: 'Failure Traces', link: '/recipes/trace-failing-test' },
+              { text: 'Debug With Traces', link: '/recipes/debug-failing-tests-with-traces' },
               { text: 'Accessibility Gates', link: '/recipes/accessibility-gate' },
               { text: 'Console Error Gates', link: '/recipes/console-error-gate' },
               { text: 'Virtual Clock', link: '/recipes/virtual-clock-time-sensitive-ui' },

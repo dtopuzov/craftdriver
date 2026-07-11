@@ -146,6 +146,9 @@ vite.config.ts.timestamp-*
 
 # craftdriver tracing artefacts
 traces/
+# Curated, scrubbed trace downloads published with the documentation.
+!docs/public/traces/
+!docs/public/traces/*.zip
 
 # Claude Code: local/machine-specific config (permission grants, absolute
 # paths). Shared project skills under .claude/skills/ are tracked.

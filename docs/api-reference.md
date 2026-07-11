@@ -82,6 +82,7 @@ Capture console output, JavaScript errors, and trace artifacts.
 | `JavaScriptError` | type | — | [browser-logs](browser-logs.md) |
 | `LogMessage` | type | — | [browser-logs](browser-logs.md) |
 | `TraceStartOptions` | type | — | [tracing](tracing.md) |
+| `TraceStopOptions` | type | — | [tracing](tracing.md) |
 | `TraceScreenshotMode` | type | Screenshot mode for tracing. | [tracing](tracing.md) |
 | `TraceEvent` | type | — | [tracing](tracing.md) |
 
@@ -130,4 +131,4 @@ Handle stable CraftDriver errors or customize browser driver services.
 | `FirefoxService` | class | — | [getting-started](getting-started.md) |
 | `FirefoxServiceOptions` | type | — | [getting-started](getting-started.md) |
 
-Total exports: **60**.
+Total exports: **61**.

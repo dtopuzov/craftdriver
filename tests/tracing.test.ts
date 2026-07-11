@@ -2,6 +2,7 @@ import { describe, it, beforeAll, afterAll, beforeEach, afterEach, expect } from
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 import { Browser } from '../src';
 import type { TraceEvent } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
@@ -22,6 +23,34 @@ function readNdjson(path: string): TraceEvent[] {
     .filter((l) => l.length > 0)
     .map(parseTraceLine)
     .filter((e): e is TraceEvent => e !== null);
+}
+
+/** Minimal zip reader for assertions; supports the stored/deflated entries written by yazl. */
+function readZipEntries(path: string): Map<string, Buffer> {
+  const archive = readFileSync(path);
+  const entries = new Map<string, Buffer>();
+  const centralSignature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  let offset = archive.indexOf(centralSignature);
+
+  while (offset !== -1) {
+    const method = archive.readUInt16LE(offset + 10);
+    const compressedSize = archive.readUInt32LE(offset + 20);
+    const nameLength = archive.readUInt16LE(offset + 28);
+    const extraLength = archive.readUInt16LE(offset + 30);
+    const commentLength = archive.readUInt16LE(offset + 32);
+    const localOffset = archive.readUInt32LE(offset + 42);
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8');
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataStart, dataStart + compressedSize);
+    entries.set(name, method === 8 ? inflateRawSync(compressed) : Buffer.from(compressed));
+    offset = archive.indexOf(
+      centralSignature,
+      offset + 46 + nameLength + extraLength + commentLength,
+    );
+  }
+  return entries;
 }
 
 describe('Tracing', () => {
@@ -68,6 +97,14 @@ describe('Tracing', () => {
     const fill = actions.find((a) => a.name === 'fill')!;
     expect(fill.args).toEqual(['alice']);
     expect(fill.selector).toBe('#username');
+    const actionEnds = events.filter(
+      (e): e is Extract<TraceEvent, { type: 'action-end' }> => e.type === 'action-end'
+    );
+    expect(actionEnds).toHaveLength(actions.length);
+    for (const action of actions) {
+      const end = actionEnds.find((event) => event.actionIndex === action.actionIndex)!;
+      expect(end.t).toBeGreaterThanOrEqual(action.t);
+    }
 
     // Response events should carry the document mimeType.
     const htmlResponse = events.find(
@@ -125,6 +162,67 @@ describe('Tracing', () => {
     for (const s of shots) {
       expect(existsSync(join(dir, s.file))).toBe(true);
     }
+  });
+
+  it('exports a Vibium Player compatible trace zip', async () => {
+    const dir = join(tmpRoot, 'vibium');
+    const zipPath = join(tmpRoot, 'failure-trace.zip');
+    await browser.startTrace({ outDir: dir, title: 'Craftdriver login flow' });
+    await browser.navigateTo(`${baseUrl}/login.html`);
+    await browser.fill('#username', 'alice');
+    await browser.click('#submit');
+    await browser.stopTrace({ path: zipPath });
+
+    const entries = readZipEntries(zipPath);
+    expect(entries.has('trace.trace')).toBe(true);
+    expect(entries.has('trace.network')).toBe(true);
+
+    const timeline = entries.get('trace.trace')!.toString('utf8')
+      .split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(timeline[0]).toMatchObject({
+      version: 8,
+      type: 'context-options',
+      libraryName: 'craftdriver',
+      title: 'Craftdriver login flow',
+    });
+    const befores = timeline.filter((event) => event.type === 'before');
+    const afters = timeline.filter((event) => event.type === 'after');
+    expect(befores).toHaveLength(3);
+    expect(afters).toHaveLength(3);
+    for (const before of befores) {
+      const after = afters.find((event) => event.callId === before.callId)!;
+      expect(Number(after.endTime) - Number(before.startTime)).toBeGreaterThanOrEqual(1);
+      expect(before.beforeSnapshot).toBe(`before@${String(before.callId)}`);
+      expect(after.afterSnapshot).toBe(`after@${String(before.callId)}`);
+    }
+    const frames = timeline.filter((event) => event.type === 'screencast-frame');
+    expect(frames.length).toBeGreaterThanOrEqual(4);
+    for (const frame of frames) {
+      expect(String(frame.sha1)).toMatch(/^page@[a-f0-9]+-\d+\.png$/);
+      expect(entries.has(`resources/${String(frame.sha1)}`)).toBe(true);
+    }
+    const snapshots = timeline.filter((event) => event.type === 'frame-snapshot');
+    expect(snapshots).toHaveLength(6);
+    expect(JSON.stringify(snapshots[0])).toContain('data:image/png;base64,');
+    const eventTime = (event: Record<string, unknown>): number => {
+      if (event.type === 'context-options') return Number(event.monotonicTime);
+      if (event.type === 'screencast-frame') return Number(event.timestamp);
+      if (event.type === 'before') return Number(event.startTime);
+      if (event.type === 'after') return Number(event.endTime);
+      if (event.type === 'event') return Number(event.time);
+      const snapshot = event.snapshot as Record<string, unknown> | undefined;
+      return Number(snapshot?.timestamp ?? 0);
+    };
+    expect(timeline.map(eventTime)).toEqual([...timeline.map(eventTime)].sort((a, b) => a - b));
+
+    const rawEvents = readNdjson(join(dir, 'trace.ndjson'));
+    expect(rawEvents.some(
+      (event) => event.type === 'screenshot' && event.reason === 'final'
+    )).toBe(true);
+
+    const network = entries.get('trace.network')!.toString('utf8')
+      .split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(network.some((event) => event.type === 'resource-snapshot')).toBe(true);
   });
 
   it('snaps a screenshot on page errors', async () => {
