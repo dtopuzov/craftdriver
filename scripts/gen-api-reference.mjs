@@ -118,6 +118,7 @@ const CATEGORIES = [
       'JavaScriptError',
       'LogMessage',
       'TraceStartOptions',
+      'TraceStopOptions',
       'TraceScreenshotMode',
       'TraceEvent',
     ],
@@ -213,8 +214,9 @@ function definingFile(symbol) {
   const decl = symbol.declarations?.[0];
   if (!decl) return null;
   const file = decl.getSourceFile().fileName;
-  if (!file.startsWith(repoRoot)) return null;
-  return path.relative(repoRoot, file);
+  const relative = path.relative(repoRoot, file);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return relative;
 }
 
 /** Pick a topic doc for the symbol based on its defining file. */
@@ -222,7 +224,8 @@ function topicLink(definingPath, symbolName) {
   if (!definingPath) return null;
   if (BIDI_SYMBOL_DOC[symbolName]) return BIDI_SYMBOL_DOC[symbolName];
   const base = path.basename(definingPath, '.ts');
-  if (definingPath.includes('/bidi/')) return BIDI_FILE_DOC[base] ?? null;
+  const portablePath = definingPath.split(path.sep).join('/');
+  if (portablePath.includes('/bidi/')) return BIDI_FILE_DOC[base] ?? null;
   return TOPIC_DOC[base] ?? null;
 }
 

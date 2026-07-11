@@ -53,7 +53,7 @@ goose configure   # add craftdriver as a stdio server
 
 ## Tools
 
-Compact set — 14 tools, one line each. Long help lives in the schema
+Compact set — 15 tools, one line each. Long help lives in the schema
 description; clients render it in the model's context once per session.
 
 | Tool                     | Purpose                                                                |
@@ -70,11 +70,25 @@ description; clients render it in the model's context once per session.
 | `browser_pages`          | List open pages (id, url, title).                                      |
 | `browser_snapshot`       | **Sanitized DOM summary with refs.** Use `ref=eN` as the selector for subsequent calls. |
 | `browser_screenshot`     | Capture PNG to a file (auto-allocated under the per-session artifact dir; never inlined). |
+| `browser_trace`          | Start/stop tracing and export a Vibium Player compatible zip.            |
 | `browser_status`         | Browser up? Which URL is active?                                       |
 | `browser_advanced_eval`  | Evaluate JS in the page. Last resort.                                  |
 
-`browser_trace` (start/stop/explain) and trace resources are slated
-for a future release alongside richer trace introspection.
+Trace a complete agent-driven session with two calls:
+
+```jsonc
+{ "name": "browser_trace", "arguments": {
+  "action": "start", "out_dir": "./traces/agent-raw", "title": "Agent flow"
+} }
+// ...browser_navigate / browser_fill / browser_click calls...
+{ "name": "browser_trace", "arguments": {
+  "action": "stop", "path": "./traces/agent-flow.zip"
+} }
+```
+
+The zip opens at [player.vibium.dev](https://player.vibium.dev/). The raw
+directory remains available if the MCP client disconnects before the stop
+call; in that case there is no finalized zip.
 
 ## Selector syntax
 

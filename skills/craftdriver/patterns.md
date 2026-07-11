@@ -60,6 +60,7 @@ const due = await row.locator('[data-col=due]').text();
 ```ts
 await browser.startTrace({
   outDir: './artefacts/checkout-fail',
+  title: 'Checkout failure',
   screenshots: 'auto',
   network: true,
   console: true,
@@ -70,7 +71,7 @@ try {
   // Trace lands on disk regardless — thrown expects never lose data.
   throw e;
 } finally {
-  await browser.stopTrace();
+  await browser.stopTrace({ path: './artefacts/checkout-fail.zip' });
 }
 ```
 

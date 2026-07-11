@@ -16,6 +16,7 @@ import { mkdirSync, writeFileSync, openSync, writeSync, closeSync } from 'node:f
 import { join } from 'node:path';
 import type { Browser } from './browser.js';
 import type { BiDiConnection } from './bidi/connection.js';
+import { writeVibiumTraceZip } from './vibiumTrace.js';
 
 /** Screenshot mode for tracing. */
 export type TraceScreenshotMode = boolean | 'auto' | 'off';
@@ -40,6 +41,13 @@ export interface TraceStartOptions {
   network?: boolean;
   /** Capture console + page errors. Default true. */
   console?: boolean;
+  /** Title shown in Vibium Player when exporting a zip. */
+  title?: string;
+}
+
+export interface TraceStopOptions {
+  /** Write a Vibium/Playwright-compatible trace zip to this path. */
+  path: string;
 }
 
 export type TraceEvent =
@@ -49,8 +57,9 @@ export type TraceEvent =
   | { t: number; type: 'request'; url: string; method: string; requestId?: string }
   | { t: number; type: 'response'; url: string; status: number; mimeType?: string; fromCache?: true; requestId?: string }
   | { t: number; type: 'navigation'; url: string; context?: string }
-  | { t: number; type: 'screenshot'; file: string; actionIndex?: number; reason: 'action' | 'error' }
-  | { t: number; type: 'action'; name: string; args?: unknown[]; selector?: string };
+  | { t: number; type: 'screenshot'; file: string; actionIndex?: number; reason: 'action' | 'error' | 'final' }
+  | { t: number; type: 'action'; actionIndex?: number; name: string; args?: unknown[]; selector?: string }
+  | { t: number; type: 'action-end'; actionIndex: number; error?: string };
 
 export class Tracer {
   private browser: Browser;
@@ -65,11 +74,16 @@ export class Tracer {
   private running = false;
   private actionsEnabled = true;
   private screenshotMode: 'auto' | 'off' = 'auto';
+  private traceTitle?: string;
   private actionIndex = 0;
   /** Tracks in-flight screenshot captures so `stop()` can drain them. */
   private pendingCaptures: Array<Promise<void>> = [];
 
-  constructor(browser: Browser, conn: BiDiConnection) {
+  constructor(
+    browser: Browser,
+    conn: BiDiConnection,
+    private browserName: 'chrome' | 'chromium' | 'firefox',
+  ) {
     this.browser = browser;
     this.conn = conn;
   }
@@ -92,6 +106,7 @@ export class Tracer {
     this.screenshotIndex = 0;
     this.screenshotDirEnsured = false;
     this.actionIndex = 0;
+    this.traceTitle = opts.title;
     this.pendingCaptures = [];
 
     this.actionsEnabled = opts.actions ?? true;
@@ -113,6 +128,7 @@ export class Tracer {
         network: networkOn,
         console: consoleOn,
         screenshots: this.screenshotMode,
+        title: opts.title,
       },
     });
 
@@ -183,20 +199,36 @@ export class Tracer {
    *
    * Zero-cost when no tracer is running or `actions: false`.
    */
-  recordAction(name: string, args?: unknown[], selector?: string): void {
-    if (!this.running || !this.actionsEnabled) return;
+  recordAction(name: string, args?: unknown[], selector?: string): number | undefined {
+    if (!this.running || !this.actionsEnabled) return undefined;
     const idx = ++this.actionIndex;
     this.writeLine({
       t: Date.now() - this.startedAtMs,
       type: 'action',
+      actionIndex: idx,
       name,
       args: args && args.length ? args.map(safeArg) : undefined,
       selector,
     });
     if (this.screenshotMode === 'auto') this.scheduleScreenshot('action', idx);
+    return idx;
   }
 
-  private scheduleScreenshot(reason: 'action' | 'error', actionIndex?: number): void {
+  /** Complete an action marker with its real duration and optional error. */
+  recordActionEnd(actionIndex: number | undefined, error?: unknown): void {
+    if (!this.running || actionIndex === undefined) return;
+    const event: Extract<TraceEvent, { type: 'action-end' }> = {
+      t: Date.now() - this.startedAtMs,
+      type: 'action-end',
+      actionIndex,
+    };
+    if (error !== undefined) {
+      event.error = error instanceof Error ? error.message : String(error);
+    }
+    this.writeLine(event);
+  }
+
+  private scheduleScreenshot(reason: 'action' | 'error' | 'final', actionIndex?: number): void {
     const startedAtMs = Date.now();
     const p = this.browser.screenshot().then(
       (buf) => {
@@ -232,10 +264,15 @@ export class Tracer {
    * never called, the file is still a valid NDJSON trace — just without
    * the closing marker.
    */
-  async stop(): Promise<void> {
+  async stop(opts?: TraceStopOptions): Promise<void> {
     if (!this.running) {
       throw new Error('stopTrace(): no trace is running. Call startTrace() first.');
     }
+    // Capture the state left by the last action/assertion. This is especially
+    // useful for keep-on-failure test hooks and removes the need for callers to
+    // create a magic `final.png` file themselves.
+    if (this.screenshotMode === 'auto') this.scheduleScreenshot('final');
+
     for (const un of this.unsubs) un();
     this.unsubs = [];
 
@@ -255,6 +292,15 @@ export class Tracer {
       this.fd = null;
     }
     this.running = false;
+
+    if (opts) {
+      await writeVibiumTraceZip({
+        sourceDir: this.outDir,
+        path: opts.path,
+        browserName: this.browserName,
+        title: this.traceTitle,
+      });
+    }
   }
 
   /** Close the file without writing an end marker. Used by `Browser.quit()`. */
@@ -283,6 +329,7 @@ export class Tracer {
       // throw from inside a hot action method.
     }
   }
+
 }
 
 function normalizeScreenshotMode(v: TraceScreenshotMode | undefined): 'auto' | 'off' {

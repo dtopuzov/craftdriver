@@ -1,3 +1,9 @@
+## Unreleased
+
+### Features
+
+* **tracing:** export Vibium Player compatible zips from the library and MCP server
+
 # [1.2.0](https://github.com/dtopuzov/craftdriver/compare/v1.1.1...v1.2.0) (2026-07-10)
 
 

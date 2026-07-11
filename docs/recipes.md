@@ -49,4 +49,4 @@ For exact signatures, use the linked feature docs and the
 | ----------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Accessibility regression gate | CI should fail on serious page or component accessibility issues.               | [Run Accessibility Gates](./recipes/accessibility-gate.md)               |
 | Console and JavaScript errors | Tests should fail if the browser reports unexpected client-side errors.         | [Fail On Console And JavaScript Errors](./recipes/console-error-gate.md) |
-| Evidence on failure           | You want a replayable trail of actions, network, logs, errors, and screenshots. | [Capture Failure Evidence With Tracing](./recipes/trace-failing-test.md) |
+| Debug failing tests           | You need the actions, screenshots, logs, and network activity behind a failure. | [Use Traces To Debug Failing Tests](./recipes/debug-failing-tests-with-traces.md) |

@@ -120,6 +120,20 @@ export async function dispatch(
       return { ok: true };
     }
 
+    case 'trace-start': {
+      const outDir = str(args, 'outDir');
+      const b = await ctx.handle.get();
+      await b.startTrace({ outDir, title: optStr(args, 'title') });
+      return { ok: true, outDir };
+    }
+
+    case 'trace-stop': {
+      const b = await ctx.handle.get();
+      const path = optStr(args, 'path');
+      await b.stopTrace(path ? { path } : undefined);
+      return { ok: true, path: path ?? null };
+    }
+
     // ---- navigation ------------------------------------------------------
     case 'go': {
       const url = str(args, 'url');

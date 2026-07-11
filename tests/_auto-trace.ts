@@ -18,7 +18,7 @@
  *   CRAFTDRIVER_TRACE_SCREENSHOTS=auto|off    (default: auto)
  */
 import { beforeEach, afterEach } from 'vitest';
-import { rmSync, writeFileSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, TraceScreenshotMode } from '../src';
 
@@ -48,17 +48,13 @@ export function autoTrace(getBrowser: () => Browser, opts: AutoTraceOptions = {}
 
   afterEach(async ({ task }) => {
     const failed = task.result?.state === 'fail';
+    const keep = mode === 'always' || failed;
+    const zipPath = `${currentDir}.zip`;
     // Capture the final page state BEFORE stopping the trace so a viewer
     // can see what the page looked like at the moment of failure (not
     // just the snapshot taken before the last click).
-    if (failed) {
-      try {
-        const buf = await getBrowser().screenshot();
-        writeFileSync(join(currentDir, 'final.png'), buf);
-      } catch { /* browser may already be dead */ }
-    }
     try {
-      await getBrowser().stopTrace();
+      await getBrowser().stopTrace(keep ? { path: zipPath } : undefined);
     } catch {
       return; // never started — nothing to clean up
     }
@@ -67,7 +63,7 @@ export function autoTrace(getBrowser: () => Browser, opts: AutoTraceOptions = {}
     } else if (failed) {
       // Surface the path so CI logs point at the artefact.
       // eslint-disable-next-line no-console
-      console.error(`  📁 trace: ${currentDir}`);
+      console.error(`  📦 Vibium trace: ${zipPath}`);
     }
   });
 }

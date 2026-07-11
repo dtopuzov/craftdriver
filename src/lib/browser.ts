@@ -44,7 +44,7 @@ import { Frame } from './frame.js';
 import { Page } from './page.js';
 import { bidiWaitFor } from './loadState.js';
 import { BrowserContext } from './browserContext.js';
-import { Tracer, type TraceStartOptions } from './tracing.js';
+import { Tracer, type TraceStartOptions, type TraceStopOptions } from './tracing.js';
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
@@ -676,9 +676,26 @@ export class Browser {
     return this.storage.loadState(path);
   }
 
+  private async _runTracedAction<T>(
+    name: string,
+    args: unknown[] | undefined,
+    selector: string | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const actionIndex = this._tracer?.recordAction(name, args, selector);
+    try {
+      const result = await run();
+      this._tracer?.recordActionEnd(actionIndex);
+      return result;
+    } catch (error) {
+      this._tracer?.recordActionEnd(actionIndex, error);
+      throw error;
+    }
+  }
+
   async navigateTo(url: string, opts?: { waitUntil?: LoadState }): Promise<void> {
-    this._tracer?.recordAction('navigateTo', [url, opts], url);
-    const waitUntil: LoadState = opts?.waitUntil ?? 'load';
+    return this._runTracedAction('navigateTo', [url, opts], url, async () => {
+      const waitUntil: LoadState = opts?.waitUntil ?? 'load';
 
     // Classic-first for ordinary `waitUntil: 'load'` navigations: Classic
     // already blocks until `document.readyState === 'complete'`, so the common
@@ -686,28 +703,29 @@ export class Browser {
     // because the next operation is often a BiDi script evaluation into the new
     // document; mixing Classic navigate + immediate BiDi evaluate can race with
     // the browser clearing old execution contexts on loaded-but-settling pages.
-    const needsBiDi = waitUntil !== 'load' || this.hasDefaultNavigationInitScripts();
-    const context = needsBiDi ? this.bidiSession?.getContext() : undefined;
-    if (context && this.bidiSession?.isConnected()) {
-      const conn = this.bidiSession.getConnection();
-      const bidiWait = bidiWaitFor(waitUntil);
+      const needsBiDi = waitUntil !== 'load' || this.hasDefaultNavigationInitScripts();
+      const context = needsBiDi ? this.bidiSession?.getContext() : undefined;
+      if (context && this.bidiSession?.isConnected()) {
+        const conn = this.bidiSession.getConnection();
+        const bidiWait = bidiWaitFor(waitUntil);
 
-      await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
+        await conn.send('browsingContext.navigate', { context, url, wait: bidiWait });
 
-      if (waitUntil === 'networkidle') {
-        await this.bidiSession.network.waitForNetworkIdle({
-          timeout: this.defaults.navigationTimeout,
-        });
+        if (waitUntil === 'networkidle') {
+          await this.bidiSession.network.waitForNetworkIdle({
+            timeout: this.defaults.navigationTimeout,
+          });
+        }
+        return;
       }
-      return;
-    }
 
-    // Classic path — default 'load', or BiDi unavailable/no context yet.
-    await this.driver.navigateTo(url);
-    if (waitUntil === 'networkidle') {
-      // Best-effort: Classic can't track network events; give it a short settle time
-      await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
-    }
+      // Classic path — default 'load', or BiDi unavailable/no context yet.
+      await this.driver.navigateTo(url);
+      if (waitUntil === 'networkidle') {
+        // Best-effort: Classic can't track network events; give it a short settle time
+        await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
+      }
+    });
   }
 
   /**
@@ -715,9 +733,10 @@ export class Browser {
    * Proxies to {@link Page.goBack} on {@link activePage}.
    */
   async goBack(): Promise<void> {
-    this._tracer?.recordAction('goBack');
-    const page = await this.activePage();
-    await page.goBack();
+    return this._runTracedAction('goBack', undefined, undefined, async () => {
+      const page = await this.activePage();
+      await page.goBack();
+    });
   }
 
   /**
@@ -725,9 +744,10 @@ export class Browser {
    * Proxies to {@link Page.goForward} on {@link activePage}.
    */
   async goForward(): Promise<void> {
-    this._tracer?.recordAction('goForward');
-    const page = await this.activePage();
-    await page.goForward();
+    return this._runTracedAction('goForward', undefined, undefined, async () => {
+      const page = await this.activePage();
+      await page.goForward();
+    });
   }
 
   /**
@@ -735,9 +755,10 @@ export class Browser {
    * {@link activePage}.
    */
   async reload(): Promise<void> {
-    this._tracer?.recordAction('reload');
-    const page = await this.activePage();
-    await page.reload();
+    return this._runTracedAction('reload', undefined, undefined, async () => {
+      const page = await this.activePage();
+      await page.reload();
+    });
   }
 
   /**
@@ -757,9 +778,10 @@ export class Browser {
     html: string,
     opts?: { waitUntil?: Exclude<LoadState, 'networkidle'> }
   ): Promise<void> {
-    this._tracer?.recordAction('setContent', [opts]);
-    const page = await this.activePage();
-    await page.setContent(html, opts);
+    return this._runTracedAction('setContent', [opts], undefined, async () => {
+      const page = await this.activePage();
+      await page.setContent(html, opts);
+    });
   }
 
   /**
@@ -1239,17 +1261,19 @@ export class Browser {
       );
     }
     if (!this._tracer) {
-      this._tracer = new Tracer(this, this.bidiSession.getConnection());
+      this._tracer = new Tracer(this, this.bidiSession.getConnection(), this._browserName);
     }
     await this._tracer.start(opts);
   }
 
   /**
    * Stop the active trace: drain in-flight screenshots, write the closing
-   * `meta` line, and close the file. If your test threw and never reached
-   * here, the file is still valid NDJSON — just without the closing line.
+   * `meta` line, and close the file. Pass `{ path: './trace.zip' }` to also
+   * export a Vibium/Playwright-compatible archive. If your test threw and
+   * never reached here, the raw file is still valid NDJSON — just without
+   * the closing line.
    */
-  async stopTrace(): Promise<void> {
+  async stopTrace(opts?: TraceStopOptions): Promise<void> {
     if (!this._tracer || !this._tracer.isRunning) {
       throw new CraftdriverError(
         ErrorCode.STATE_INVALID,
@@ -1257,7 +1281,7 @@ export class Browser {
         { detail: { feature: 'stopTrace' } }
       );
     }
-    await this._tracer.stop();
+    await this._tracer.stop(opts);
   }
 
   /**
@@ -1541,13 +1565,19 @@ export class Browser {
    * Uses BiDi when available, Classic WebDriver otherwise.
    */
   async acceptDialog(text?: string): Promise<void> {
-    this._tracer?.recordAction('acceptDialog', text !== undefined ? [text] : undefined);
-    if (this.bidiSession?.isConnected()) {
-      await this.bidiSession.handleUserPrompt(true, text);
-      return;
-    }
-    if (text !== undefined) await this.driver.sendAlertText(text);
-    await this.driver.acceptAlert();
+    return this._runTracedAction(
+      'acceptDialog',
+      text !== undefined ? [text] : undefined,
+      undefined,
+      async () => {
+        if (this.bidiSession?.isConnected()) {
+          await this.bidiSession.handleUserPrompt(true, text);
+          return;
+        }
+        if (text !== undefined) await this.driver.sendAlertText(text);
+        await this.driver.acceptAlert();
+      },
+    );
   }
 
   /**
@@ -1555,12 +1585,13 @@ export class Browser {
    * Uses BiDi when available, Classic WebDriver otherwise.
    */
   async dismissDialog(): Promise<void> {
-    this._tracer?.recordAction('dismissDialog');
-    if (this.bidiSession?.isConnected()) {
-      await this.bidiSession.handleUserPrompt(false);
-      return;
-    }
-    await this.driver.dismissAlert();
+    return this._runTracedAction('dismissDialog', undefined, undefined, async () => {
+      if (this.bidiSession?.isConnected()) {
+        await this.bidiSession.handleUserPrompt(false);
+        return;
+      }
+      await this.driver.dismissAlert();
+    });
   }
 
   /**
@@ -2128,14 +2159,15 @@ export class Browser {
   }
 
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
-    if (this._tracer?.isRunning) this._tracer.recordAction('click', undefined, selectorToString(selector));
-    const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const timeout = opts?.timeout ?? this.defaults.timeout;
-    await clickWithFastPath(
-      () => this.driver.findElement(by),
-      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
-      timeout
-    );
+    return this._runTracedAction('click', undefined, selectorToString(selector), async () => {
+      const by = typeof selector === 'string' ? By.css(selector) : selector;
+      const timeout = opts?.timeout ?? this.defaults.timeout;
+      await clickWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        timeout
+      );
+    });
   }
 
   async fill(
@@ -2143,26 +2175,28 @@ export class Browser {
     text: string,
     opts?: { timeout?: number }
   ): Promise<void> {
-    if (this._tracer?.isRunning) this._tracer.recordAction('fill', [text], selectorToString(selector));
-    const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const timeout = opts?.timeout ?? this.defaults.timeout;
-    await fillWithFastPath(
-      () => this.driver.findElement(by),
-      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
-      text,
-      timeout
-    );
+    return this._runTracedAction('fill', [text], selectorToString(selector), async () => {
+      const by = typeof selector === 'string' ? By.css(selector) : selector;
+      const timeout = opts?.timeout ?? this.defaults.timeout;
+      await fillWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        text,
+        timeout
+      );
+    });
   }
 
   async clear(selector: string | By, opts?: { timeout?: number }): Promise<void> {
-    if (this._tracer?.isRunning) this._tracer.recordAction('clear', undefined, selectorToString(selector));
-    const by = typeof selector === 'string' ? By.css(selector) : selector;
-    const timeout = opts?.timeout ?? this.defaults.timeout;
-    await clearWithFastPath(
-      () => this.driver.findElement(by),
-      (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
-      timeout
-    );
+    return this._runTracedAction('clear', undefined, selectorToString(selector), async () => {
+      const by = typeof selector === 'string' ? By.css(selector) : selector;
+      const timeout = opts?.timeout ?? this.defaults.timeout;
+      await clearWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        timeout
+      );
+    });
   }
 
   async getValue(selector: string | By, opts?: { timeout?: number }): Promise<string> {

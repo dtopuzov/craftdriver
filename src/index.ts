@@ -37,6 +37,7 @@ export { Keyboard } from './lib/keyboard.js';
 export { Mouse } from './lib/mouse.js';
 export {
   type TraceStartOptions,
+  type TraceStopOptions,
   type TraceScreenshotMode,
   type TraceEvent,
 } from './lib/tracing.js';
