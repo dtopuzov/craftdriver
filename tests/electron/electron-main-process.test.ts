@@ -5,7 +5,7 @@
  *
  * Note: main-process access needs the app's `EnableNodeCliInspectArguments` fuse
  * enabled (the default for the example fixture). Hardened production builds disable
- * it — see ELECTRON_V2.md; renderer automation is unaffected either way.
+ * it — see docs/electron.md; renderer automation is unaffected either way.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Browser, By, CraftdriverError, ErrorCode } from '../../src';
