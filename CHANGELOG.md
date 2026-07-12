@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/dtopuzov/craftdriver/compare/v1.3.0...v1.4.0) (2026-07-12)
+
+
+### Features
+
+* electron apps support ([f98c242](https://github.com/dtopuzov/craftdriver/commit/f98c2423d4c13d50c28102991e32c463347332f6))
+
 # [1.3.0](https://github.com/dtopuzov/craftdriver/compare/v1.2.0...v1.3.0) (2026-07-11)
 
 
