@@ -33,7 +33,7 @@ features:
     details: CLI, MCP server, and assistant rules are there when you want coding agents to drive the browser too.
 ---
 
-## One Install
+## Quick Start
 
 ```bash
 npm install craftdriver --save-dev

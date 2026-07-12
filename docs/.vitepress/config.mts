@@ -71,25 +71,51 @@ export default defineConfig({
           { text: 'Why CraftDriver?', link: '/why-craftdriver' },
           { text: 'Zero-Config Drivers', link: '/zero-config-drivers' },
           { text: 'WebDriver Standards', link: '/standards' },
+        ],
+      },
+      {
+        // Mirrors the section grouping and order of the /recipes landing page
+        // (docs/recipes.md). Keep the two in sync when recipes are added.
+        text: 'Recipes',
+        items: [
+          { text: 'Overview', link: '/recipes' },
           {
-            text: 'Recipes',
-            link: '/recipes',
-            collapsed: true,
+            text: 'Start Here',
+            items: [{ text: 'Find Elements', link: '/recipes/find-elements' }],
+          },
+          {
+            text: 'Test Structure',
             items: [
-              { text: 'Find Elements', link: '/recipes/find-elements' },
               { text: 'Vitest Hooks', link: '/recipes/vitest-browser-lifecycle' },
-              { text: 'Electron App', link: '/recipes/electron-app-from-another-repo' },
-              { text: 'Electron Native Dialog', link: '/recipes/electron-native-dialog' },
-              { text: 'Page Objects', link: '/recipes/page-objects' },
               { text: 'Reuse Login Session', link: '/recipes/login-once-reuse-session' },
-              { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
               { text: 'Multi-User Workflows', link: '/recipes/multi-user-contexts' },
-              { text: 'Debug With Traces', link: '/recipes/debug-failing-tests-with-traces' },
+              { text: 'Page Objects', link: '/recipes/page-objects' },
+            ],
+          },
+          {
+            text: 'App Behavior',
+            items: [
+              { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
+              { text: 'Virtual Clock', link: '/recipes/virtual-clock-time-sensitive-ui' },
+              { text: 'Mobile Flow', link: '/recipes/mobile-flow-with-network-and-logs' },
+              { text: 'Files', link: '/recipes/file-upload-download' },
+            ],
+          },
+          {
+            text: 'Quality Gates & Debugging',
+            items: [
               { text: 'Accessibility Gates', link: '/recipes/accessibility-gate' },
               { text: 'Console Error Gates', link: '/recipes/console-error-gate' },
-              { text: 'Virtual Clock', link: '/recipes/virtual-clock-time-sensitive-ui' },
-              { text: 'Files', link: '/recipes/file-upload-download' },
-              { text: 'Mobile Flow', link: '/recipes/mobile-flow-with-network-and-logs' },
+              { text: 'Debug With Traces', link: '/recipes/debug-failing-tests-with-traces' },
+            ],
+          },
+          {
+            text: 'Electron',
+            items: [
+              { text: 'App From Another Repo', link: '/recipes/electron-app-from-another-repo' },
+              { text: 'Native Dialog', link: '/recipes/electron-native-dialog' },
+              { text: 'API Mocking', link: '/recipes/electron-mock-apis' },
+              { text: 'Deep Link', link: '/recipes/electron-deep-link' },
             ],
           },
         ],

@@ -24,6 +24,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - ⏱️ **Virtual clock** - freeze or fast-forward `Date`, timers, and time-sensitive UI.
 - ♿ **Accessibility audits** - run axe-core checks on pages, elements, and locators.
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
+- ⚛️ **Electron apps** - drive packaged Electron desktop app renderers, matched to the app's bundled Chromium.
 - 🤖 **Agent-friendly** - CLI, MCP, and assistant rules when coding agents need the browser.
 
 ## Choose Your Path
@@ -99,7 +100,6 @@ await browser.a11y.check();
 | -------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Getting started      | Install, launch a browser, write the first test                                    | [Getting started](https://dtopuzov.github.io/craftdriver/getting-started)                                                                  |
 | Driver management    | Zero-config driver resolution, cache behavior, env vars, offline mode              | [Driver configuration](https://dtopuzov.github.io/craftdriver/driver-configuration)                                                        |
-| Electron apps        | Drive packaged Electron renderers with a version-pinned chromedriver               | [Electron apps](https://dtopuzov.github.io/craftdriver/electron)                                                                            |
 | Browser control      | Navigation, tabs, popups, iframes, content helpers, evaluate, init scripts         | [Browser API](https://dtopuzov.github.io/craftdriver/browser-api)                                                                          |
 | Locators             | CSS, XPath, text, role, label, test id, and composable `locator()` chains          | [Selectors](https://dtopuzov.github.io/craftdriver/selectors)                                                                              |
 | Element actions      | Click, fill, upload, inspect, and interact through element handles                 | [Element API](https://dtopuzov.github.io/craftdriver/element-api)                                                                          |
@@ -115,6 +115,7 @@ await browser.a11y.check();
 | Tracing              | Crash-resilient NDJSON plus Vibium Player compatible trace zips                    | [Tracing](https://dtopuzov.github.io/craftdriver/tracing)                                                                                  |
 | Accessibility        | Built-in axe-core audits for page, element, and locator scopes                     | [Accessibility](https://dtopuzov.github.io/craftdriver/accessibility)                                                                      |
 | Virtual time         | Fake `Date`, `setTimeout`, and `setInterval` for time-sensitive flows              | [Virtual clock](https://dtopuzov.github.io/craftdriver/clock)                                                                              |
+| Electron apps        | Drive packaged Electron renderers with a version-pinned chromedriver               | [Electron apps](https://dtopuzov.github.io/craftdriver/electron)                                                                            |
 | AI agents            | CLI, MCP server, assistant bootstrap, packaged skill files                         | [AI agent guide](https://dtopuzov.github.io/craftdriver/agents)                                                                            |
 
 ## Links
