@@ -14,6 +14,9 @@ hero:
       text: Get Started
       link: /getting-started
     - theme: alt
+      text: Recipes
+      link: /recipes
+    - theme: alt
       text: API Reference
       link: /api-reference
     - theme: alt
@@ -55,6 +58,7 @@ await browser.quit();
 | You want to...                    | Start                                   |
 | --------------------------------- | --------------------------------------- |
 | Write browser automation          | [Getting Started](./getting-started.md) |
+| Solve a common testing workflow   | [Recipes](./recipes.md)                 |
 | Give an AI coding agent a browser | [AI Agent Guide](./agents.md)           |
 
 ## Good Stuff To Read Next

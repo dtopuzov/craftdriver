@@ -28,3 +28,17 @@ snippet.** The only differences are:
   the MD shows only what the recipe is teaching.
 
 When you edit a recipe, edit both files and keep the cores in sync.
+
+## Exception: Electron recipes
+
+The Electron recipes in [`docs/recipes/`](../../docs/recipes/)
+(`electron-native-dialog`, `electron-mock-apis`, `electron-deep-link`,
+`electron-app-from-another-repo`) have **no counterpart here** on purpose. This
+harness is browser-only — it drives `examples/` pages over HTTP in Chrome — while
+those recipes need a packaged Electron app and its chromedriver.
+
+Their flows are verified in [`tests/electron/`](../electron/) instead, against the
+real packaged example app (downloaded by `tests/electron/global-setup.ts`, run via
+`npm run test:electron`): native-dialog mocking and the general `mock()` in
+`electron-main-process.test.ts`, deep links in `electron-deeplink.test.ts`. So the
+mirror rule holds — just against a different fixture and CI gate.

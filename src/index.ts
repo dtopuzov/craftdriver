@@ -18,6 +18,8 @@ export {
   type DeviceName,
   type Download,
   type EmulateOptions,
+  type ElectronLaunchOptions,
+  type PageMatcher,
 } from './lib/browser.js';
 export { Key } from './lib/keys.js';
 export { By } from './lib/by.js';
@@ -61,7 +63,32 @@ export {
 
 // Driver services — expose for users who need custom binary paths / ports
 export { ChromeService, type ChromeServiceOptions } from './lib/chrome.js';
+export { ElectronService, type ElectronServiceOptions } from './lib/electron.js';
 export { FirefoxService, type FirefoxServiceOptions } from './lib/firefox.js';
+
+// Electron main-process access (browser.electron)
+export {
+  ElectronRemote,
+  type MainProcessCallback,
+  type ElectronRemoteOptions,
+  type ElectronMainConnectInfo,
+} from './lib/electronRemote.js';
+export {
+  type ElectronDialogMock,
+  type ElectronDialogMethod,
+  type ElectronDialogCall,
+  type ElectronDialogResult,
+  type ElectronOpenDialogResult,
+  type ElectronSaveDialogResult,
+  type ElectronMessageBoxResult,
+} from './lib/electronDialogMock.js';
+export { type ElectronMock, type ElectronMockCall } from './lib/electronMock.js';
+export {
+  ElectronMainLogMonitor,
+  type ElectronMainLog,
+  type ElectronMainLogLevel,
+  type ElectronMainLogHandler,
+} from './lib/electronMainLogs.js';
 
 // Virtual clock control
 export {

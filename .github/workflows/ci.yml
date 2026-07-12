@@ -2,8 +2,20 @@ name: CI
 
 on:
   push:
-    branches-ignore:
-      - main
+  pull_request:
+  workflow_dispatch:
+
+# CI only reads the repo (checkout, build, test) — no releasing, commenting, or
+# pushing. Pin the GITHUB_TOKEN to the least privilege so forked-PR runs can't
+# inherit a write-capable default token.
+permissions:
+  contents: read
+
+concurrency:
+  # A branch push and its PR event share a group, so the expensive Electron
+  # matrix does not run twice for the same commit. Fork names keep groups apart.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -108,3 +120,79 @@ jobs:
         env:
           HEADLESS: true
           BROWSER_NAME: firefox
+
+  electron-e2e:
+    timeout-minutes: 25
+    # End-to-end proof that Browser.launch({ electron }) drives a real, packaged
+    # Electron app. The suite's global setup (tests/electron/global-setup.ts)
+    # downloads the pinned craftdriver-examples release for the runner's platform
+    # (checksum-verified), and drives it via `electron: { version }` → a matching
+    # Chrome-for-Testing chromedriver (no electron-chromedriver install), under xvfb
+    # on Linux and directly on Windows (it has a display). macOS is deliberately
+    # omitted for now: its asset is only ad-hoc-signed and Gatekeeper-rejects it on a
+    # locked-down runner — a tracked follow-up. Linux + Windows are the release gate.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            # The unzipped chrome-sandbox helper loses its root-owned SUID bit,
+            # so the in-process sandbox can't start — disable it for the fixture.
+            electron_args: '--no-sandbox'
+          - os: windows-latest
+            electron_args: ''
+    runs-on: ${{ matrix.os }}
+    env:
+      # The fixture's Electron version → craftdriver maps 43.1.0 → Chromium 150 and
+      # downloads a matching CfT driver (no electron-chromedriver). On macOS
+      # it's auto-detected from the app bundle; Linux/Windows need it explicit. Bump
+      # with the example app's Electron version; the example-app RELEASE the suite
+      # downloads (checksum-verified) is pinned in tests/electron/fixture.ts.
+      CRAFTDRIVER_ELECTRON_VERSION: 43.1.0
+      CRAFTDRIVER_ARTIFACTS_DIR: ${{ github.workspace }}/electron-artifacts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No electron-chromedriver install: CRAFTDRIVER_ELECTRON_VERSION (job env)
+      # makes the suite resolve a matching CfT chromedriver from the app's Electron
+      # version — the dependency-free path we ship. Fallback for a version whose
+      # Chromium CfT doesn't publish yet: unset that var and add a step
+      #   `run: npm install --no-save electron-chromedriver@<electron-version>`
+      # to exercise the electron-chromedriver discovery path instead.
+
+      - name: Install xvfb (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # The example app is downloaded (checksum-verified) by the suite's global
+      # setup — no manual download/unzip here. Electron is a GUI app (no --headless):
+      # Linux runs under a virtual display, Windows has a real one. The runner image
+      # ships Chrome and its shared libraries, which also satisfy Electron/Chromium,
+      # so no extra apt packages are needed beyond xvfb.
+      - name: Run Electron e2e tests
+        shell: bash
+        env:
+          CRAFTDRIVER_ELECTRON_ARGS: ${{ matrix.electron_args }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run --auto-servernum --server-args='-screen 0 1280x1024x24' npm run test:electron
+          else
+            npm run test:electron
+          fi
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-e2e-${{ matrix.os }}
+          path: electron-artifacts/
+          if-no-files-found: ignore

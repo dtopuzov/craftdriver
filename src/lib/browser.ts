@@ -1,7 +1,13 @@
 import { Builder } from './builder.js';
 import { ChromeService } from './chrome.js';
+import { ElectronService, writeElectronDebug } from './electron.js';
+import { diagnoseElectronLaunchFailure } from './electronDiagnostics.js';
+import { ElectronRemote } from './electronRemote.js';
+import { findFreePort } from './service.js';
 import { FirefoxService } from './firefox.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
+import { buildLaunchCapabilities } from './capabilities.js';
+import { resolveLaunchTarget } from './launchTarget.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
@@ -27,7 +33,6 @@ import { Keyboard } from './keyboard.js';
 import { Key } from './keys.js';
 import { Mouse } from './mouse.js';
 import { ActionsBuilder } from './actions.js';
-import { Capabilities } from './types.js';
 import type { RemoteValue, ScriptEvaluateResult } from './bidi/types.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import {
@@ -41,7 +46,7 @@ import {
   type InterceptedResponse,
 } from './bidi/index.js';
 import { Frame } from './frame.js';
-import { Page } from './page.js';
+import { Page, isNoSuchWindowError } from './page.js';
 import { bidiWaitFor } from './loadState.js';
 import { BrowserContext } from './browserContext.js';
 import { Tracer, type TraceStartOptions, type TraceStopOptions } from './tracing.js';
@@ -95,64 +100,186 @@ export interface EmulateOptions {
 export const devices = {
   'iPhone 14': {
     deviceMetrics: { width: 390, height: 844, pixelRatio: 3, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
   },
   'iPhone 14 Pro Max': {
     deviceMetrics: { width: 430, height: 932, pixelRatio: 3, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
   },
   'iPhone SE': {
     deviceMetrics: { width: 375, height: 667, pixelRatio: 2, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
   },
   'Pixel 7': {
     deviceMetrics: { width: 412, height: 915, pixelRatio: 2.625, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+    userAgent:
+      'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
   },
   'Pixel 7 Pro': {
     deviceMetrics: { width: 412, height: 892, pixelRatio: 3.5, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+    userAgent:
+      'Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
   },
   'Samsung Galaxy S23': {
     deviceMetrics: { width: 360, height: 780, pixelRatio: 3, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
+    userAgent:
+      'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36',
   },
   'iPad Pro 11': {
     deviceMetrics: { width: 834, height: 1194, pixelRatio: 2, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+    userAgent:
+      'Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
   },
   'iPad Mini': {
     deviceMetrics: { width: 768, height: 1024, pixelRatio: 2, mobile: true, touch: true },
-    userAgent: 'Mozilla/5.0 (iPad; CPU OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
+    userAgent:
+      'Mozilla/5.0 (iPad; CPU OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1',
   },
 } as const;
 
 export type DeviceName = keyof typeof devices;
 
-export interface LaunchOptions {
+/**
+ * Resolve a `goog:chromeOptions.mobileEmulation` payload from the public
+ * `MobileEmulation | DeviceName` option — a built-in device name maps to
+ * Chrome's `deviceName`, otherwise a custom `deviceMetrics`/`userAgent` config
+ * is built. Kept next to `devices`; `buildLaunchCapabilities` takes the result.
+ */
+function resolveMobileEmulationConfig(
+  mobileEmulation: MobileEmulation | DeviceName
+): Record<string, unknown> {
+  const emulation =
+    typeof mobileEmulation === 'string' ? devices[mobileEmulation] : mobileEmulation;
+
+  if ('deviceName' in emulation && emulation.deviceName) {
+    // Use Chrome's built-in device name
+    return { deviceName: emulation.deviceName };
+  }
+
+  // Build custom mobile emulation config
+  const mobileConfig: Record<string, unknown> = {};
+  if (emulation.deviceMetrics) {
+    mobileConfig.deviceMetrics = {
+      width: emulation.deviceMetrics.width,
+      height: emulation.deviceMetrics.height,
+      pixelRatio: emulation.deviceMetrics.pixelRatio,
+      mobile: emulation.deviceMetrics.mobile ?? true,
+      touch: emulation.deviceMetrics.touch ?? true,
+    };
+  }
+  if (emulation.userAgent) {
+    mobileConfig.userAgent = emulation.userAgent;
+  }
+  return mobileConfig;
+}
+
+async function resolveElectronAppBinaryPath(appBinaryPath: string): Promise<string> {
+  const resolved = path.resolve(appBinaryPath);
+  let stat;
+  try {
+    stat = await fs.stat(resolved);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      throw new Error(`electron.appBinaryPath "${appBinaryPath}" does not exist.`);
+    }
+    if (code === 'EACCES') {
+      throw new Error(`electron.appBinaryPath "${appBinaryPath}" is not accessible.`);
+    }
+    throw error;
+  }
+  if (!stat.isFile()) {
+    throw new Error(`electron.appBinaryPath "${appBinaryPath}" is not a file.`);
+  }
+  if (process.platform !== 'win32') {
+    try {
+      await fs.access(resolved, fsSync.constants.X_OK);
+    } catch {
+      throw new Error(`electron.appBinaryPath "${appBinaryPath}" is not executable.`);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Options for driving an Electron application (see `LaunchOptions.electron`).
+ */
+export interface ElectronLaunchOptions {
+  /**
+   * Path to the **packaged** Electron app's executable — becomes
+   * `goog:chromeOptions.binary`. On macOS this is
+   * `YourApp.app/Contents/MacOS/YourApp`; on Linux/Windows the app binary.
+   *
+   * The app must be packaged (or have its main baked into the Electron binary):
+   * chromedriver injects its own flags and ignores an unpackaged
+   * app-directory argument, so an unpackaged app boots as plain Chromium.
+   * Relative paths resolve from `process.cwd()`. craftdriver validates that the
+   * target exists and is executable before starting chromedriver.
+   */
+  appBinaryPath: string;
+  /**
+   * Path to a `chromedriver` matching the app's bundled Chromium — normally the
+   * one shipped by `electron-chromedriver` (pin it to the Electron version used
+   * to package the app). When omitted, craftdriver falls back to {@link version}
+   * (if set), then looks for `electron-chromedriver` in your project's
+   * `node_modules`. It is **never** resolved from a system Chrome install (that
+   * driver would be the wrong version for Electron).
+   *
+   * Mutually exclusive with {@link version}.
+   */
+  chromedriverPath?: string;
+  /**
+   * The app's Electron version (e.g. `'37.2.0'`). craftdriver maps it to the
+   * bundled Chromium major and downloads a matching **Chrome-for-Testing**
+   * chromedriver — so you don't need a project-local `electron-chromedriver`.
+   *
+   * Resolves only for Electron majors in craftdriver's built-in map whose
+   * Chromium major Chrome for Testing publishes (>= 115). For anything else, or
+   * offline, pin {@link chromedriverPath} / `electron-chromedriver`. Mutually
+   * exclusive with {@link chromedriverPath}.
+   */
+  version?: string;
+  /**
+   * Enable main-process access (`browser.electron.executeMain(...)`). Launches
+   * the app with a Node inspector (`--inspect`) on a free local port so
+   * craftdriver can run code in the Electron **main** process. Off by default —
+   * opening a main-process inspector is opt-in. Requires the app build to keep
+   * the `EnableNodeCliInspectArguments` fuse enabled (the default).
+   */
+  mainProcess?: boolean;
+  /** Application/Electron/Chromium arguments forwarded to `goog:chromeOptions.args`. */
+  args?: string[];
+}
+
+interface SharedLaunchOptions {
+  /**
+   * Enable WebDriver BiDi for network interception, logs, tracing, multi-tab,
+   * isolated contexts, and other BiDi-only capabilities. Browsers default to
+   * `true`; Electron defaults to Classic WebDriver and requires an explicit
+   * `true` opt-in. Classic-equivalent commands still prefer the fastest correct
+   * protocol per command.
+   */
+  enableBiDi?: boolean;
+  /** Load session state from file on launch. */
+  storageState?: string;
+  /**
+   * Directory where downloaded files are saved.
+   * Defaults to a temporary directory unique to this session.
+   */
+  downloadsDir?: string;
+}
+
+interface BrowserLaunchOptions extends SharedLaunchOptions {
+  electron?: never;
+  electronService?: never;
   browserName?: 'chrome' | 'chromium' | 'firefox';
   chromeService?: ChromeService;
   firefoxService?: FirefoxService;
-  /**
-   * Enable WebDriver BiDi for network interception, logs, tracing, multi-tab,
-   * isolated contexts, and other BiDi-only capabilities. **Defaults to
-   * `true`.** Classic-equivalent commands (navigation, element interactions)
-   * still prefer the fastest correct protocol per command — usually Classic,
-   * since it's cheaper for the common case — rather than always routing
-   * through BiDi. Set `false` only if your environment cannot negotiate a
-   * BiDi WebSocket; doing so also disables every BiDi-only feature (each
-   * throws a `requires BiDi (enableBiDi: true)` error if called).
-   */
-  enableBiDi?: boolean;
-  /** Load session state from file on launch. BiDi is always used when this is set. */
-  storageState?: string;
   /** Enable mobile device emulation (Chrome/Chromium only) */
   mobileEmulation?: MobileEmulation | DeviceName;
-  /**
-   * Directory where downloaded files are saved.
-   * Defaults to a temporary directory unique to this browser session.
-   */
-  downloadsDir?: string;
   /**
    * Extra command-line flags passed to the launched **browser** (appended to
    * `goog:chromeOptions.args` for Chrome/Chromium, `moz:firefoxOptions.args`
@@ -188,6 +315,28 @@ export interface LaunchOptions {
   browserPath?: string;
 }
 
+interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
+  /**
+   * Automate a packaged Electron application's renderer instead of a browser.
+   * Electron defaults to Classic WebDriver; pass `enableBiDi: true` to opt in.
+   */
+  electron: ElectronLaunchOptions;
+  /**
+   * Optional Electron-specific driver service for custom ports, environment,
+   * or driver logging. When omitted, craftdriver creates one automatically.
+   */
+  electronService?: ElectronService;
+  browserName?: never;
+  chromeService?: never;
+  firefoxService?: never;
+  mobileEmulation?: never;
+  args?: never;
+  browserPath?: never;
+}
+
+/** Mutually-exclusive browser and Electron renderer launch configurations. */
+export type LaunchOptions = BrowserLaunchOptions | ElectronTargetLaunchOptions;
+
 /**
  * When to consider a navigation complete.
  * - `'load'` — page `load` event has fired (default)
@@ -196,6 +345,33 @@ export interface LaunchOptions {
  * - `'none'` — do not wait; return as soon as the navigation is initiated
  */
 export type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
+
+/**
+ * Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}.
+ * A string matches as a substring; a `RegExp` is tested. When both fields are given,
+ * both must match.
+ */
+export interface PageMatcher {
+  url?: string | RegExp;
+  title?: string | RegExp;
+}
+
+/**
+ * Pure predicate behind {@link Browser.waitForPage}'s matcher form: do a page's
+ * `url`/`title` satisfy the matcher? Only the fields named in `matcher` are checked,
+ * and every named field must match (string = substring, RegExp = test). Exported for
+ * unit testing.
+ */
+export function matchPageFields(
+  fields: { url?: string; title?: string },
+  matcher: PageMatcher
+): boolean {
+  const hit = (value: string | undefined, pattern: string | RegExp | undefined): boolean =>
+    pattern === undefined ||
+    (value !== undefined &&
+      (typeof pattern === 'string' ? value.includes(pattern) : pattern.test(value)));
+  return hit(fields.url, matcher.url) && hit(fields.title, matcher.title);
+}
 
 /** The type of a browser dialog. */
 export type DialogType = 'alert' | 'confirm' | 'prompt' | 'beforeunload';
@@ -248,26 +424,32 @@ function serializeLocalValue(v: unknown): Record<string, unknown> {
   if (typeof v === 'object') {
     return {
       type: 'object',
-      value: Object.entries(v as Record<string, unknown>).map(
-        ([k, val]) => [k, serializeLocalValue(val)]
-      ),
+      value: Object.entries(v as Record<string, unknown>).map(([k, val]) => [
+        k,
+        serializeLocalValue(val),
+      ]),
     };
   }
   throw new CraftdriverError(
     ErrorCode.EVAL_BAD_ARG,
     `evaluate() argument of type "${typeof v}" is not JSON-serializable. ` +
-    `Only primitive types, arrays, and plain objects are supported.`,
+      `Only primitive types, arrays, and plain objects are supported.`,
     { detail: { argType: typeof v } }
   );
 }
 
 function unwrapRemoteValue(v: RemoteValue): unknown {
   switch (v.type) {
-    case 'undefined': return undefined;
-    case 'null': return null;
-    case 'string': return v.value;
-    case 'boolean': return v.value;
-    case 'bigint': return BigInt(v.value);
+    case 'undefined':
+      return undefined;
+    case 'null':
+      return null;
+    case 'string':
+      return v.value;
+    case 'boolean':
+      return v.value;
+    case 'bigint':
+      return BigInt(v.value);
     case 'number': {
       if (v.value === 'NaN') return NaN;
       if (v.value === 'Infinity') return Infinity;
@@ -275,7 +457,8 @@ function unwrapRemoteValue(v: RemoteValue): unknown {
       if (v.value === '-0') return -0;
       return v.value;
     }
-    case 'array': return (v.value ?? []).map(unwrapRemoteValue);
+    case 'array':
+      return (v.value ?? []).map(unwrapRemoteValue);
     case 'object':
       return Object.fromEntries(
         (v.value ?? []).map(([k, val]) => [
@@ -283,12 +466,13 @@ function unwrapRemoteValue(v: RemoteValue): unknown {
           unwrapRemoteValue(val),
         ])
       );
-    case 'date': return new Date(v.value);
+    case 'date':
+      return new Date(v.value);
     case 'function':
       throw new CraftdriverError(
         ErrorCode.EVAL_BAD_ARG,
         'evaluate() returned a function, which is not JSON-serializable. ' +
-        'Return a primitive, array, or plain object instead.',
+          'Return a primitive, array, or plain object instead.',
         { detail: { returnedType: 'function' } }
       );
     case 'node':
@@ -296,7 +480,7 @@ function unwrapRemoteValue(v: RemoteValue): unknown {
       throw new CraftdriverError(
         ErrorCode.EVAL_BAD_ARG,
         `evaluate() returned a ${v.type} reference, which is not JSON-serializable. ` +
-        'Return a primitive, array, or plain object instead.',
+          'Return a primitive, array, or plain object instead.',
         { detail: { returnedType: v.type } }
       );
     default:
@@ -329,10 +513,7 @@ function selectorToString(sel: string | By | undefined): string | undefined {
 }
 
 /** Recursively find the child context that matches an iframe's src URL. */
-function findIframeContext(
-  ctx: BidiContextInfo,
-  iframeSrc: string | null
-): string | undefined {
+function findIframeContext(ctx: BidiContextInfo, iframeSrc: string | null): string | undefined {
   if (!ctx.children) return undefined;
   for (const child of ctx.children) {
     if (!iframeSrc || (child.url && child.url.startsWith(iframeSrc.replace(/\/$/, '')))) {
@@ -366,12 +547,20 @@ export class Browser {
   private _browserInitScriptIds = new Set<string>();
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
+  /** Main-process inspector endpoint, set when launched with `electron.mainProcess`. */
+  private _electronInspect?: { host: string; port: number };
+  /** The launched Electron app's executable path (for deep-link routing on Windows). */
+  private _electronAppBinaryPath?: string;
+  private _electron?: ElectronRemote;
   private _browserName: 'chrome' | 'chromium' | 'firefox' = 'chrome';
   /** Active emulation overrides, re-applied to new top-level contexts. */
   private _emulation: EmulateOptions = {};
 
   /** Mutable browser-level defaults. Use setDefaultTimeout() / setDefaultNavigationTimeout() to change. */
-  private defaults = { timeout: DEFAULT_ELEMENT_TIMEOUT_MS, navigationTimeout: DEFAULT_NAVIGATION_TIMEOUT_MS };
+  private defaults = {
+    timeout: DEFAULT_ELEMENT_TIMEOUT_MS,
+    navigationTimeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+  };
 
   private constructor(private driver: Driver) {
     this.keyboard = new Keyboard(this.driver);
@@ -403,131 +592,161 @@ export class Browser {
     this._defaultContext?._hasInitScriptsForNavigation() ?? this.hasBrowserInitScripts();
 
   static async launch(options: LaunchOptions = {}): Promise<Browser> {
-    const name = options.browserName ?? 'chrome';
-    const isFirefox = name === 'firefox';
+    // Normalize first: callers may be JavaScript or JSON-driven, so reject
+    // malformed/mixed targets before touching disk or starting a driver.
+    const target = resolveLaunchTarget(options as unknown as Record<string, unknown>);
+    const isElectron = target.kind === 'electron';
+    const name = target.browserName;
     const isChromeFamily = name === 'chrome' || name === 'chromium';
 
-    if (options.mobileEmulation && !isChromeFamily) {
+    if (target.kind === 'browser' && options.mobileEmulation && !isChromeFamily) {
       throw new Error(
         `mobileEmulation is only supported on Chrome/Chromium (got "${name}"). ` +
-        `Firefox does not expose a device-emulation API equivalent to goog:chromeOptions.mobileEmulation.`
+          `Firefox does not expose a device-emulation API equivalent to goog:chromeOptions.mobileEmulation.`
       );
     }
 
-    // Handle headless mode via env var
+    const bidiRequested = target.bidiRequested;
+
+    // Handle headless mode via env var (never applied to Electron — see capabilities.ts).
     const headlessEnv = process.env.HEADLESS;
     const isHeadless = headlessEnv === 'true' || headlessEnv === '1';
 
+    // Resolve Electron before creating session directories. A malformed or
+    // missing executable must never degrade into a regular Chrome launch.
+    const electronBinary =
+      target.kind === 'electron'
+        ? await resolveElectronAppBinaryPath(target.appBinaryPath)
+        : undefined;
+    if (
+      options.electronService !== undefined &&
+      !(options.electronService instanceof ElectronService)
+    ) {
+      throw new Error('electronService must be an ElectronService instance.');
+    }
+    if (target.kind === 'electron') {
+      writeElectronDebug({
+        appPath: electronBinary,
+        protocol: bidiRequested ? 'bidi' : 'classic',
+        platform: `${os.platform()}-${os.arch()}`,
+      });
+    }
+
     // Set up downloads directory
-    const downloadsDir = options.downloadsDir ?? path.join(
-      os.tmpdir(), 'craftdriver-downloads', `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    );
+    const downloadsDir =
+      options.downloadsDir ??
+      path.join(
+        os.tmpdir(),
+        'craftdriver-downloads',
+        `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
     await fs.mkdir(downloadsDir, { recursive: true });
 
-    // Custom browser binary (Chrome/Chromium/Firefox). When unresolved,
-    // nothing is forwarded and the driver uses its own built-in browser
-    // discovery — but see resolveBrowserBinaryPath's doc: some of the env
-    // vars in this chain aren't craftdriver-opt-in, they're ambient
-    // conventions other tools may already have set.
-    const browserPath = resolveBrowserBinaryPath(isChromeFamily ? 'chrome' : 'firefox', options.browserPath);
+    // The binary that becomes goog:chromeOptions.binary / moz:firefoxOptions.binary.
+    // For Electron it's the app executable (explicit, required). For browsers
+    // it's the optional custom-binary resolution chain — but see
+    // resolveBrowserBinaryPath's doc: some of the env vars in that chain aren't
+    // craftdriver-opt-in, they're ambient conventions other tools may have set.
+    const browserBinary =
+      target.kind === 'electron'
+        ? electronBinary
+        : resolveBrowserBinaryPath(isChromeFamily ? 'chrome' : 'firefox', target.browserPath);
 
-    let caps: Capabilities = {};
-
-    if (isChromeFamily) {
-      const chromeOptions: Record<string, unknown> = {
-        args: [...(isHeadless ? ['--headless=new'] : []), ...(options.args ?? [])],
-        prefs: {
-          'download.default_directory': downloadsDir,
-          'download.prompt_for_download': false,
-          'safebrowsing.enabled': true,
-        },
-      };
-      if (browserPath) chromeOptions.binary = browserPath;
-
-      // Add mobile emulation if specified
-      if (options.mobileEmulation) {
-        const emulation = typeof options.mobileEmulation === 'string'
-          ? devices[options.mobileEmulation]
-          : options.mobileEmulation;
-
-        if ('deviceName' in emulation && emulation.deviceName) {
-          // Use Chrome's built-in device name
-          chromeOptions.mobileEmulation = { deviceName: emulation.deviceName };
-        } else {
-          // Build custom mobile emulation config
-          const mobileConfig: Record<string, unknown> = {};
-
-          if (emulation.deviceMetrics) {
-            mobileConfig.deviceMetrics = {
-              width: emulation.deviceMetrics.width,
-              height: emulation.deviceMetrics.height,
-              pixelRatio: emulation.deviceMetrics.pixelRatio,
-              mobile: emulation.deviceMetrics.mobile ?? true,
-              touch: emulation.deviceMetrics.touch ?? true,
-            };
-          }
-
-          if (emulation.userAgent) {
-            mobileConfig.userAgent = emulation.userAgent;
-          }
-
-          chromeOptions.mobileEmulation = mobileConfig;
-        }
-      }
-
-      caps['goog:chromeOptions'] = chromeOptions;
-    } else if (isFirefox) {
-      const firefoxArgs: string[] = [];
-      if (isHeadless) firefoxArgs.push('-headless');
-      if (options.args?.length) firefoxArgs.push(...options.args);
-      caps['moz:firefoxOptions'] = {
-        args: firefoxArgs,
-        prefs: {
-          'browser.download.folderList': 2,
-          'browser.download.dir': downloadsDir,
-          'browser.download.useDownloadDir': true,
-          'browser.helperApps.neverAsk.saveToDisk':
-            'application/octet-stream,application/pdf,text/plain,text/csv,application/zip',
-          'pdfjs.disabled': true,
-        },
-        ...(browserPath ? { binary: browserPath } : {}),
-      };
+    // Main-process access (opt-in): launch the Electron app with a Node inspector
+    // on a free local port. chromedriver forwards this arg to the app, enabling
+    // its main-process inspector; browser.electron connects below for log capture
+    // and retries on first executeMain() if that eager connection was too early.
+    let electronInspect: { host: string; port: number } | undefined;
+    let launchArgs = target.args;
+    if (target.kind === 'electron' && target.mainProcess) {
+      const host = '127.0.0.1';
+      const port = await findFreePort();
+      electronInspect = { host, port };
+      launchArgs = [...(target.args ?? []), `--inspect=${host}:${port}`];
     }
 
-    if (options.enableBiDi !== false) {
-      // Request BiDi WebSocket URL
-      caps.webSocketUrl = true;
-      // Set all prompt types to 'ignore' so BiDi events fire and we can handle them
-      caps.unhandledPromptBehavior = {
-        alert: 'ignore',
-        confirm: 'ignore',
-        prompt: 'ignore',
-        beforeUnload: 'ignore',
-      };
-    }
+    const caps = buildLaunchCapabilities({
+      browserName: name,
+      isElectron,
+      isHeadless,
+      bidiRequested,
+      browserBinary,
+      downloadsDir,
+      args: launchArgs,
+      mobileEmulation:
+        target.kind === 'browser' && isChromeFamily && options.mobileEmulation
+          ? resolveMobileEmulationConfig(options.mobileEmulation)
+          : undefined,
+    });
 
     const builder = new Builder().forBrowser(name);
     let driverService: ChromeService | FirefoxService;
-    if (isChromeFamily) {
+    if (target.kind === 'electron') {
+      driverService =
+        options.electronService ??
+        new ElectronService({
+          chromedriverPath: target.chromedriverPath,
+          version: target.version,
+          // Lets the driver resolver read the Electron version from a packaged app's
+          // bundle when no explicit version/driver is given (production apps).
+          appBinaryPath: electronBinary,
+        });
+      builder.setChromeService(driverService);
+    } else if (isChromeFamily) {
       // Only thread browserPath into a default ChromeService — a
       // caller-supplied one is expected to already pin what it needs (same
       // reasoning as explicit config always winning over auto-detection).
-      driverService = options.chromeService ?? new ChromeService({ browserPath });
-      builder.setChromeService(driverService as ChromeService);
+      driverService = options.chromeService ?? new ChromeService({ browserPath: browserBinary });
+      builder.setChromeService(driverService);
     } else {
       driverService = options.firefoxService ?? new FirefoxService();
       builder.setFirefoxService(driverService as FirefoxService);
     }
     builder.withCapabilities(caps);
-    const driver = await builder.build();
+    let driver;
+    if (target.kind === 'electron') {
+      try {
+        driver = await builder.build();
+      } catch (err) {
+        // Turn an opaque "Chrome instance exited" into a diagnosed, actionable
+        // error (macOS signing/Gatekeeper, Linux sandbox) with the chromedriver
+        // output tail attached. Non-app-exit failures pass through unchanged.
+        throw diagnoseElectronLaunchFailure(err, {
+          appBinaryPath: electronBinary!,
+          args: target.args,
+          driverOutputTail: (driverService as ElectronService).getOutputTail?.(),
+        });
+      }
+    } else {
+      driver = await builder.build();
+    }
     const browser = new Browser(driver);
     browser._downloadsDir = downloadsDir;
     browser._driverService = driverService;
     browser._browserName = name;
+    browser._electronInspect = electronInspect;
+    browser._electronAppBinaryPath = electronBinary;
+
+    // With main-process access enabled, open the inspector bridge now so
+    // main-process console/error capture (browser.electron.mainLogs) starts at
+    // launch, mirroring always-on renderer log capture. Best-effort: a disabled
+    // EnableNodeCliInspectArguments fuse or an unreachable inspector must never
+    // fail renderer automation — executeMain still surfaces the actionable error
+    // on first use.
+    if (electronInspect) {
+      const remote = new ElectronRemote(electronInspect, { appBinaryPath: electronBinary });
+      browser._electron = remote;
+      await remote.connect().catch((err) => {
+        writeElectronDebug({
+          event: 'main-bridge-eager-connect-failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     // Initialize BiDi session if WebSocket URL available
     const wsUrl = (driver as any).__wsUrl;
-    if (wsUrl && options.enableBiDi !== false) {
+    if (wsUrl && bidiRequested) {
       await browser.initBiDi(wsUrl);
     }
 
@@ -559,7 +778,7 @@ export class Browser {
             this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
           },
         });
-        await this._ensureTopLevelContextTracking().catch(() => { });
+        await this._ensureTopLevelContextTracking().catch(() => {});
         return; // success
       } catch (err) {
         if (attempt < maxAttempts) {
@@ -592,7 +811,7 @@ export class Browser {
       if (!this.bidiSession?.isConnected()) {
         throw new Error(
           'Network interception requires BiDi. ' +
-          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+            'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
         );
       }
       this._network = this.bidiSession.network;
@@ -608,7 +827,7 @@ export class Browser {
       if (!this.bidiSession?.isConnected()) {
         throw new Error(
           'Log monitoring requires BiDi. ' +
-          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+            'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
         );
       }
       this._logs = this.bidiSession.logs;
@@ -660,6 +879,27 @@ export class Browser {
       this._a11y = new A11y({ driver: this.driver });
     }
     return this._a11y;
+  }
+
+  /**
+   * Electron **main-process** access. `browser.electron.executeMain(fn, ...args)`
+   * runs `fn(electron, ...args)` in the app's main process (full `electron`
+   * module), complementing the renderer automation on `Browser` itself.
+   *
+   * Requires launching with `electron: { mainProcess: true }`; otherwise
+   * `executeMain` throws `ELECTRON_MAIN_UNAVAILABLE`.
+   *
+   * ```ts
+   * const version = await browser.electron.executeMain((electron) => electron.app.getVersion());
+   * ```
+   */
+  get electron(): ElectronRemote {
+    if (!this._electron) {
+      this._electron = new ElectronRemote(this._electronInspect, {
+        appBinaryPath: this._electronAppBinaryPath,
+      });
+    }
+    return this._electron;
   }
 
   /**
@@ -843,8 +1083,8 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'grantPermissions() requires BiDi (enableBiDi: true). ' +
-        'Permission overrides use the W3C BiDi `permissions.setPermission` command, ' +
-        'which has no Classic-WebDriver equivalent.'
+          'Permission overrides use the W3C BiDi `permissions.setPermission` command, ' +
+          'which has no Classic-WebDriver equivalent.'
       );
     }
     if (!Array.isArray(permissions) || permissions.length === 0) {
@@ -856,7 +1096,7 @@ export class Browser {
     if (!origin) {
       throw new Error(
         'grantPermissions: cannot infer origin from the current page. ' +
-        'Navigate to a page first, or pass `{ origin }` explicitly.'
+          'Navigate to a page first, or pass `{ origin }` explicitly.'
       );
     }
     for (const name of permissions) {
@@ -873,10 +1113,7 @@ export class Browser {
    * browser default of `'prompt'`. Convenience wrapper around
    * {@link grantPermissions} with `state: 'prompt'`.
    */
-  async clearPermissions(
-    permissions: string[],
-    opts?: { origin?: string }
-  ): Promise<void> {
+  async clearPermissions(permissions: string[], opts?: { origin?: string }): Promise<void> {
     await this.grantPermissions(permissions, { ...opts, state: 'prompt' });
   }
 
@@ -897,8 +1134,8 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'setGeolocation() requires BiDi (enableBiDi: true). ' +
-        'Geolocation overrides use the W3C BiDi `emulation.setGeolocationOverride` ' +
-        'command, which has no Classic-WebDriver equivalent.'
+          'Geolocation overrides use the W3C BiDi `emulation.setGeolocationOverride` ' +
+          'command, which has no Classic-WebDriver equivalent.'
       );
     }
     const conn = this.bidiSession.getConnection();
@@ -916,12 +1153,14 @@ export class Browser {
       if (
         typeof coords.latitude !== 'number' ||
         typeof coords.longitude !== 'number' ||
-        coords.latitude < -90 || coords.latitude > 90 ||
-        coords.longitude < -180 || coords.longitude > 180
+        coords.latitude < -90 ||
+        coords.latitude > 90 ||
+        coords.longitude < -180 ||
+        coords.longitude > 180
       ) {
         throw new Error(
           `setGeolocation: invalid coordinates ${JSON.stringify(coords)}. ` +
-          'latitude must be in [-90, 90] and longitude in [-180, 180].'
+            'latitude must be in [-90, 90] and longitude in [-180, 180].'
         );
       }
       params.coordinates = {
@@ -974,9 +1213,9 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'emulate() requires BiDi (enableBiDi: true). ' +
-        'Emulation overrides use the W3C BiDi `emulation.*` commands ' +
-        '(and the BiDi+CDP bridge for media features and offline), ' +
-        'which have no Classic-WebDriver equivalent.'
+          'Emulation overrides use the W3C BiDi `emulation.*` commands ' +
+          '(and the BiDi+CDP bridge for media features and offline), ' +
+          'which have no Classic-WebDriver equivalent.'
       );
     }
 
@@ -988,9 +1227,9 @@ export class Browser {
         if (k in options) {
           throw new Error(
             `emulate({ ${k} }) is not supported on Firefox yet. ` +
-            'CSS media-feature and offline overrides currently require the ' +
-            'BiDi+CDP bridge, which only Chromium exposes. ' +
-            '`locale` and `timezoneId` work on Firefox.'
+              'CSS media-feature and offline overrides currently require the ' +
+              'BiDi+CDP bridge, which only Chromium exposes. ' +
+              '`locale` and `timezoneId` work on Firefox.'
           );
         }
       }
@@ -1072,7 +1311,7 @@ export class Browser {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(
         `emulate(): CDP command \`${method}\` failed (${msg}). ` +
-        'This path requires Chromium with the BiDi+CDP bridge — confirm you are running Chrome/Chromium.'
+          'This path requires Chromium with the BiDi+CDP bridge — confirm you are running Chrome/Chromium.'
       );
     }
   }
@@ -1118,7 +1357,9 @@ export class Browser {
         await this.bidiSession.network.waitForNetworkIdle({ timeout });
       }
       // Classic fallback: best-effort 500ms settle
-      else { await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS)); }
+      else {
+        await new Promise((r) => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
+      }
       return;
     }
 
@@ -1131,9 +1372,10 @@ export class Browser {
       // this avoids creating a timeout-Promise that could reject before the
       // caller attaches a handler (unhandled-rejection warning).
       const readyState = await this.driver.executeScript<string>('return document.readyState', []);
-      const satisfied = state === 'load'
-        ? readyState === 'complete'
-        : readyState === 'interactive' || readyState === 'complete';
+      const satisfied =
+        state === 'load'
+          ? readyState === 'complete'
+          : readyState === 'interactive' || readyState === 'complete';
 
       if (satisfied) return;
 
@@ -1156,9 +1398,10 @@ export class Browser {
         };
 
         // unsubscribe is assigned synchronously before any await
-        let unsubscribe = state === 'load'
-          ? this.bidiSession!.onLoad(handler)
-          : this.bidiSession!.onDomContentLoaded(handler);
+        let unsubscribe =
+          state === 'load'
+            ? this.bidiSession!.onLoad(handler)
+            : this.bidiSession!.onDomContentLoaded(handler);
       });
     }
 
@@ -1167,8 +1410,9 @@ export class Browser {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       const readyState = await this.driver.executeScript<string>('return document.readyState', []);
-      if (readyState === 'complete' || (target === 'interactive' && readyState === 'interactive')) return;
-      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
+      if (readyState === 'complete' || (target === 'interactive' && readyState === 'interactive'))
+        return;
+      await new Promise((r) => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
     throw new CraftdriverError(
       ErrorCode.TIMEOUT_WAITING_LOAD,
@@ -1202,9 +1446,13 @@ export class Browser {
     // Whether this session had a live BiDi WebSocket. Only the Firefox+BiDi
     // combination needs the port-release pause below; capture it before close().
     const bidiWasActive = !!this.bidiSession;
+    // Close the Electron main-process inspector bridge, if one was opened.
+    if (this._electron) {
+      await this._electron.close().catch(() => {});
+    }
     // Close BiDi connection first
     if (this.bidiSession) {
-      await this.bidiSession.close().catch(() => { });
+      await this.bidiSession.close().catch(() => {});
     }
     this._browserInitScriptIds.clear();
     for (const off of this._topLevelContextTrackingOffs) off();
@@ -1213,7 +1461,7 @@ export class Browser {
     this._topLevelContextUserContexts.clear();
     this._topLevelContextCacheVersion++;
     // DELETE the WebDriver session — this tells the driver service to close the browser.
-    await this.driver.quit().catch(() => { });
+    await this.driver.quit().catch(() => {});
     // Firefox's BiDi WebSocket binds a fixed port (9222). If we kill geckodriver
     // before Firefox has released it, the next Firefox+BiDi launch can 404 while
     // connecting to the new session's socket — hence this pause. Chrome has no such
@@ -1227,7 +1475,7 @@ export class Browser {
     // Stop the underlying driver service (chromedriver / geckodriver)
     // so we don't leak processes between sessions.
     if (this._driverService) {
-      await this._driverService.stop().catch(() => { });
+      await this._driverService.stop().catch(() => {});
       this._driverService = undefined;
     }
   }
@@ -1256,7 +1504,7 @@ export class Browser {
       throw new CraftdriverError(
         ErrorCode.UNSUPPORTED,
         'startTrace() requires BiDi (enableBiDi: true). ' +
-        'Tracing relies on BiDi events; Classic WebDriver does not expose them.',
+          'Tracing relies on BiDi events; Classic WebDriver does not expose them.',
         { detail: { feature: 'startTrace' } }
       );
     }
@@ -1313,8 +1561,7 @@ export class Browser {
       // pre-execution (script never ran, no side effects), so retry a few times,
       // re-resolving the context each attempt. In-script errors take the
       // result.type === 'exception' path below and are never retried here.
-      const functionDeclaration =
-        typeof fn === 'function' ? fnSrc : `function() { ${fnSrc} }`;
+      const functionDeclaration = typeof fn === 'function' ? fnSrc : `function() { ${fnSrc} }`;
       const callArgs = typeof fn === 'function' ? args.map(serializeLocalValue) : [];
 
       let result: ScriptEvaluateResult | undefined;
@@ -1334,7 +1581,7 @@ export class Browser {
             attempt < EVAL_REALM_RETRY_ATTEMPTS &&
             String((err as Error)?.message).includes('execution contexts cleared')
           ) {
-            await new Promise(r => setTimeout(r, EVAL_REALM_RETRY_DELAY_MS));
+            await new Promise((r) => setTimeout(r, EVAL_REALM_RETRY_DELAY_MS));
             continue;
           }
           throw err;
@@ -1382,15 +1629,12 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'addInitScript() requires BiDi. ' +
-        'BiDi is enabled by default — check that your browser supports it.'
+          'BiDi is enabled by default — check that your browser supports it.'
       );
     }
 
     const conn = this.bidiSession.getConnection();
-    const fnSrc =
-      typeof fnOrSrc === 'function'
-        ? fnOrSrc.toString()
-        : `() => { ${fnOrSrc} }`;
+    const fnSrc = typeof fnOrSrc === 'function' ? fnOrSrc.toString() : `() => { ${fnOrSrc} }`;
 
     const result = await conn.send<{ script: string }>('script.addPreloadScript', {
       functionDeclaration: fnSrc,
@@ -1420,7 +1664,9 @@ export class Browser {
         'waitForRequest() requires BiDi. BiDi is enabled by default — check your browser supports it.'
       );
     }
-    return this.network.waitForRequest(pattern, { timeout: opts?.timeout ?? this.defaults.navigationTimeout });
+    return this.network.waitForRequest(pattern, {
+      timeout: opts?.timeout ?? this.defaults.navigationTimeout,
+    });
   }
 
   /**
@@ -1445,7 +1691,9 @@ export class Browser {
         'waitForResponse() requires BiDi. BiDi is enabled by default \u2014 check your browser supports it.'
       );
     }
-    return this.network.waitForResponse(pattern, { timeout: opts?.timeout ?? this.defaults.navigationTimeout });
+    return this.network.waitForResponse(pattern, {
+      timeout: opts?.timeout ?? this.defaults.navigationTimeout,
+    });
   }
 
   /**
@@ -1475,7 +1723,7 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         `browser.on('${event}') requires BiDi (enableBiDi: true). ` +
-        'Network event listeners use the W3C BiDi `network` module, which has no Classic-WebDriver equivalent.'
+          'Network event listeners use the W3C BiDi `network` module, which has no Classic-WebDriver equivalent.'
       );
     }
     if (event === 'request') {
@@ -1499,7 +1747,9 @@ export class Browser {
   ): Promise<Download> {
     const dir = this._downloadsDir;
     if (!dir) {
-      throw new Error('waitForDownload() requires a downloads directory. Browser was not launched correctly.');
+      throw new Error(
+        'waitForDownload() requires a downloads directory. Browser was not launched correctly.'
+      );
     }
     const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
 
@@ -1512,7 +1762,7 @@ export class Browser {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       const after = fsSync.readdirSync(dir);
-      const newFiles = after.filter(f => !before.has(f) && !f.endsWith('.crdownload'));
+      const newFiles = after.filter((f) => !before.has(f) && !f.endsWith('.crdownload'));
       if (newFiles.length > 0) {
         const filename = newFiles[0];
         const filePath = path.join(dir, filename);
@@ -1524,7 +1774,7 @@ export class Browser {
           },
         };
       }
-      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
+      await new Promise((r) => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
 
     throw new Error(`waitForDownload() timed out after ${timeout}ms — no file appeared in ${dir}`);
@@ -1556,7 +1806,9 @@ export class Browser {
     }
     // Classic: no push events — callers must use the imperative API below
     // Return a no-op unsubscribe
-    return () => { /* no-op */ };
+    return () => {
+      /* no-op */
+    };
   }
 
   /**
@@ -1621,9 +1873,13 @@ export class Browser {
   waitForDialog(opts?: { timeout?: number }): Promise<Dialog> {
     const timeout = opts?.timeout ?? this.defaults.timeout;
     return new Promise<Dialog>((resolve, reject) => {
-      const tid = timeout > 0
-        ? setTimeout(() => { off(); reject(new Error(`waitForDialog timed out after ${timeout}ms`)); }, timeout)
-        : undefined;
+      const tid =
+        timeout > 0
+          ? setTimeout(() => {
+              off();
+              reject(new Error(`waitForDialog timed out after ${timeout}ms`));
+            }, timeout)
+          : undefined;
 
       const off = this.onDialog((dialog) => {
         if (tid !== undefined) clearTimeout(tid);
@@ -1642,8 +1898,12 @@ export class Browser {
       type: () => _type,
       message: () => _message,
       defaultValue: () => _defaultValue,
-      accept: async (text?: string) => { await this.acceptDialog(text); },
-      dismiss: async () => { await this.dismissDialog(); },
+      accept: async (text?: string) => {
+        await this.acceptDialog(text);
+      },
+      dismiss: async () => {
+        await this.dismissDialog();
+      },
     };
   }
 
@@ -1672,10 +1932,9 @@ export class Browser {
       const topContextId = this.bidiSession.getContext();
       if (topContextId) {
         try {
-          const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
-            'browsingContext.getTree',
-            { root: topContextId }
-          );
+          const tree = await conn.send<{ contexts: BidiContextInfo[] }>('browsingContext.getTree', {
+            root: topContextId,
+          });
           // The BiDi context for the iframe has the top-level context as ancestor.
           // We find the first child context (iframes appear as children).
           const iframeSrc = await el.getAttribute('src');
@@ -1705,10 +1964,9 @@ export class Browser {
     let tree: { contexts: BidiContextInfo[] } | undefined;
     if (conn && topContextId) {
       try {
-        tree = await conn.send<{ contexts: BidiContextInfo[] }>(
-          'browsingContext.getTree',
-          { root: topContextId }
-        );
+        tree = await conn.send<{ contexts: BidiContextInfo[] }>('browsingContext.getTree', {
+          root: topContextId,
+        });
       } catch {
         tree = undefined;
       }
@@ -1721,8 +1979,12 @@ export class Browser {
         bidiContextId = findIframeContext(tree.contexts[0], src);
       }
       result.push(
-        new Frame(this.driver, iframe.getId(), this.getDefaultTimeout,
-          conn ? { bidiContextId, conn } : undefined)
+        new Frame(
+          this.driver,
+          iframe.getId(),
+          this.getDefaultTimeout,
+          conn ? { bidiContextId, conn } : undefined
+        )
       );
     }
     return result;
@@ -1737,18 +1999,18 @@ export class Browser {
   async pages(): Promise<Page[]> {
     if (this.bidiSession?.isConnected()) {
       const conn = this.bidiSession.getConnection();
-      const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
-        'browsingContext.getTree',
-        { maxDepth: 0 }
-      );
+      const tree = await conn.send<{ contexts: BidiContextInfo[] }>('browsingContext.getTree', {
+        maxDepth: 0,
+      });
       return (tree.contexts ?? []).map(
-        (ctx) => new Page(
-          this.driver,
-          ctx.context,
-          this.getDefaultTimeout,
-          conn,
-          this._wrapContext(ctx.userContext ?? 'default')
-        )
+        (ctx) =>
+          new Page(
+            this.driver,
+            ctx.context,
+            this.getDefaultTimeout,
+            conn,
+            this._wrapContext(ctx.userContext ?? 'default')
+          )
       );
     }
 
@@ -1776,14 +2038,20 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'openPage() requires BiDi (enableBiDi: true). ' +
-        'WebDriver Classic cannot create top-level browsing contexts.'
+          'WebDriver Classic cannot create top-level browsing contexts.'
       );
     }
     const conn = this.bidiSession.getConnection();
     const created = await conn.send<{ context: string }>('browsingContext.create', {
       type: opts?.type ?? 'tab',
     });
-    const page = new Page(this.driver, created.context, this.getDefaultTimeout, conn, this.defaultContext);
+    const page = new Page(
+      this.driver,
+      created.context,
+      this.getDefaultTimeout,
+      conn,
+      this.defaultContext
+    );
     if (opts?.url) {
       await page.navigateTo(opts.url);
     }
@@ -1791,18 +2059,34 @@ export class Browser {
   }
 
   /**
-   * Run `action` and wait for a new top-level browsing context (tab / popup)
-   * to open. Returns a `Page` bound to the new context.
+   * Wait for a top-level page and return it, in one of two modes:
    *
-   * @example
-   * const popup = await browser.waitForPage(() => browser.click('#open-popup'));
-   * await popup.waitForLoadState();
-   * const title = await popup.title();
+   * - **New page from an action** — pass a function; resolves with the page the
+   *   action opens (a tab or popup).
+   *   ```ts
+   *   const popup = await browser.waitForPage(() => browser.click('#open-popup'));
+   *   ```
+   * - **An existing/appearing page by url or title** — pass a matcher; resolves with
+   *   the first top-level page whose url/title matches (string = substring, RegExp =
+   *   test; both fields must match when given). Ideal for a **splash → main** Electron
+   *   app, where the real window appears on the app's own schedule:
+   *   ```ts
+   *   const main = await browser.waitForPage({ title: /Example App/ });
+   *   await main.find(By.testId('app-title')).expect().toBeVisible();
+   *   ```
+   *   In Classic mode the matched window also becomes the current one, so
+   *   `browser.find(...)` targets it too.
    */
+  waitForPage(action: () => Promise<void>, opts?: { timeout?: number }): Promise<Page>;
+  waitForPage(matcher: PageMatcher, opts?: { timeout?: number }): Promise<Page>;
   async waitForPage(
-    action: () => Promise<void>,
+    actionOrMatcher: (() => Promise<void>) | PageMatcher,
     opts?: { timeout?: number }
   ): Promise<Page> {
+    if (typeof actionOrMatcher !== 'function') {
+      return this._waitForMatchingPage(actionOrMatcher, opts);
+    }
+    const action = actionOrMatcher;
     const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
 
     if (this.bidiSession?.isConnected()) {
@@ -1822,13 +2106,15 @@ export class Browser {
           if (!params.parent) {
             clearTimeout(timer);
             off();
-            resolve(new Page(
-              this.driver,
-              params.context as string,
-              this.getDefaultTimeout,
-              conn,
-              this._wrapContext((params.userContext as string | undefined) ?? 'default')
-            ));
+            resolve(
+              new Page(
+                this.driver,
+                params.context as string,
+                this.getDefaultTimeout,
+                conn,
+                this._wrapContext((params.userContext as string | undefined) ?? 'default')
+              )
+            );
           }
         });
 
@@ -1846,18 +2132,68 @@ export class Browser {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
       const after = await this.driver.getWindowHandles();
-      const newHandles = after.filter(h => !before.has(h));
+      const newHandles = after.filter((h) => !before.has(h));
       if (newHandles.length > 0) {
         const handle = newHandles[0];
-        return new Page(
-          this.driver,
-          handle,
-          this.getDefaultTimeout
-        );
+        return new Page(this.driver, handle, this.getDefaultTimeout);
       }
-      await new Promise(r => setTimeout(r, STATE_POLL_INTERVAL_MS));
+      await new Promise((r) => setTimeout(r, STATE_POLL_INTERVAL_MS));
     }
     throw new Error(`waitForPage() timed out after ${timeout}ms — no new tab or popup appeared`);
+  }
+
+  /** Poll open top-level pages until one matches `matcher`; see {@link waitForPage}. */
+  private async _waitForMatchingPage(
+    matcher: PageMatcher,
+    opts?: { timeout?: number }
+  ): Promise<Page> {
+    if (matcher.url === undefined && matcher.title === undefined) {
+      throw new Error('waitForPage(matcher): provide at least one of { url, title }.');
+    }
+    const timeout = opts?.timeout ?? this.defaults.navigationTimeout;
+    const deadline = Date.now() + timeout;
+    const seen = new Set<string>();
+    for (;;) {
+      for (const page of await this.pages()) {
+        try {
+          if (await this._pageMatches(page, matcher, seen)) {
+            // Classic: make the matched window current so browser.find(...) targets
+            // it too (BiDi drives through the returned Page's own context).
+            if (!this.bidiSession?.isConnected()) {
+              await this.driver.switchToWindow(page.id()).catch(() => {});
+            }
+            return page;
+          }
+        } catch (err) {
+          // A window that closed mid-check (e.g. the splash) — skip it, keep looking.
+          if (!isNoSuchWindowError(err)) throw err;
+        }
+      }
+      if (Date.now() >= deadline) {
+        const label = [
+          matcher.title !== undefined ? `title ${String(matcher.title)}` : undefined,
+          matcher.url !== undefined ? `url ${String(matcher.url)}` : undefined,
+        ]
+          .filter(Boolean)
+          .join(' and ');
+        throw new Error(
+          `waitForPage(matcher) timed out after ${timeout}ms — no window matched ${label}. ` +
+            `Saw: ${[...seen].join(' | ') || '(no readable windows)'}.`
+        );
+      }
+      await new Promise((r) => setTimeout(r, STATE_POLL_INTERVAL_MS));
+    }
+  }
+
+  private async _pageMatches(
+    page: Page,
+    matcher: PageMatcher,
+    seen: Set<string>
+  ): Promise<boolean> {
+    const url = matcher.url !== undefined ? await page.url() : undefined;
+    const title = matcher.title !== undefined ? await page.title() : undefined;
+    seen.add([title !== undefined ? `"${title}"` : '', url ?? ''].filter(Boolean).join(' '));
+    return matchPageFields({ url, title }, matcher);
   }
 
   // ─── User contexts (isolated profiles, BiDi-only) ────────────────────────
@@ -1927,7 +2263,9 @@ export class Browser {
     this._contextsById.set(id, ctx);
     // Evict on close so long-running suites that create many contexts don't
     // accumulate dead wrappers.
-    ctx.on('close', () => { this._contextsById.delete(id); });
+    ctx.on('close', () => {
+      this._contextsById.delete(id);
+    });
     return ctx;
   }
 
@@ -1959,7 +2297,7 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'newContext() requires BiDi (enableBiDi: true). ' +
-        'WebDriver Classic has no concept of user contexts.'
+          'WebDriver Classic has no concept of user contexts.'
       );
     }
     const conn = this.bidiSession.getConnection();
@@ -1988,8 +2326,8 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'contexts() requires BiDi (enableBiDi: true). ' +
-        'WebDriver Classic has no concept of user contexts. ' +
-        'Use browser.pages() to list tabs instead.'
+          'WebDriver Classic has no concept of user contexts. ' +
+          'Use browser.pages() to list tabs instead.'
       );
     }
     const conn = this.bidiSession.getConnection();
@@ -2009,7 +2347,7 @@ export class Browser {
     if (!this.bidiSession?.isConnected()) {
       throw new Error(
         'defaultContext requires BiDi (enableBiDi: true). ' +
-        'WebDriver Classic has no concept of user contexts.'
+          'WebDriver Classic has no concept of user contexts.'
       );
     }
     if (this._defaultContext) return this._defaultContext;
@@ -2034,9 +2372,7 @@ export class Browser {
    *   tree (defensive — e.g. if `_ensureTopLevelContextTracking()` is ever
    *   reached before `initBiDi()`'s callback has run).
    */
-  private async _startTopLevelContextTracking(
-    initialContexts?: BidiContextInfo[]
-  ): Promise<void> {
+  private async _startTopLevelContextTracking(initialContexts?: BidiContextInfo[]): Promise<void> {
     const conn = this.bidiSession!.getConnection();
 
     if (!initialContexts) {
@@ -2051,7 +2387,9 @@ export class Browser {
       // would break that contract if a future refactor made the branch reachable.
       await conn
         .subscribe(['browsingContext.contextCreated', 'browsingContext.contextDestroyed'])
-        .catch(() => { /* already subscribed or unsupported; fallback sync will cover us */ });
+        .catch(() => {
+          /* already subscribed or unsupported; fallback sync will cover us */
+        });
     }
 
     const onCreated = (params: Record<string, unknown>) => {
@@ -2073,7 +2411,9 @@ export class Browser {
     };
 
     this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextCreated', onCreated));
-    this._topLevelContextTrackingOffs.push(conn.on('browsingContext.contextDestroyed', onDestroyed));
+    this._topLevelContextTrackingOffs.push(
+      conn.on('browsingContext.contextDestroyed', onDestroyed)
+    );
 
     if (initialContexts) {
       for (const ctx of initialContexts) {
@@ -2083,16 +2423,15 @@ export class Browser {
       }
       this._topLevelContextCacheVersion++;
     } else {
-      await this._refreshTopLevelContextCache(conn).catch(() => { });
+      await this._refreshTopLevelContextCache(conn).catch(() => {});
     }
   }
 
   private async _refreshTopLevelContextCache(conn: BiDiConnection): Promise<void> {
     const version = this._topLevelContextCacheVersion;
-    const tree = await conn.send<{ contexts: BidiContextInfo[] }>(
-      'browsingContext.getTree',
-      { maxDepth: 0 }
-    );
+    const tree = await conn.send<{ contexts: BidiContextInfo[] }>('browsingContext.getTree', {
+      maxDepth: 0,
+    });
     if (this._topLevelContextCacheVersion === version) {
       this._topLevelContextUserContexts.clear();
     }
@@ -2153,8 +2492,30 @@ export class Browser {
       }
       return new Page(this.driver, fallback, this.getDefaultTimeout, conn, this.defaultContext);
     }
-    // Classic mode: no user-context concept; just wrap the current window.
-    const handle = await this.driver.getCurrentWindowHandle();
+    // Classic mode: wrap the current window. If it was closed (e.g. a splash that
+    // replaced itself), re-point to the sole remaining top-level window when there's
+    // exactly one — unambiguous — and otherwise ask the caller to select explicitly,
+    // rather than guessing among several or throwing an opaque "no such window".
+    let handle: string | undefined;
+    try {
+      handle = await this.driver.getCurrentWindowHandle();
+    } catch (err) {
+      if (!isNoSuchWindowError(err)) throw err;
+    }
+    const handles = await this.driver.getWindowHandles();
+    if (handle === undefined || !handles.includes(handle)) {
+      if (handles.length === 0) {
+        throw new Error('activePage(): all windows are closed.');
+      }
+      if (handles.length > 1) {
+        throw new Error(
+          'activePage(): the current window was closed and several windows are open. ' +
+            'Select one with browser.waitForPage({ title } | { url }) or browser.pages().'
+        );
+      }
+      handle = handles[0];
+      await this.driver.switchToWindow(handle).catch(() => {});
+    }
     return new Page(this.driver, handle, this.getDefaultTimeout);
   }
 
@@ -2208,7 +2569,11 @@ export class Browser {
     return String(val ?? '');
   }
 
-  async getAttribute(selector: string | By, name: string, opts?: { timeout?: number }): Promise<string | null> {
+  async getAttribute(
+    selector: string | By,
+    name: string,
+    opts?: { timeout?: number }
+  ): Promise<string | null> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const el = await this.driver.wait(until.elementLocated(by), {
       timeout: opts?.timeout ?? this.defaults.timeout,
@@ -2269,7 +2634,7 @@ export class Browser {
     if (opts?.fullPage && opts?.selector !== undefined) {
       throw new Error(
         'screenshot: `fullPage` and `selector` are mutually exclusive. ' +
-        'Use `selector` to capture an element, or `fullPage` to capture the whole document.'
+          'Use `selector` to capture an element, or `fullPage` to capture the whole document.'
       );
     }
     let buf: Buffer;
@@ -2284,8 +2649,8 @@ export class Browser {
       if (!this.bidiSession?.isConnected()) {
         throw new Error(
           'screenshot({ fullPage: true }) requires BiDi (enableBiDi: true). ' +
-          'Full-page screenshots use the W3C BiDi `browsingContext.captureScreenshot` ' +
-          'command with `origin: "document"`, which has no Classic-WebDriver equivalent.'
+            'Full-page screenshots use the W3C BiDi `browsingContext.captureScreenshot` ' +
+            'command with `origin: "document"`, which has no Classic-WebDriver equivalent.'
         );
       }
       const conn = this.bidiSession.getConnection();
@@ -2329,10 +2694,15 @@ export class Browser {
   async findAll(selector: string | By): Promise<ElementHandle[]> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const webElements = await this.driver.findElements(by);
-    return webElements.map((we) => ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout));
+    return webElements.map((we) =>
+      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout)
+    );
   }
 
-  getByRole(role: string, opts?: { name?: string; exact?: boolean; includeHidden?: boolean }): ElementHandle {
+  getByRole(
+    role: string,
+    opts?: { name?: string; exact?: boolean; includeHidden?: boolean }
+  ): ElementHandle {
     return new ElementHandle(this.driver, By.role(role, opts), this.getDefaultTimeout);
   }
 
@@ -2370,22 +2740,30 @@ export class Browser {
 
   async waitForVisible(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementIsVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
+    await this.driver.wait(until.elementIsVisible(by), {
+      timeout: opts?.timeout ?? this.defaults.timeout,
+    });
   }
 
   async waitForHidden(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementIsNotVisible(by), { timeout: opts?.timeout ?? this.defaults.timeout });
+    await this.driver.wait(until.elementIsNotVisible(by), {
+      timeout: opts?.timeout ?? this.defaults.timeout,
+    });
   }
 
   async waitForAttached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementExists(by), { timeout: opts?.timeout ?? this.defaults.timeout });
+    await this.driver.wait(until.elementExists(by), {
+      timeout: opts?.timeout ?? this.defaults.timeout,
+    });
   }
 
   async waitForDetached(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    await this.driver.wait(until.elementNotExists(by), { timeout: opts?.timeout ?? this.defaults.timeout });
+    await this.driver.wait(until.elementNotExists(by), {
+      timeout: opts?.timeout ?? this.defaults.timeout,
+    });
   }
 
   /**
@@ -2403,10 +2781,14 @@ export class Browser {
     opts: { state: 'visible' | 'hidden' | 'attached' | 'detached'; timeout?: number }
   ): Promise<void> {
     switch (opts.state) {
-      case 'visible': return this.waitForVisible(selector, opts);
-      case 'hidden': return this.waitForHidden(selector, opts);
-      case 'attached': return this.waitForAttached(selector, opts);
-      case 'detached': return this.waitForDetached(selector, opts);
+      case 'visible':
+        return this.waitForVisible(selector, opts);
+      case 'hidden':
+        return this.waitForHidden(selector, opts);
+      case 'attached':
+        return this.waitForAttached(selector, opts);
+      case 'detached':
+        return this.waitForDetached(selector, opts);
     }
   }
 

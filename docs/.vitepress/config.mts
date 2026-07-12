@@ -78,6 +78,8 @@ export default defineConfig({
             items: [
               { text: 'Find Elements', link: '/recipes/find-elements' },
               { text: 'Vitest Hooks', link: '/recipes/vitest-browser-lifecycle' },
+              { text: 'Electron App', link: '/recipes/electron-app-from-another-repo' },
+              { text: 'Electron Native Dialog', link: '/recipes/electron-native-dialog' },
               { text: 'Page Objects', link: '/recipes/page-objects' },
               { text: 'Reuse Login Session', link: '/recipes/login-once-reuse-session' },
               { text: 'Mock APIs', link: '/recipes/mock-api-and-assert-network' },
@@ -109,6 +111,7 @@ export default defineConfig({
         text: 'Browser Capabilities',
         items: [
           { text: 'Driver Configuration', link: '/driver-configuration' },
+          { text: 'Electron Apps', link: '/electron' },
           { text: 'Browser Contexts', link: '/browser-context' },
           { text: 'Session Management', link: '/session-management' },
           { text: 'Network Mocking', link: '/network' },

@@ -25,8 +25,10 @@ export type ChromeServiceOptions = Omit<DriverServiceOptions, 'command'> & {
 };
 
 export class ChromeService extends DriverService {
-  private readonly binaryPath: string | undefined;
-  private readonly browserPath: string | undefined;
+  // protected so ElectronService (a subclass) can read them when it overrides
+  // resolveDriverCommand() with Electron-specific driver resolution.
+  protected readonly binaryPath: string | undefined;
+  protected readonly browserPath: string | undefined;
 
   constructor(options: ChromeServiceOptions = {}) {
     const { binaryPath, browserPath, ...rest } = options;
@@ -41,9 +43,17 @@ export class ChromeService extends DriverService {
     this.browserPath = browserPath;
   }
 
+  /**
+   * Resolve the driver binary path. ElectronService overrides this seam to use
+   * Electron-specific driver resolution instead of the system-Chrome chain.
+   */
+  protected async resolveDriverCommand(): Promise<string> {
+    return resolveChromeDriver({ binaryPath: this.binaryPath, browserPath: this.browserPath });
+  }
+
   async start(): Promise<void> {
     if (this.proc) return;
-    this.opts.command = await resolveChromeDriver({ binaryPath: this.binaryPath, browserPath: this.browserPath });
+    this.opts.command = await this.resolveDriverCommand();
     await super.start();
   }
 }

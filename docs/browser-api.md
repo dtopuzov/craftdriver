@@ -28,11 +28,17 @@ const browser = await Browser.launch({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `browserName` | `'chrome' \| 'chromium' \| 'firefox'` | `'chrome'` | Browser to launch |
-| `enableBiDi` | `boolean` | `true` | Use WebDriver BiDi. Set `false` only when running against a browser that does not support it — every BiDi-only feature then throws a `requires BiDi` error if called. |
+| `enableBiDi` | `boolean` | browsers: `true`; Electron: `false` | Use WebDriver BiDi. Electron requires an explicit opt-in because negotiation resets its initial renderer to `about:blank`. |
 | `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
 | `downloadsDir` | `string` | temp dir | Directory where downloaded files are saved |
 | `browserPath` | `string` | — | Custom browser binary to launch (Chrome/Chromium/Firefox) — see [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration) |
+| `electron` | `ElectronLaunchOptions` | — | Launch a packaged Electron application renderer instead of a browser. Mutually exclusive with browser-only options; see [Testing Electron Apps](./electron.md). |
+| `electronService` | `ElectronService` | automatic | Customize the Electron-specific chromedriver service. Valid only with `electron`. |
+
+The TypeScript surface is a discriminated union: browser options and Electron
+options cannot be mixed. The same validation runs at runtime for JavaScript and
+JSON-driven callers.
 
 ## Navigation
 

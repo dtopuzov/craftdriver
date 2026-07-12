@@ -6,6 +6,12 @@ import fs from 'fs';
 import path from 'path';
 import { DRIVER_READINESS_TIMEOUT_MS, DRIVER_READINESS_POLL_INTERVAL_MS } from './timing.js';
 
+const DRIVER_OUTPUT_TAIL_BYTES = 64 * 1024;
+const DRIVER_OUTPUT_LABEL_BYTES = Buffer.byteLength('[stdout]\n\n[stderr]\n', 'utf8');
+const DRIVER_OUTPUT_TAIL_BYTES_PER_STREAM = Math.floor(
+  (DRIVER_OUTPUT_TAIL_BYTES - DRIVER_OUTPUT_LABEL_BYTES) / 2,
+);
+
 export interface DriverServiceOptions {
   command: string;
   args?: string[];
@@ -17,7 +23,7 @@ export interface DriverServiceOptions {
   readinessTimeoutMs?: number;
 }
 
-async function findFreePort(): Promise<number> {
+export async function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.unref();
@@ -33,6 +39,10 @@ async function findFreePort(): Promise<number> {
 export class DriverService {
   protected proc?: ChildProcess;
   protected endpoint!: WebDriverEndpoint;
+  private stdoutTail = '';
+  private stderrTail = '';
+  private startupFailure?: Error;
+  private ready = false;
   protected readonly opts: Required<Omit<DriverServiceOptions, 'env' | 'port'>> & {
     env?: NodeJS.ProcessEnv;
     port?: number;
@@ -59,9 +69,26 @@ export class DriverService {
     return this.opts.command;
   }
 
+  /**
+   * Returns the bounded tail of driver stdout/stderr captured since the latest
+   * start attempt. This is primarily useful when attaching startup diagnostics
+   * to test-runner artifacts.
+   */
+  getOutputTail(): string {
+    const parts: string[] = [];
+    if (this.stdoutTail) parts.push(`[stdout]\n${this.stdoutTail}`);
+    if (this.stderrTail) parts.push(`[stderr]\n${this.stderrTail}`);
+    return parts.join('\n');
+  }
+
   async start(): Promise<void> {
     if (this.proc) return; // already started
     await this.ensureBinaryAvailable();
+
+    this.stdoutTail = '';
+    this.stderrTail = '';
+    this.startupFailure = undefined;
+    this.ready = false;
 
     // Assign a free port if not specified
     const port = this.opts.port ?? await findFreePort();
@@ -72,20 +99,81 @@ export class DriverService {
       path: this.opts.pathBase,
     };
 
-    this.proc = spawn(this.opts.command, [`--port=${port}`, ...this.opts.args], {
-      env: { ...process.env, ...this.opts.env },
+    this.proc = spawn(this.opts.command, this.buildCommandArgs(port), {
+      env: this.computeSpawnEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // Wait for readiness
-    await this.waitUntilReady();
+    // Always drain both pipes. Leaving either unread can block a sufficiently
+    // noisy driver before it reaches the readiness endpoint.
+    this.proc.stdout?.on('data', (chunk: Buffer | string) => {
+      this.appendOutput('stdout', chunk);
+    });
+    this.proc.stderr?.on('data', (chunk: Buffer | string) => {
+      this.appendOutput('stderr', chunk);
+    });
+    this.proc.once('error', (error) => {
+      if (!this.ready) this.startupFailure = error;
+    });
+    // `close` follows `exit` only after stdio has closed, so the error includes
+    // every final stdout/stderr chunk rather than racing the pipe readers.
+    this.proc.once('close', (code, signal) => {
+      if (!this.ready) {
+        const result = signal ? `signal ${signal}` : `code ${String(code)}`;
+        this.startupFailure = new Error(`Driver process exited before it was ready (${result}).`);
+      }
+    });
+
+    try {
+      await this.waitUntilReady();
+      this.ready = true;
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
     if (!this.proc) return;
     const p = this.proc;
     this.proc = undefined;
+    this.ready = false;
     p.kill();
+  }
+
+  /** Build the driver CLI arguments. Overridable by process-fixture tests. */
+  protected buildCommandArgs(port: number): string[] {
+    return [`--port=${port}`, ...this.opts.args];
+  }
+
+  /**
+   * Environment for the spawned driver process. Overridable so a subclass can
+   * scrub variables that would break the target it launches (see
+   * {@link ElectronService}, which drops `ELECTRON_RUN_AS_NODE`).
+   */
+  protected computeSpawnEnv(): NodeJS.ProcessEnv {
+    return { ...process.env, ...this.opts.env };
+  }
+
+  private appendOutput(source: 'stdout' | 'stderr', chunk: Buffer | string): void {
+    let tail = (source === 'stdout' ? this.stdoutTail : this.stderrTail) + String(chunk);
+    if (Buffer.byteLength(tail, 'utf8') > DRIVER_OUTPUT_TAIL_BYTES_PER_STREAM) {
+      // Slice by characters first, then trim any remaining multibyte excess.
+      // Driver logs are overwhelmingly ASCII, while this keeps the common path
+      // cheap and guarantees a hard upper bound after the second pass.
+      tail = tail.slice(-DRIVER_OUTPUT_TAIL_BYTES_PER_STREAM);
+      while (Buffer.byteLength(tail, 'utf8') > DRIVER_OUTPUT_TAIL_BYTES_PER_STREAM) {
+        tail = tail.slice(1);
+      }
+    }
+    if (source === 'stdout') this.stdoutTail = tail;
+    else this.stderrTail = tail;
+  }
+
+  private startupError(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    const output = this.getOutputTail().trim();
+    return new Error(output ? `${message}\nDriver output (tail):\n${output}` : message);
   }
 
   protected async ensureBinaryAvailable(): Promise<void> {
@@ -124,6 +212,7 @@ export class DriverService {
     const deadline = Date.now() + this.opts.readinessTimeoutMs;
     let lastErr: unknown;
     while (Date.now() < deadline) {
+      if (this.startupFailure) throw this.startupError(this.startupFailure);
       try {
         const res = await client.send({ method: 'GET', path: this.opts.readinessPath! });
         // chromedriver responds with { value: { ready: true, message: '...' } } or similar
@@ -136,7 +225,8 @@ export class DriverService {
       // notice". These are cheap localhost GETs.
       await new Promise((r) => setTimeout(r, DRIVER_READINESS_POLL_INTERVAL_MS));
     }
-    throw new Error(
+    if (this.startupFailure) throw this.startupError(this.startupFailure);
+    throw this.startupError(
       `Driver service not ready at ${this.endpoint.hostname}:${this.endpoint.port} - ${String(lastErr)}`
     );
   }

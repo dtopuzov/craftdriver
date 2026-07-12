@@ -154,3 +154,6 @@ traces/
 # paths). Shared project skills under .claude/skills/ are tracked.
 .claude/settings.json
 .claude/settings.local.json
+
+# Downloaded Electron e2e fixture app (tests/electron/global-setup.ts)
+.electron-fixture/
