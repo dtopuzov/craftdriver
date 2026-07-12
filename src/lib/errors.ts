@@ -39,6 +39,33 @@ export const ErrorCode = {
   STATE_INVALID: 'STATE_INVALID',
   /** Driver-level / transport-level failure surfaced to the caller. */
   DRIVER_ERROR: 'DRIVER_ERROR',
+  /**
+   * The resolved chromedriver doesn't match the Electron app before a session is
+   * created — wrong bundled-Chromium major or wrong CPU arch. `detail.kind`
+   * distinguishes `'chromium-major'` from `'arch'`.
+   */
+  ELECTRON_DRIVER_MISMATCH: 'ELECTRON_DRIVER_MISMATCH',
+  /**
+   * The Electron app process exited during session creation ("Chrome instance
+   * exited"). `detail`/`hint` carry the diagnosed likely cause (macOS
+   * signing/Gatekeeper, Linux sandbox) plus the chromedriver output tail.
+   */
+  ELECTRON_LAUNCH_FAILED: 'ELECTRON_LAUNCH_FAILED',
+  /**
+   * `browser.electron.executeMain(...)` couldn't reach the app's main process —
+   * main-process access wasn't enabled (`electron: { mainProcess: true }`), the
+   * session isn't an Electron one, or the Node inspector is unavailable (e.g. the
+   * `EnableNodeCliInspectArguments` fuse is disabled). `hint` names the fix.
+   */
+  ELECTRON_MAIN_UNAVAILABLE: 'ELECTRON_MAIN_UNAVAILABLE',
+  /** The `executeMain(...)` callback threw inside the Electron main process. */
+  ELECTRON_MAIN_THREW: 'ELECTRON_MAIN_THREW',
+  /**
+   * `browser.electron.triggerDeeplink(url)` could not open the custom-protocol URL —
+   * an invalid/`http(s)`/`file` URL (use {@link INVALID_ARGUMENT}'s sibling check),
+   * an unsupported platform, or the OS `open`/`gio`/`rundll32` launcher failed.
+   */
+  ELECTRON_DEEPLINK_FAILED: 'ELECTRON_DEEPLINK_FAILED',
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;

@@ -49,6 +49,11 @@ try {
 | `UNSUPPORTED` | Feature exists but is unavailable on this browser/transport (e.g. Chromium-only over Firefox, or a BiDi-only feature with BiDi disabled). | Enable BiDi (`enableBiDi: true`) or switch browser. |
 | `STATE_INVALID` | Method called in the wrong state (e.g. `stopTrace()` without `startTrace()`). | Call the prerequisite first. |
 | `DRIVER_ERROR` | A WebDriver command returned a protocol error (non-200 response) — e.g. `stale element reference`, `element click intercepted`, `invalid selector` — or a transport-level failure. | `error.detail.webDriverError` carries the W3C JSON error code and `error.detail.webDriverMessage` the driver's message; recovery loops match on `webDriverError`. Also inspect `error.cause`. |
+| `ELECTRON_DRIVER_MISMATCH` | The resolved chromedriver can't drive the Electron app, caught **before** a session is created. | `error.detail.kind` is `'chromium-major'` (driver major ≠ the app's bundled Chromium; see `driverMajor` / `expectedChromiumMajor` / `electronVersion`) or `'arch'` (`driverArch` ≠ `runtimeArch`). The `hint` names the fix. |
+| `ELECTRON_LAUNCH_FAILED` | The Electron app process exited during session creation ("Chrome instance exited"). | `error.detail` carries the diagnosed cause (`macSigning: 'unsigned'`/`'adhoc'` on macOS, `sandboxDisabled: false` on Linux); `hint` is the top remediation; the message appends the chromedriver output tail; `error.cause` is the original driver error. |
+| `ELECTRON_MAIN_UNAVAILABLE` | `browser.electron.executeMain(...)` couldn't reach the app's main process. | Launch with `electron: { mainProcess: true }`; ensure the app build keeps the `EnableNodeCliInspectArguments` fuse enabled (default). `hint` names the fix. |
+| `ELECTRON_MAIN_THREW` | The `executeMain(...)` callback threw inside the Electron main process. | The main-process exception text is in the message; treat like a failed assertion about main-process state. |
+| `ELECTRON_DEEPLINK_FAILED` | `browser.electron.triggerDeeplink(url)` could not open the custom-protocol URL. | An unsupported platform, a missing `appBinaryPath` on Windows, or the OS `open`/`gio`/`rundll32` launcher failed (`error.detail.command`, `error.cause`). An invalid or `http(s)`/`file` URL throws `INVALID_ARGUMENT` instead. |
 
 ## Stability
 

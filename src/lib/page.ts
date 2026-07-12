@@ -28,7 +28,7 @@ import { fillWithFastPath } from './fillFastPath.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
-function isNoSuchWindowError(err: unknown): boolean {
+export function isNoSuchWindowError(err: unknown): boolean {
   if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
   return err.detail?.webDriverError === 'no such window' || err.message.includes('no such window');
 }

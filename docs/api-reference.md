@@ -14,7 +14,7 @@ Launch browsers, move between pages and frames, handle dialogs, and wait for nav
 | Symbol | Kind | Summary | Docs |
 |---|---|---|---|
 | `Browser` | class | — | [browser-api](browser-api.md) |
-| `LaunchOptions` | type | — | [browser-api](browser-api.md) |
+| `LaunchOptions` | type | Mutually-exclusive browser and Electron renderer launch configurations. | [browser-api](browser-api.md) |
 | `LoadState` | type | When to consider a navigation complete. - `'load'` — page `load` event has fired (default) - `'domcontentloaded'` — `DOMContentLoaded` has fired (faster, no waiting for images/fonts) - `'networkidle'` — `load` + no in-flight requests for 500 ms - `'none'` — do not wait; return as soon as the navigation is initiated | [browser-api](browser-api.md) |
 | `Page` | class | — | [browser-api](browser-api.md) |
 | `Frame` | class | — | [browser-api](browser-api.md) |
@@ -101,6 +101,29 @@ Configure devices, emulation overrides, and deterministic browser time.
 | `ClockInstallOptions` | type | Options for {@link Clock.install}. | [clock](clock.md) |
 | `ClockTime` | type | Accepted forms for a point in time. | [clock](clock.md) |
 
+## Electron Automation
+
+Launch packaged Electron applications, drive their renderer, and opt in to main-process testing.
+
+| Symbol | Kind | Summary | Docs |
+|---|---|---|---|
+| `ElectronLaunchOptions` | type | Options for driving an Electron application (see `LaunchOptions.electron`). | [electron](electron.md) |
+| `ElectronService` | class | Driver service for automating an Electron application renderer. It uses the chromedriver protocol like ChromeService, but resolves the driver only from Electron-specific configuration, never from system Chrome. | [electron](electron.md) |
+| `ElectronServiceOptions` | type | Driver-process configuration for {@link ElectronService}. | [electron](electron.md) |
+| `ElectronRemote` | class | Run code in the Electron main process via `browser.electron.executeMain`. Named `executeMain` (not WDIO's `execute`) so the process boundary is loud: `browser.evaluate()` is the renderer, `executeMain()` the main process. | [electron](electron.md) |
+| `MainProcessCallback` | type | A function evaluated in the Electron main process; receives the `electron` module. | [electron](electron.md) |
+| `ElectronDialogMock` | type | A native-dialog replacement returned by `browser.electron.mockDialog()`. | [electron](electron.md) |
+| `ElectronDialogMethod` | type | — | [electron](electron.md) |
+| `ElectronDialogCall` | type | One native-dialog invocation. `options` excludes the optional parent window. | [electron](electron.md) |
+| `ElectronDialogResult` | type | — | [electron](electron.md) |
+| `ElectronOpenDialogResult` | type | Scripted result for Electron's asynchronous `dialog.showOpenDialog()`. | [electron](electron.md) |
+| `ElectronSaveDialogResult` | type | Scripted result for Electron's asynchronous `dialog.showSaveDialog()`. | [electron](electron.md) |
+| `ElectronMessageBoxResult` | type | Scripted result for Electron's asynchronous `dialog.showMessageBox()`. | [electron](electron.md) |
+| `ElectronMainLogMonitor` | class | Buffers and dispatches main-process log entries. Reachable via `browser.electron.mainLogs`; its public surface mirrors the renderer {@link LogMonitor } so console monitoring reads the same in both processes. | [electron](electron.md) |
+| `ElectronMainLog` | type | — | [electron](electron.md) |
+| `ElectronMainLogHandler` | type | — | [electron](electron.md) |
+| `ElectronMainLogLevel` | type | Normalized level for a main-process log entry. | [electron](electron.md) |
+
 ## Accessibility
 
 Run axe-core accessibility checks and inspect violation details.
@@ -131,4 +154,16 @@ Handle stable CraftDriver errors or customize browser driver services.
 | `FirefoxService` | class | — | [getting-started](getting-started.md) |
 | `FirefoxServiceOptions` | type | — | [getting-started](getting-started.md) |
 
-Total exports: **61**.
+## Other Exports
+
+Exports that are public but not yet assigned to a feature group.
+
+| Symbol | Kind | Summary | Docs |
+|---|---|---|---|
+| `ElectronMainConnectInfo` | type | — | [electron](electron.md) |
+| `ElectronMock` | type | A replacement for a single `electron.<api>.<fn>` main-process method, returned by `browser.electron.mock()`. Records every call, returns a scripted value, and restores the original method on `restore()` or `browser.quit()`. | — |
+| `ElectronMockCall` | type | One recorded invocation of a mocked Electron main-process method. | — |
+| `ElectronRemoteOptions` | type | Extra context ElectronRemote needs beyond the inspector endpoint. | [electron](electron.md) |
+| `PageMatcher` | type | Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}. A string matches as a substring; a `RegExp` is tested. When both fields are given, both must match. | [browser-api](browser-api.md) |
+
+Total exports: **82**.

@@ -37,11 +37,18 @@ const TOPIC_DOC = {
   a11y: 'docs/accessibility.md',
   clock: 'docs/clock.md',
   chrome: 'docs/getting-started.md',
+  electron: 'docs/electron.md',
+  electronDialogMock: 'docs/electron.md',
+  electronMainLogs: 'docs/electron.md',
+  electronRemote: 'docs/electron.md',
   firefox: 'docs/getting-started.md',
   errors: 'docs/error-codes.md',
   index: 'docs/getting-started.md',
 };
-const BIDI_SYMBOL_DOC = {
+const SYMBOL_DOC = {
+  ElectronLaunchOptions: 'docs/electron.md',
+  ElectronRemote: 'docs/electron.md',
+  MainProcessCallback: 'docs/electron.md',
   ConsoleMessage: 'docs/browser-logs.md',
   JavaScriptError: 'docs/browser-logs.md',
   LogMessage: 'docs/browser-logs.md',
@@ -138,6 +145,29 @@ const CATEGORIES = [
     ],
   },
   {
+    title: 'Electron Automation',
+    description:
+      'Launch packaged Electron applications, drive their renderer, and opt in to main-process testing.',
+    symbols: [
+      'ElectronLaunchOptions',
+      'ElectronService',
+      'ElectronServiceOptions',
+      'ElectronRemote',
+      'MainProcessCallback',
+      'ElectronDialogMock',
+      'ElectronDialogMethod',
+      'ElectronDialogCall',
+      'ElectronDialogResult',
+      'ElectronOpenDialogResult',
+      'ElectronSaveDialogResult',
+      'ElectronMessageBoxResult',
+      'ElectronMainLogMonitor',
+      'ElectronMainLog',
+      'ElectronMainLogHandler',
+      'ElectronMainLogLevel',
+    ],
+  },
+  {
     title: 'Accessibility',
     description: 'Run axe-core accessibility checks and inspect violation details.',
     symbols: [
@@ -222,7 +252,7 @@ function definingFile(symbol) {
 /** Pick a topic doc for the symbol based on its defining file. */
 function topicLink(definingPath, symbolName) {
   if (!definingPath) return null;
-  if (BIDI_SYMBOL_DOC[symbolName]) return BIDI_SYMBOL_DOC[symbolName];
+  if (SYMBOL_DOC[symbolName]) return SYMBOL_DOC[symbolName];
   const base = path.basename(definingPath, '.ts');
   const portablePath = definingPath.split(path.sep).join('/');
   if (portablePath.includes('/bidi/')) return BIDI_FILE_DOC[base] ?? null;

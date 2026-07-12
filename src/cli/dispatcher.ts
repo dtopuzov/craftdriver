@@ -108,7 +108,7 @@ export async function dispatch(
       const page = await b.activePage().catch(() => null);
       const url = page ? await page.url().catch(() => '') : '';
       return {
-        browser: ctx.launchOptions.browserName ?? 'chrome',
+        browser: ctx.launchOptions.electron ? 'electron' : (ctx.launchOptions.browserName ?? 'chrome'),
         pid: process.pid,
         ready: true,
         activeUrl: url,
