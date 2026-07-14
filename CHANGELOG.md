@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/dtopuzov/craftdriver/compare/v1.4.0...v1.5.0) (2026-07-14)
+
+
+### Features
+
+* add desktop Safari support ([9fa9310](https://github.com/dtopuzov/craftdriver/commit/9fa93106346783339e8f0ab9d213f592649f4ff5))
+
 # [1.4.0](https://github.com/dtopuzov/craftdriver/compare/v1.3.0...v1.4.0) (2026-07-12)
 
 
