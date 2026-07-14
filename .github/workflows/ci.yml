@@ -2,19 +2,13 @@ name: CI
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
-# CI only reads the repo (checkout, build, test) — no releasing, commenting, or
-# pushing. Pin the GITHUB_TOKEN to the least privilege so forked-PR runs can't
-# inherit a write-capable default token.
 permissions:
   contents: read
 
 concurrency:
-  # A branch push and its PR event share a group, so the expensive Electron
-  # matrix does not run twice for the same commit. Fork names keep groups apart.
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  group: ci-${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -63,12 +57,6 @@ jobs:
           HEADLESS: true
 
   cross-platform-smoke:
-    # Fast confidence check that craftdriver can launch and drive a session at
-    # all on macOS/Windows — not full coverage (build-and-test above already
-    # runs everything on Ubuntu). Also the real-world proof that the
-    # CI-provided driver directory detection (CHROMEWEBDRIVER/GECKOWEBDRIVER,
-    # see driverManager.ts) actually engages on these runner images, not just
-    # doc-research.
     strategy:
       fail-fast: false
       matrix:
@@ -90,10 +78,7 @@ jobs:
         shell: bash
         run: npm run serve &
 
-      # No top-level `timeout` command here (unlike build-and-test's `timeout 2m
-      # bash -c "..."` above): macOS runners don't ship GNU coreutils' `timeout`
-      # (only BSD userland). A portable retry-count loop works on macOS, Windows
-      # (via Git Bash), and Ubuntu alike.
+      # Portable retry loop — macOS runners lack GNU `timeout`.
       - name: Wait for server
         shell: bash
         run: |
@@ -104,10 +89,7 @@ jobs:
           echo "Server did not start in time" >&2
           exit 1
 
-      # shell: bash on every step below: GitHub Actions defaults to PowerShell
-      # on Windows runners, where background `&` doesn't mean what the steps
-      # above assume. Git Bash ships on windows-latest, so forcing `shell: bash`
-      # makes these steps behave identically across macOS/Windows.
+      # shell: bash on every step — Actions defaults to PowerShell on Windows, where `&` differs.
       - name: Chrome smoke test
         shell: bash
         run: npx vitest run tests/chrome-smoke.test.ts
@@ -121,33 +103,53 @@ jobs:
           HEADLESS: true
           BROWSER_NAME: firefox
 
+  safari:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Enable Safari automation
+        run: sudo safaridriver --enable
+
+      - name: Start test server
+        run: npm run serve &
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 120); do
+            curl -sf http://127.0.0.1:8080/login.html && exit 0
+            sleep 1
+          done
+          echo "Server did not start in time" >&2
+          exit 1
+
+      - name: Run tests (Safari)
+        run: npm run test:safari
+
   electron-e2e:
     timeout-minutes: 25
-    # End-to-end proof that Browser.launch({ electron }) drives a real, packaged
-    # Electron app. The suite's global setup (tests/electron/global-setup.ts)
-    # downloads the pinned craftdriver-examples release for the runner's platform
-    # (checksum-verified), and drives it via `electron: { version }` → a matching
-    # Chrome-for-Testing chromedriver (no electron-chromedriver install), under xvfb
-    # on Linux and directly on Windows (it has a display). macOS is deliberately
-    # omitted for now: its asset is only ad-hoc-signed and Gatekeeper-rejects it on a
-    # locked-down runner — a tracked follow-up. Linux + Windows are the release gate.
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            # The unzipped chrome-sandbox helper loses its root-owned SUID bit,
-            # so the in-process sandbox can't start — disable it for the fixture.
+            # chrome-sandbox loses its root SUID bit when unzipped → disable the sandbox.
             electron_args: '--no-sandbox'
           - os: windows-latest
             electron_args: ''
     runs-on: ${{ matrix.os }}
     env:
-      # The fixture's Electron version → craftdriver maps 43.1.0 → Chromium 150 and
-      # downloads a matching CfT driver (no electron-chromedriver). On macOS
-      # it's auto-detected from the app bundle; Linux/Windows need it explicit. Bump
-      # with the example app's Electron version; the example-app RELEASE the suite
-      # downloads (checksum-verified) is pinned in tests/electron/fixture.ts.
+      # Maps to Chromium 150 + a matching CfT driver. Bump with the example app's
+      # Electron version (the downloaded release is pinned in tests/electron/fixture.ts).
       CRAFTDRIVER_ELECTRON_VERSION: 43.1.0
       CRAFTDRIVER_ARTIFACTS_DIR: ${{ github.workspace }}/electron-artifacts
     steps:
@@ -162,22 +164,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # No electron-chromedriver install: CRAFTDRIVER_ELECTRON_VERSION (job env)
-      # makes the suite resolve a matching CfT chromedriver from the app's Electron
-      # version — the dependency-free path we ship. Fallback for a version whose
-      # Chromium CfT doesn't publish yet: unset that var and add a step
-      #   `run: npm install --no-save electron-chromedriver@<electron-version>`
-      # to exercise the electron-chromedriver discovery path instead.
-
       - name: Install xvfb (Linux only)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
 
-      # The example app is downloaded (checksum-verified) by the suite's global
-      # setup — no manual download/unzip here. Electron is a GUI app (no --headless):
-      # Linux runs under a virtual display, Windows has a real one. The runner image
-      # ships Chrome and its shared libraries, which also satisfy Electron/Chromium,
-      # so no extra apt packages are needed beyond xvfb.
+      # Electron is a GUI app: Linux runs under xvfb, Windows has a real display.
       - name: Run Electron e2e tests
         shell: bash
         env:

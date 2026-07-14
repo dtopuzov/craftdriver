@@ -1,4 +1,62 @@
-export type SupportedBrowserName = 'chrome' | 'chromium' | 'firefox';
+import { CraftdriverError, ErrorCode } from './errors.js';
+
+// Keep in sync with the other independently-declared browser-name unions:
+// src/lib/browser.ts, src/lib/builder.ts, tests/utils.ts, src/cli/parseArgs.ts
+// (plus a few narrower call-site unions downstream, e.g. capabilities.ts,
+// tracing.ts, vibiumTrace.ts). This duplication is a known gap; consolidating
+// to one source of truth is a separate, out-of-scope refactor.
+export type SupportedBrowserName = 'chrome' | 'chromium' | 'firefox' | 'safari';
+
+/**
+ * Launch options that don't map onto Safari's public `safaridriver` surface.
+ * None of these have a faithful Safari equivalent:
+ * there is no supported headless mode, no browser-arg passthrough, no
+ * alternate-binary launch (STP is selected via `SafariService`'s
+ * `binaryPath`, not `browserPath`), no mobile/device emulation, and no
+ * download-directory configuration craftdriver can drive. Checked here, at
+ * launch-target resolution, so a Safari launch fails before any service
+ * process starts rather than partially launching and then failing.
+ */
+function assertSafariCompatible(options: Record<string, unknown>): void {
+  const headlessEnv = process.env.HEADLESS;
+  const checks: Array<{ present: boolean; feature: string; hint: string }> = [
+    {
+      present: headlessEnv === 'true' || headlessEnv === '1',
+      feature: 'HEADLESS',
+      hint: 'Safari has no supported headless mode. Unset the HEADLESS env var when launching Safari.',
+    },
+    {
+      present: hasValue(options, 'args'),
+      feature: 'args',
+      hint: 'safaridriver does not accept browser command-line arguments. Omit args for Safari.',
+    },
+    {
+      present: hasValue(options, 'browserPath'),
+      feature: 'browserPath',
+      hint: 'Safari is launched from the installed app by safaridriver, not a chosen binary. ' +
+        'To use Safari Technology Preview, pass its safaridriver path via SafariService\'s binaryPath instead.',
+    },
+    {
+      present: hasValue(options, 'mobileEmulation'),
+      feature: 'mobileEmulation',
+      hint: 'Desktop Safari automation has no device/mobile emulation API. Omit mobileEmulation for Safari.',
+    },
+    {
+      present: hasValue(options, 'downloadsDir'),
+      feature: 'downloadsDir',
+      hint: 'Safari exposes no download-directory configuration craftdriver can drive. Omit downloadsDir for Safari.',
+    },
+  ];
+
+  const incompatible = checks.find((check) => check.present);
+  if (incompatible) {
+    throw new CraftdriverError(
+      ErrorCode.UNSUPPORTED,
+      `browserName: 'safari' cannot be combined with ${incompatible.feature}. ${incompatible.hint}`,
+      { detail: { browserName: 'safari', feature: incompatible.feature } },
+    );
+  }
+}
 
 export interface BrowserLaunchTarget {
   kind: 'browser';
@@ -65,16 +123,39 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
     }
 
     const requestedName = options.browserName ?? 'chrome';
-    if (requestedName !== 'chrome' && requestedName !== 'chromium' && requestedName !== 'firefox') {
+    if (
+      requestedName !== 'chrome' &&
+      requestedName !== 'chromium' &&
+      requestedName !== 'firefox' &&
+      requestedName !== 'safari'
+    ) {
       throw new Error(
-        `Unsupported browser "${String(requestedName)}". Supported: chrome, chromium, firefox.`,
+        `Unsupported browser "${String(requestedName)}". Supported: chrome, chromium, firefox, safari.`,
       );
     }
+
+    if (requestedName === 'safari') {
+      assertSafariCompatible(options);
+    }
+
+    // BiDi defaults to on for Chrome/Chromium/Firefox (`enableBiDi !== false`)
+    // but Safari has no supported WebDriver BiDi implementation: it
+    // defaults to off, and an explicit `enableBiDi: true` is rejected here,
+    // before any driver process starts.
+    if (requestedName === 'safari' && enableBiDi === true) {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        "browserName: 'safari' cannot be combined with enableBiDi: true. " +
+        'Safari has no supported WebDriver BiDi implementation. Omit enableBiDi (or pass false) for Safari.',
+        { detail: { browserName: 'safari', feature: 'WebDriver BiDi' } },
+      );
+    }
+    const bidiRequested = requestedName === 'safari' ? false : enableBiDi !== false;
 
     return {
       kind: 'browser',
       browserName: requestedName,
-      bidiRequested: enableBiDi !== false,
+      bidiRequested,
       args: optionalStringArray(options.args, 'args'),
       browserPath: optionalString(options.browserPath, 'browserPath'),
     };
@@ -107,6 +188,7 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
     ['browserName', 'electron selects its own Chromium target; omit browserName'],
     ['chromeService', 'use electronService for an Electron-specific driver service'],
     ['firefoxService', 'Firefox services cannot drive Electron'],
+    ['safariService', 'Safari services cannot drive Electron'],
     ['mobileEmulation', 'mobile emulation does not model a desktop Electron shell'],
     ['args', 'put application/Electron/Chromium arguments in electron.args'],
     ['browserPath', 'electron.appBinaryPath is the executable path'],

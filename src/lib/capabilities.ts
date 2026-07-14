@@ -7,8 +7,8 @@ import type { Capabilities } from './types.js';
  * is encoded as `webSocketUrl`) is unit-testable without launching a browser.
  */
 export interface LaunchCapabilityInput {
-  /** `'chrome' | 'chromium' | 'firefox'`. Electron is chrome-family (see `isElectron`). */
-  browserName: 'chrome' | 'chromium' | 'firefox';
+  /** `'chrome' | 'chromium' | 'firefox' | 'safari'`. Electron is chrome-family (see `isElectron`). */
+  browserName: 'chrome' | 'chromium' | 'firefox' | 'safari';
   /** Electron target: chrome-family capabilities, but never `--headless` (GUI app). */
   isElectron?: boolean;
   /** From the `HEADLESS` env var. Ignored for Electron. */
@@ -32,48 +32,93 @@ export interface LaunchCapabilityInput {
 
 /**
  * Build the W3C capabilities for a launch. Pure: no I/O, no driver spawn.
+ *
+ * Branches on browser family explicitly (chrome-family / firefox / safari)
+ * rather than a binary `isFirefox` if/else. The old binary shape meant
+ * "anything that isn't Firefox" fell into the `goog:chromeOptions` branch —
+ * harmless while only two families existed, but a real bug once Safari was
+ * added: a naive change would have sent `goog:chromeOptions` (including
+ * `--headless=new` and Chrome download prefs) to `safaridriver`, which
+ * doesn't understand Chrome vendor capabilities. The switch below has an
+ * exhaustive, `never`-typed default so a future browser family that forgets
+ * its own branch fails to compile instead of silently reusing Chrome's.
  */
 export function buildLaunchCapabilities(input: LaunchCapabilityInput): Capabilities {
-  const isFirefox = input.browserName === 'firefox';
-
   const caps: Capabilities = {};
 
-  if (!isFirefox) {
-    const chromeOptions: Record<string, unknown> = {
-      // Electron is a GUI app with no headless mode — never inject --headless,
-      // even if HEADLESS is set (it would make Electron fail to start a window).
-      args: [
-        ...(input.isHeadless && !input.isElectron ? ['--headless=new'] : []),
-        ...(input.args ?? []),
-      ],
-      prefs: {
-        'download.default_directory': input.downloadsDir,
-        'download.prompt_for_download': false,
-        'safebrowsing.enabled': true,
-      },
-    };
-    if (input.browserBinary) chromeOptions.binary = input.browserBinary;
-    if (input.mobileEmulation) chromeOptions.mobileEmulation = input.mobileEmulation;
-    caps['goog:chromeOptions'] = chromeOptions;
-  } else {
-    const firefoxArgs: string[] = [];
-    if (input.isHeadless) firefoxArgs.push('-headless');
-    if (input.args?.length) firefoxArgs.push(...input.args);
-    caps['moz:firefoxOptions'] = {
-      args: firefoxArgs,
-      prefs: {
-        'browser.download.folderList': 2,
-        'browser.download.dir': input.downloadsDir,
-        'browser.download.useDownloadDir': true,
-        'browser.helperApps.neverAsk.saveToDisk':
-          'application/octet-stream,application/pdf,text/plain,text/csv,application/zip',
-        'pdfjs.disabled': true,
-      },
-      ...(input.browserBinary ? { binary: input.browserBinary } : {}),
-    };
+  switch (input.browserName) {
+    case 'chrome':
+    case 'chromium': {
+      const chromeOptions: Record<string, unknown> = {
+        // Electron is a GUI app with no headless mode — never inject --headless,
+        // even if HEADLESS is set (it would make Electron fail to start a window).
+        args: [
+          ...(input.isHeadless && !input.isElectron ? ['--headless=new'] : []),
+          ...(input.args ?? []),
+        ],
+        prefs: {
+          'download.default_directory': input.downloadsDir,
+          'download.prompt_for_download': false,
+          'safebrowsing.enabled': true,
+        },
+      };
+      if (input.browserBinary) chromeOptions.binary = input.browserBinary;
+      if (input.mobileEmulation) chromeOptions.mobileEmulation = input.mobileEmulation;
+      caps['goog:chromeOptions'] = chromeOptions;
+      break;
+    }
+    case 'firefox': {
+      const firefoxArgs: string[] = [];
+      if (input.isHeadless) firefoxArgs.push('-headless');
+      if (input.args?.length) firefoxArgs.push(...input.args);
+      caps['moz:firefoxOptions'] = {
+        args: firefoxArgs,
+        prefs: {
+          'browser.download.folderList': 2,
+          'browser.download.dir': input.downloadsDir,
+          'browser.download.useDownloadDir': true,
+          'browser.helperApps.neverAsk.saveToDisk':
+            'application/octet-stream,application/pdf,text/plain,text/csv,application/zip',
+          'pdfjs.disabled': true,
+        },
+        ...(input.browserBinary ? { binary: input.browserBinary } : {}),
+      };
+      break;
+    }
+    case 'safari': {
+      // Standard W3C capabilities only. No goog:chromeOptions, no
+      // moz:firefoxOptions — safaridriver doesn't understand either. Safari
+      // has no custom binary, args, mobileEmulation, or downloadsDir support
+      // (all rejected upstream in resolveLaunchTarget()), so there is nothing
+      // vendor-specific to attach here.
+      //
+      // Defense in depth on webSocketUrl: `input.bidiRequested` is already
+      // always `false` for Safari by the time this function runs (enforced
+      // in resolveLaunchTarget()/Browser.launch — Safari has no
+      // documented WebDriver BiDi endpoint). We still don't read
+      // `input.bidiRequested` in this branch at all, rather than trusting
+      // that invariant here too — so even if a future caller path ever
+      // miscomputes `bidiRequested` for Safari, this branch structurally
+      // cannot emit `webSocketUrl`. This intentionally does not change the
+      // single-`bidiRequested`-flag design for chrome-family/firefox below;
+      // it's a narrow Safari-only safety net, not a second source of truth.
+      break;
+    }
+    // Extension seam: a future browser family adds its own `case` here with
+    // whatever vendor-prefixed capabilities it needs. The `never`-typed default
+    // below forces that to be a compile error rather than silently reusing
+    // Chrome's options — do not add speculative branches before there's a real
+    // target.
+    default: {
+      const _exhaustive: never = input.browserName;
+      throw new Error(`buildLaunchCapabilities: unhandled browserName "${String(_exhaustive)}"`);
+    }
   }
 
-  if (input.bidiRequested) {
+  // Safari's branch above never reaches here with bidiRequested true (see the
+  // comment in that branch) because it's rejected earlier in the launch
+  // pipeline; this keeps the single-flag design for the other families.
+  if (input.browserName !== 'safari' && input.bidiRequested) {
     // Request the BiDi WebSocket URL...
     caps.webSocketUrl = true;
     // ...and set all prompt types to 'ignore' so BiDi events fire and we can handle them.

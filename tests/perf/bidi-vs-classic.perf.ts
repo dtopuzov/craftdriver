@@ -9,8 +9,7 @@
  * Measures the same flow with `enableBiDi: true` and `enableBiDi: false` and
  * reports median/p95 wall time plus the BiDi/Classic ratio, so future changes
  * to the protocol-selection code can be checked against a number instead of
- * a guess. See the "Fix BiDi performance regression" plan for the phased
- * changes this benchmark is meant to validate.
+ * a guess.
  */
 import { describe, it, expect } from 'vitest';
 import { Browser } from '../../src/index.js';
@@ -77,8 +76,8 @@ describe('BiDi vs Classic performance benchmark', () => {
       const ratio = median(bidiSamples) / median(classicSamples);
       console.log(`  BiDi/Classic connect-time ratio: ${ratio.toFixed(2)}x`);
 
-      // Soft safety net only — this is not the tuned budget from the plan.
-      // Tighten once Phase 1+2 land and a stable baseline exists.
+      // Soft safety net only — this is not a tuned budget.
+      // Tighten once a stable baseline exists.
       const budget = Number(process.env.PERF_BUDGET_RATIO) || 5.0;
       expect(ratio).toBeLessThan(budget);
     },

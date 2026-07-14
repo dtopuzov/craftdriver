@@ -82,7 +82,7 @@ export class Tracer {
   constructor(
     browser: Browser,
     conn: BiDiConnection,
-    private browserName: 'chrome' | 'chromium' | 'firefox',
+    private browserName: 'chrome' | 'chromium' | 'firefox' | 'safari',
   ) {
     this.browser = browser;
     this.conn = conn;

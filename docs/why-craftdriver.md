@@ -5,7 +5,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 ## What It Cares About
 
 - 🍺 **Focused Node.js API** - browser automation without a giant framework around it.
-- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds.
+- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds, plus real ([Safari on macOS](./safari.md)).
 - 🌐 **Standards that age well** - W3C WebDriver standards stay stable while browser-private protocols change.
 - 🚦 **Readable, auto-waited flows** - role, label, text, test id, CSS, XPath, click, fill, and expect.
 - 📡 **Network control** - mock, block, intercept, and wait for browser requests and responses.

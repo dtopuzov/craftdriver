@@ -10,11 +10,14 @@ list.
 import { Browser } from 'craftdriver';
 
 const browser = await Browser.launch({
-  browserName: 'chrome',   // 'chrome' | 'chromium' | 'firefox'
+  browserName: 'chrome',   // 'chrome' | 'chromium' | 'firefox' | 'safari'
   headless: true,
   // enableBiDi defaults to true — network / logs / tracing / init scripts
   // all need it, so only set enableBiDi: false if you must disable it.
 });
+// 'safari' is macOS-only, headed only (no `headless`),
+// one session at a time, WebDriver Classic only (enableBiDi is rejected).
+// See docs/safari.md.
 try {
   await browser.navigateTo('https://example.com');
   // ...

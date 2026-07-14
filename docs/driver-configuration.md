@@ -279,3 +279,57 @@ const browser = await Browser.launch({
   }),
 });
 ```
+
+## Safari (macOS): driver ships with the browser
+
+Everything above (steps 1–9, the download chain, the TTL cache) resolves
+**chromedriver**/**geckodriver** — binaries craftdriver may fetch and cache on
+disk. `browserName: 'safari'` doesn't fit that model at all: Apple ships
+`safaridriver` as part of macOS/Safari itself, so there is no download, no
+version-matching problem, and no cache to warm. This page covers only driver
+**resolution**; for setup (`safaridriver --enable`), capabilities, limitations,
+and Safari Technology Preview, see the [**Safari guide**](./safari.md).
+
+`SafariService` resolves the `safaridriver` binary through its own chain —
+first match wins, and none of these steps ever triggers a network call:
+
+| Step | Source |
+|---|---|
+| 1 | `binaryPath` passed to `new SafariService({ binaryPath })` |
+| 2 | `CRAFTDRIVER_SAFARIDRIVER_PATH` env var |
+| 3 | `CRAFTDRIVER_DRIVER_PATH` env var (generic fallback, shared with Chrome/Firefox) |
+| 4 | `/usr/bin/safaridriver` (the fixed system location on macOS) |
+| 5 | `safaridriver` on `PATH` |
+| 6 | a clear, actionable error if nothing resolves — craftdriver never downloads a `safaridriver` |
+
+To pin **Safari Technology Preview**, point `binaryPath` at its bundled driver
+(`/Applications/Safari Technology Preview.app/Contents/MacOS/safaridriver`) —
+see the [Safari guide](./safari.md#safari-technology-preview).
+
+### Extra `safaridriver` arguments
+
+`SafariService` accepts `args`, passed through verbatim after `--port <port>`.
+The most useful one is `--diagnose`, which turns on `safaridriver`'s
+diagnostic logging (written under `~/Library/Logs/com.apple.WebDriver/`) —
+handy when a Safari session fails to start and the driver's own stdout/stderr
+isn't enough to tell why:
+
+```typescript
+const browser = await Browser.launch({
+  browserName: 'safari',
+  safariService: new SafariService({ args: ['--diagnose'] }),
+});
+```
+
+### What's different from Chrome/Firefox here
+
+- No `CRAFTDRIVER_CACHE_DIR`, `CRAFTDRIVER_DRIVER_TTL`, or `CRAFTDRIVER_OFFLINE`
+  behavior applies to Safari — there's nothing cached or downloaded to
+  configure.
+- No browser-binary resolution chain (`browserPath` / `CRAFTDRIVER_CHROME_PATH`-
+  style) exists for Safari — you select which Safari build's driver to use via
+  `SafariService.binaryPath` directly, as shown above, not via a separate
+  browser-path option.
+- `enableBiDi: true` is rejected before launch — Safari has no documented
+  WebDriver BiDi endpoint to negotiate. See
+  [WebDriver Standards → Safari is Classic-only](./standards.md#safari-is-classic-only).

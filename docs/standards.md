@@ -16,6 +16,19 @@ That protocol choice is the center of the project. CraftDriver tries to provide 
 
 CraftDriver picks the practical protocol path behind a single public API. You call `browser.click()`, `browser.navigateTo()`, `browser.network.mock()`, or `browser.startTrace()`; the library handles the transport details.
 
+### Safari is Classic-only
+
+`browserName: 'safari'` always uses WebDriver Classic and never negotiates
+`webSocketUrl`. This isn't a temporary gap CraftDriver plans to close — Apple
+does not currently document a supported WebDriver BiDi endpoint for Safari or
+Safari Technology Preview, so there's no BiDi transport to opt into. CraftDriver
+rejects `enableBiDi: true` for Safari with a clear `UNSUPPORTED` error before
+launch rather than silently downgrading, and every BiDi-only method (network,
+logs, tracing, contexts, permissions/geolocation/emulation, full-page
+screenshots, event-driven dialogs) fails the same way when called on a Safari
+session. See the [Safari guide](./safari.md) for what remains available on
+Classic.
+
 ## Why It Matters
 
 Standards-based automation gives projects a few useful properties:

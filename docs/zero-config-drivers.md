@@ -62,3 +62,15 @@ Manual configuration is useful when:
   [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration)
 
 See [Driver Configuration](./driver-configuration.md) for the full reference.
+
+## Safari: nothing to resolve, nothing to download
+
+The auto-download model above doesn't apply to `browserName: 'safari'`.
+`safaridriver` ships as part of macOS/Safari itself — there's no version to
+match, no binary to fetch, and no cache to warm. CraftDriver only ever
+**locates** the driver Apple already installed. The single prerequisite is
+turning automation on once per Mac with `safaridriver --enable`.
+
+See the [**Safari guide**](./safari.md) for setup and capabilities, and
+[Driver Configuration → Safari](./driver-configuration.md#safari-macos-driver-ships-with-the-browser)
+for the driver-resolution chain.

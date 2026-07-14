@@ -137,6 +137,7 @@ export default defineConfig({
         text: 'Browser Capabilities',
         items: [
           { text: 'Driver Configuration', link: '/driver-configuration' },
+          { text: 'Safari', link: '/safari' },
           { text: 'Electron Apps', link: '/electron' },
           { text: 'Browser Contexts', link: '/browser-context' },
           { text: 'Session Management', link: '/session-management' },

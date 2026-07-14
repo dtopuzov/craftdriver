@@ -75,28 +75,48 @@ returns the same `Page` the shortcuts would target.
 
 ## Launch Options
 
+The simplest launch runs Chrome:
+
 ```typescript
-// Chrome (default)
+const browser = await Browser.launch(); // Chrome by default
+```
+
+Pick a browser with `browserName`:
+
+```typescript
 const browser = await Browser.launch({
-  browserName: 'chrome', // 'chrome' | 'chromium' | 'firefox'
+  browserName: 'firefox', // 'chrome' | 'chromium' | 'firefox' | 'safari'
   storageState: './session.json', // optional: pre-load saved session state
 });
+```
 
-// Firefox
+To switch browsers from an environment variable in your own tests, read it
+yourself and pass it to `browserName` — craftdriver doesn't read any browser
+env var for you:
+
+```typescript
 const browser = await Browser.launch({
-  browserName: 'firefox',
+  browserName: process.env.BROWSER_NAME ?? 'chrome',
 });
 ```
 
-### Running tests on Firefox
+### Safari
 
-Set `BROWSER_NAME=firefox` before running your test command:
+Safari runs on macOS with the same API, as a smaller Classic-only tier. Enable
+automation once (`safaridriver --enable`) and launch:
 
-```bash
-BROWSER_NAME=firefox npx vitest run
-# or use the built-in script if your package.json has it:
-npm run test:firefox
+```typescript
+const browser = await Browser.launch({ browserName: 'safari' });
+await browser.navigateTo('http://127.0.0.1:8080/login.html');
+await browser.fill('#username', 'alice');
+await browser.click('#submit');
+await browser.quit();
 ```
+
+Safari is macOS-only, headed, and serial (one session at a time), and doesn't
+support BiDi-only features (network mocking, tracing, emulation, …). See the
+[**Safari guide**](./safari.md) for the full picture — setup, what works, and
+Safari Technology Preview.
 
 ### Custom WebDriver binary or port
 
