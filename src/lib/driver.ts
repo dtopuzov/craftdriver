@@ -1,5 +1,12 @@
 import { HttpClient } from './http.js';
-import type { Capabilities, SessionResponse, WebDriverEndpoint, CommandResponse } from './types.js';
+import type {
+  Capabilities,
+  SessionResponse,
+  WebDriverEndpoint,
+  CommandResponse,
+  ClassicCookie,
+  ClassicCookieInput,
+} from './types.js';
 import { By } from './by.js';
 import { WebElement, W3C_ELEMENT_KEY, LEGACY_ELEMENT_KEY } from './webelement.js';
 import { WebDriverWait, type Condition, type WaitOptions } from './wait.js';
@@ -526,6 +533,75 @@ export class Driver {
       method: 'POST',
       path: `/session/${this.sessionId}/alert/text`,
       body: { text },
+    });
+  }
+
+  // --- Cookies (W3C Classic WebDriver) ---
+  //
+  // These hit the browser's native cookie store, so — unlike `document.cookie`
+  // script injection — they see `HttpOnly` cookies and report real
+  // `secure`/`sameSite`/`path`/`expiry` values. `SessionStateManager`'s
+  // Classic-mode branches are built on top of these.
+
+  /** W3C `GET /session/{id}/cookie` — all cookies visible to the current browsing context. */
+  async getCookies(): Promise<ClassicCookie[]> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<ClassicCookie[]>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/cookie`,
+    });
+    const v = (res as CommandResponse<ClassicCookie[]>)?.value ?? (res as unknown as ClassicCookie[]);
+    return Array.isArray(v) ? v : [];
+  }
+
+  /**
+   * W3C `GET /session/{id}/cookie/{name}` — a single cookie by name.
+   * Returns `null` (rather than throwing) when the spec's `no such cookie`
+   * error comes back, matching how the codebase treats other "might not exist"
+   * lookups (`no such element` → recoverable, see `wait.ts`/`clearFastPath.ts`).
+   */
+  async getCookie(name: string): Promise<ClassicCookie | null> {
+    const client = new HttpClient(this.endpoint);
+    try {
+      const res = await client.send<ClassicCookie>({
+        method: 'GET',
+        path: `/session/${this.sessionId}/cookie/${encodeURIComponent(name)}`,
+      });
+      const v = (res as CommandResponse<ClassicCookie>)?.value ?? (res as unknown as ClassicCookie);
+      return v ?? null;
+    } catch (err) {
+      if (CraftdriverError.is(err, ErrorCode.DRIVER_ERROR) && err.detail?.webDriverError === 'no such cookie') {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /** W3C `POST /session/{id}/cookie` — add a cookie to the current browsing context. */
+  async addCookie(cookie: ClassicCookieInput): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'POST',
+      path: `/session/${this.sessionId}/cookie`,
+      body: { cookie },
+    });
+  }
+
+  /** W3C `DELETE /session/{id}/cookie/{name}` — delete a single cookie by name. */
+  async deleteCookie(name: string): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'DELETE',
+      path: `/session/${this.sessionId}/cookie/${encodeURIComponent(name)}`,
+    });
+  }
+
+  /** W3C `DELETE /session/{id}/cookie` — delete every cookie in the current browsing context. */
+  async deleteAllCookies(): Promise<void> {
+    const client = new HttpClient(this.endpoint);
+    await client.send({
+      method: 'DELETE',
+      path: `/session/${this.sessionId}/cookie`,
     });
   }
 

@@ -103,6 +103,47 @@ describe('ElementHandle API', () => {
     });
   });
 
+  // Displayedness (W3C-compatible atom replacing legacy /element/{id}/displayed).
+  // Runs on every supported browser; results must be identical to what the
+  // legacy endpoint produced on Chrome/Chromium/Firefox.
+  describe('isVisible() displayedness', () => {
+    beforeEach(async () => {
+      await browser.navigateTo(`${baseUrl}/displayed.html`);
+    });
+
+    it('reports a plainly visible element as visible', async () => {
+      expect(await browser.find('#visible-el').isVisible()).toBe(true);
+    });
+
+    it('reports an element with a display:none ancestor as not visible', async () => {
+      expect(await browser.find('#hidden-by-ancestor').isVisible()).toBe(false);
+    });
+
+    it('reports an element with its own display:none as not visible', async () => {
+      expect(await browser.find('#display-none-self').isVisible()).toBe(false);
+    });
+
+    it('reports an element with its own visibility:hidden as not visible', async () => {
+      expect(await browser.find('#visibility-hidden').isVisible()).toBe(false);
+    });
+
+    it('respects a visibility:visible descendant override of a hidden ancestor', async () => {
+      expect(await browser.find('#visibility-visible-override').isVisible()).toBe(true);
+    });
+
+    it('reports a zero-sized (0x0, overflow:hidden) element as not visible', async () => {
+      expect(await browser.find('#zero-size').isVisible()).toBe(false);
+    });
+
+    it('reports a <br> (legitimately zero-width) as visible', async () => {
+      expect(await browser.find('#line-break').isVisible()).toBe(true);
+    });
+
+    it('reports an element clipped out of an overflow:hidden container as not visible', async () => {
+      expect(await browser.find('#scrolled-out-of-clip').isVisible()).toBe(false);
+    });
+  });
+
   describe('boundingBox()', () => {
     it('returns element dimensions', async () => {
       await browser.navigateTo(`${baseUrl}/login.html`);

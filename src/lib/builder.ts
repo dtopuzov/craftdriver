@@ -1,5 +1,6 @@
 import { ChromeService } from './chrome.js';
 import { FirefoxService } from './firefox.js';
+import { SafariService, augmentSafariSessionError } from './safari.js';
 import { DriverService } from './service.js';
 import { Driver } from './driver.js';
 import type { Capabilities, WebDriverEndpoint } from './types.js';
@@ -24,9 +25,10 @@ export class Builder {
   private browserName: string | undefined;
   private chromeService: ChromeService | undefined;
   private firefoxService: FirefoxService | undefined;
+  private safariService: SafariService | undefined;
   private caps: Capabilities = {};
 
-  forBrowser(name: 'chrome' | 'chromium' | 'firefox' | string): this {
+  forBrowser(name: 'chrome' | 'chromium' | 'firefox' | 'safari' | string): this {
     this.browserName = name;
     return this;
   }
@@ -38,6 +40,11 @@ export class Builder {
 
   setFirefoxService(service: FirefoxService): this {
     this.firefoxService = service;
+    return this;
+  }
+
+  setSafariService(service: SafariService): this {
+    this.safariService = service;
     return this;
   }
 
@@ -53,9 +60,11 @@ export class Builder {
       service = this.chromeService ?? new ChromeService();
     } else if (name === 'firefox') {
       service = this.firefoxService ?? new FirefoxService();
+    } else if (name === 'safari') {
+      service = this.safariService ?? new SafariService();
     } else {
       throw new Error(
-        `Unsupported browser "${name}". Supported: chrome, chromium, firefox.`,
+        `Unsupported browser "${name}". Supported: chrome, chromium, firefox, safari.`,
       );
     }
     const caps = { browserName: name, ...this.caps };
@@ -80,7 +89,10 @@ export class Builder {
         }
 
         await service.stop().catch(() => { });
-        throw err;
+        // Turn safaridriver's "Allow Remote Automation" refusal into an
+        // actionable remedy instead of an opaque session-creation failure.
+        // No-op for every other error shape (see augmentSafariSessionError).
+        throw name === 'safari' ? augmentSafariSessionError(err) : err;
       }
     }
   }
@@ -92,6 +104,12 @@ export class Builder {
   ): Promise<Driver> {
     // Firefox's Marionette interface may not be ready immediately after geckodriver
     // reports healthy. Retry session creation with back-off before giving up.
+    // Safari has no measured evidence of needing different session-creation
+    // timing than Chrome (safaridriver's readiness poll already covers the
+    // driver-process-up case; there's no known equivalent lag), so it reuses
+    // CHROME_SESSION_MAX_ATTEMPTS rather than introducing an unmeasured new
+    // constant. Revisit with real numbers if Safari session creation proves
+    // flaky in practice.
     const maxAttempts = name === 'firefox' ? FIREFOX_SESSION_MAX_ATTEMPTS : CHROME_SESSION_MAX_ATTEMPTS;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {

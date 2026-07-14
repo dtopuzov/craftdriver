@@ -5,6 +5,7 @@ import { diagnoseElectronLaunchFailure } from './electronDiagnostics.js';
 import { ElectronRemote } from './electronRemote.js';
 import { findFreePort } from './service.js';
 import { FirefoxService } from './firefox.js';
+import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
 import { resolveLaunchTarget } from './launchTarget.js';
@@ -275,9 +276,10 @@ interface SharedLaunchOptions {
 interface BrowserLaunchOptions extends SharedLaunchOptions {
   electron?: never;
   electronService?: never;
-  browserName?: 'chrome' | 'chromium' | 'firefox';
+  browserName?: 'chrome' | 'chromium' | 'firefox' | 'safari';
   chromeService?: ChromeService;
   firefoxService?: FirefoxService;
+  safariService?: SafariService;
   /** Enable mobile device emulation (Chrome/Chromium only) */
   mobileEmulation?: MobileEmulation | DeviceName;
   /**
@@ -329,6 +331,7 @@ interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
   browserName?: never;
   chromeService?: never;
   firefoxService?: never;
+  safariService?: never;
   mobileEmulation?: never;
   args?: never;
   browserPath?: never;
@@ -552,7 +555,7 @@ export class Browser {
   /** The launched Electron app's executable path (for deep-link routing on Windows). */
   private _electronAppBinaryPath?: string;
   private _electron?: ElectronRemote;
-  private _browserName: 'chrome' | 'chromium' | 'firefox' = 'chrome';
+  private _browserName: 'chrome' | 'chromium' | 'firefox' | 'safari' = 'chrome';
   /** Active emulation overrides, re-applied to new top-level contexts. */
   private _emulation: EmulateOptions = {};
 
@@ -647,10 +650,19 @@ export class Browser {
     // it's the optional custom-binary resolution chain — but see
     // resolveBrowserBinaryPath's doc: some of the env vars in that chain aren't
     // craftdriver-opt-in, they're ambient conventions other tools may have set.
+    // Safari has no custom-binary concept: browserPath/args are rejected
+    // upstream in resolveLaunchTarget(), so target.browserPath is
+    // always undefined here. Skip resolveBrowserBinaryPath() for Safari
+    // entirely rather than calling it with 'firefox' as a stand-in — it would
+    // still probe FIREFOX_BIN/SE_FIREFOX_PATH-style env vars that have
+    // nothing to do with Safari, which is misleading even though it happens
+    // to return undefined/harmless today.
     const browserBinary =
       target.kind === 'electron'
         ? electronBinary
-        : resolveBrowserBinaryPath(isChromeFamily ? 'chrome' : 'firefox', target.browserPath);
+        : name === 'safari'
+          ? undefined
+          : resolveBrowserBinaryPath(isChromeFamily ? 'chrome' : 'firefox', target.browserPath);
 
     // Main-process access (opt-in): launch the Electron app with a Node inspector
     // on a free local port. chromedriver forwards this arg to the app, enabling
@@ -680,7 +692,7 @@ export class Browser {
     });
 
     const builder = new Builder().forBrowser(name);
-    let driverService: ChromeService | FirefoxService;
+    let driverService: ChromeService | FirefoxService | SafariService;
     if (target.kind === 'electron') {
       driverService =
         options.electronService ??
@@ -698,6 +710,12 @@ export class Browser {
       // reasoning as explicit config always winning over auto-detection).
       driverService = options.chromeService ?? new ChromeService({ browserPath: browserBinary });
       builder.setChromeService(driverService);
+    } else if (name === 'safari') {
+      // No browserPath threading (Safari has none — see the browserBinary
+      // resolution above) and no headless/args to pass through; SafariService
+      // resolves its own driver binary (never auto-downloaded).
+      driverService = options.safariService ?? new SafariService();
+      builder.setSafariService(driverService);
     } else {
       driverService = options.firefoxService ?? new FirefoxService();
       builder.setFirefoxService(driverService as FirefoxService);
@@ -800,6 +818,30 @@ export class Browser {
     return this.bidiSession?.isConnected() ?? false;
   }
 
+  /**
+   * Guard for the BiDi-only surface below. On Safari (which never
+   * negotiates BiDi) this throws `CraftdriverError`/`UNSUPPORTED` with a
+   * stable `{ browserName, feature }` detail so callers can branch on `code`
+   * instead of parsing prose. On every other browser the behavior is
+   * unchanged: the exact plain-`Error` message passed by the call site.
+   *
+   * Deliberately scoped to Safari's guards only — the pre-existing
+   * plain-`Error` guards elsewhere are a separate follow-up, not silently
+   * folded into this helper.
+   */
+  private requireBiDi(feature: string, chromeMessage: string): void {
+    if (this.bidiSession?.isConnected()) return;
+    if (this._browserName === 'safari') {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        `${feature} is not supported on Safari (no WebDriver BiDi). ` +
+          'Apple does not document a WebDriver BiDi endpoint for Safari.',
+        { detail: { browserName: 'safari', feature } }
+      );
+    }
+    throw new Error(chromeMessage);
+  }
+
   // === BiDi Feature Accessors ===
 
   /**
@@ -808,13 +850,12 @@ export class Browser {
    */
   get network(): NetworkInterceptor {
     if (!this._network) {
-      if (!this.bidiSession?.isConnected()) {
-        throw new Error(
-          'Network interception requires BiDi. ' +
-            'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
-        );
-      }
-      this._network = this.bidiSession.network;
+      this.requireBiDi(
+        'network',
+        'Network interception requires BiDi. ' +
+          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+      );
+      this._network = this.bidiSession!.network;
     }
     return this._network;
   }
@@ -824,13 +865,12 @@ export class Browser {
    */
   get logs(): LogMonitor {
     if (!this._logs) {
-      if (!this.bidiSession?.isConnected()) {
-        throw new Error(
-          'Log monitoring requires BiDi. ' +
-            'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
-        );
-      }
-      this._logs = this.bidiSession.logs;
+      this.requireBiDi(
+        'logs',
+        'Log monitoring requires BiDi. ' +
+          'BiDi negotiation may have failed at launch — check browser logs for WebSocket errors.'
+      );
+      this._logs = this.bidiSession!.logs;
     }
     return this._logs;
   }
@@ -1080,17 +1120,16 @@ export class Browser {
     permissions: string[],
     opts?: { origin?: string; state?: 'granted' | 'denied' | 'prompt' }
   ): Promise<void> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'grantPermissions() requires BiDi (enableBiDi: true). ' +
-          'Permission overrides use the W3C BiDi `permissions.setPermission` command, ' +
-          'which has no Classic-WebDriver equivalent.'
-      );
-    }
+    this.requireBiDi(
+      'grantPermissions()',
+      'grantPermissions() requires BiDi (enableBiDi: true). ' +
+        'Permission overrides use the W3C BiDi `permissions.setPermission` command, ' +
+        'which has no Classic-WebDriver equivalent.'
+    );
     if (!Array.isArray(permissions) || permissions.length === 0) {
       throw new Error('grantPermissions: pass a non-empty array of permission names.');
     }
-    const conn = this.bidiSession.getConnection();
+    const conn = this.bidiSession!.getConnection();
     const state = opts?.state ?? 'granted';
     const origin = opts?.origin ?? (await this._currentOrigin());
     if (!origin) {
@@ -1131,14 +1170,13 @@ export class Browser {
   async setGeolocation(
     coords: { latitude: number; longitude: number; accuracy?: number } | null
   ): Promise<void> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'setGeolocation() requires BiDi (enableBiDi: true). ' +
-          'Geolocation overrides use the W3C BiDi `emulation.setGeolocationOverride` ' +
-          'command, which has no Classic-WebDriver equivalent.'
-      );
-    }
-    const conn = this.bidiSession.getConnection();
+    this.requireBiDi(
+      'setGeolocation()',
+      'setGeolocation() requires BiDi (enableBiDi: true). ' +
+        'Geolocation overrides use the W3C BiDi `emulation.setGeolocationOverride` ' +
+        'command, which has no Classic-WebDriver equivalent.'
+    );
+    const conn = this.bidiSession!.getConnection();
     // Apply across all top-level contexts in the default user context.
     const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
       'browsingContext.getTree',
@@ -1210,14 +1248,13 @@ export class Browser {
   async emulate(options: EmulateOptions): Promise<void> {
     if (!options || Object.keys(options).length === 0) return;
 
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'emulate() requires BiDi (enableBiDi: true). ' +
-          'Emulation overrides use the W3C BiDi `emulation.*` commands ' +
-          '(and the BiDi+CDP bridge for media features and offline), ' +
-          'which have no Classic-WebDriver equivalent.'
-      );
-    }
+    this.requireBiDi(
+      'emulate()',
+      'emulate() requires BiDi (enableBiDi: true). ' +
+        'Emulation overrides use the W3C BiDi `emulation.*` commands ' +
+        '(and the BiDi+CDP bridge for media features and offline), ' +
+        'which have no Classic-WebDriver equivalent.'
+    );
 
     // Validate Chromium-only fields up front so we fail before mutating state.
     const chromiumOnly = ['colorScheme', 'reducedMotion', 'forcedColors', 'offline'] as const;
@@ -1235,7 +1272,7 @@ export class Browser {
       }
     }
 
-    const conn = this.bidiSession.getConnection();
+    const conn = this.bidiSession!.getConnection();
     const tree = await conn.send<{ contexts: Array<{ context: string; parent?: string | null }> }>(
       'browsingContext.getTree',
       { maxDepth: 0 }
@@ -1505,7 +1542,7 @@ export class Browser {
         ErrorCode.UNSUPPORTED,
         'startTrace() requires BiDi (enableBiDi: true). ' +
           'Tracing relies on BiDi events; Classic WebDriver does not expose them.',
-        { detail: { feature: 'startTrace' } }
+        { detail: { browserName: this._browserName, feature: 'startTrace' } }
       );
     }
     if (!this._tracer) {
@@ -1626,14 +1663,13 @@ export class Browser {
   async addInitScript(
     fnOrSrc: ((...args: unknown[]) => unknown) | string
   ): Promise<{ remove(): Promise<void> }> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'addInitScript() requires BiDi. ' +
-          'BiDi is enabled by default — check that your browser supports it.'
-      );
-    }
+    this.requireBiDi(
+      'addInitScript()',
+      'addInitScript() requires BiDi. ' +
+        'BiDi is enabled by default — check that your browser supports it.'
+    );
 
-    const conn = this.bidiSession.getConnection();
+    const conn = this.bidiSession!.getConnection();
     const fnSrc = typeof fnOrSrc === 'function' ? fnOrSrc.toString() : `() => { ${fnOrSrc} }`;
 
     const result = await conn.send<{ script: string }>('script.addPreloadScript', {
@@ -1659,11 +1695,10 @@ export class Browser {
     pattern: string | ((req: InterceptedRequest) => boolean),
     opts?: { timeout?: number }
   ): Promise<InterceptedRequest> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'waitForRequest() requires BiDi. BiDi is enabled by default — check your browser supports it.'
-      );
-    }
+    this.requireBiDi(
+      'waitForRequest()',
+      'waitForRequest() requires BiDi. BiDi is enabled by default — check your browser supports it.'
+    );
     return this.network.waitForRequest(pattern, {
       timeout: opts?.timeout ?? this.defaults.navigationTimeout,
     });
@@ -1686,11 +1721,10 @@ export class Browser {
     pattern: string | ((res: InterceptedResponse) => boolean),
     opts?: { timeout?: number }
   ): Promise<InterceptedResponse> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'waitForResponse() requires BiDi. BiDi is enabled by default \u2014 check your browser supports it.'
-      );
-    }
+    this.requireBiDi(
+      'waitForResponse()',
+      'waitForResponse() requires BiDi. BiDi is enabled by default \u2014 check your browser supports it.'
+    );
     return this.network.waitForResponse(pattern, {
       timeout: opts?.timeout ?? this.defaults.navigationTimeout,
     });
@@ -1720,12 +1754,11 @@ export class Browser {
     event: 'request' | 'response',
     listener: ((req: InterceptedRequest) => void) | ((res: InterceptedResponse) => void)
   ): () => void {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        `browser.on('${event}') requires BiDi (enableBiDi: true). ` +
-          'Network event listeners use the W3C BiDi `network` module, which has no Classic-WebDriver equivalent.'
-      );
-    }
+    this.requireBiDi(
+      `browser.on('${event}')`,
+      `browser.on('${event}') requires BiDi (enableBiDi: true). ` +
+        'Network event listeners use the W3C BiDi `network` module, which has no Classic-WebDriver equivalent.'
+    );
     if (event === 'request') {
       return this.network.on('request', listener as (req: InterceptedRequest) => void);
     }
@@ -1745,6 +1778,21 @@ export class Browser {
     action: () => Promise<void> | void,
     opts?: { timeout?: number }
   ): Promise<Download> {
+    if (this._browserName === 'safari') {
+      // safaridriver exposes no download-directory configuration craftdriver
+      // can manage, so a browser download never lands in _downloadsDir — it
+      // goes to the user's ~/Downloads. Without this guard, waitForDownload()
+      // would watch an empty temp dir and fail with an opaque timeout instead
+      // of a clear "unsupported" error. Craftdriver-managed downloads are out
+      // of scope for Safari.
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'waitForDownload() is not supported on Safari: safaridriver exposes no ' +
+          'download-directory configuration craftdriver can manage, so downloads ' +
+          'cannot be routed to or observed in a controlled directory.',
+        { detail: { browserName: 'safari', feature: 'waitForDownload()' } }
+      );
+    }
     const dir = this._downloadsDir;
     if (!dir) {
       throw new Error(
@@ -1804,7 +1852,27 @@ export class Browser {
         await handler(dialog);
       });
     }
-    // Classic: no push events — callers must use the imperative API below
+    if (this._browserName === 'safari') {
+      // Safari is Classic-only and has no WebDriver BiDi push events, so there
+      // is no event-driven way to detect a dialog opening. A polling fallback
+      // (repeatedly calling getAlertText()/driver "no such alert" errors to
+      // detect a dialog) was considered, but would need to be *proven*
+      // reliable on real Safari before shipping. Rather than silently no-op (today's
+      // Classic behavior for other browsers) or let waitForDialog() hang
+      // until its own generic timeout — which would look like a missed
+      // dialog rather than "this API isn't supported here" — fail
+      // immediately with a clear, actionable error. Revisit if a polling
+      // form is later measured reliable on real Safari.
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'onDialog() / waitForDialog() are not supported on Safari: Safari has no ' +
+          'WebDriver BiDi, so there is no push-event mechanism for dialogs. ' +
+          'Use the imperative dialog API instead — acceptDialog(), dismissDialog(), ' +
+          'getDialogMessage() — which work in Classic mode.',
+        { detail: { browserName: 'safari', feature: 'onDialog()' } }
+      );
+    }
+    // Classic (non-Safari): no push events — callers must use the imperative API below
     // Return a no-op unsubscribe
     return () => {
       /* no-op */
@@ -1873,19 +1941,30 @@ export class Browser {
   waitForDialog(opts?: { timeout?: number }): Promise<Dialog> {
     const timeout = opts?.timeout ?? this.defaults.timeout;
     return new Promise<Dialog>((resolve, reject) => {
-      const tid =
-        timeout > 0
-          ? setTimeout(() => {
-              off();
-              reject(new Error(`waitForDialog timed out after ${timeout}ms`));
-            }, timeout)
-          : undefined;
+      let tid: ReturnType<typeof setTimeout> | undefined;
+      let off: () => void;
+      // onDialog() throws synchronously on Safari (no BiDi push events for
+      // dialogs — see onDialog()'s comment). Register the handler before
+      // scheduling the timeout so that throw rejects this promise
+      // immediately instead of leaving a dangling timer whose callback would
+      // later reference `off` before it was ever assigned.
+      try {
+        off = this.onDialog((dialog) => {
+          if (tid !== undefined) clearTimeout(tid);
+          off();
+          resolve(dialog);
+        });
+      } catch (err) {
+        reject(err as Error);
+        return;
+      }
 
-      const off = this.onDialog((dialog) => {
-        if (tid !== undefined) clearTimeout(tid);
-        off();
-        resolve(dialog);
-      });
+      if (timeout > 0) {
+        tid = setTimeout(() => {
+          off();
+          reject(new Error(`waitForDialog timed out after ${timeout}ms`));
+        }, timeout);
+      }
     });
   }
 
@@ -2035,13 +2114,12 @@ export class Browser {
    * await page.waitForLoadState();
    */
   async openPage(opts?: { url?: string; type?: 'tab' | 'window' }): Promise<Page> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'openPage() requires BiDi (enableBiDi: true). ' +
-          'WebDriver Classic cannot create top-level browsing contexts.'
-      );
-    }
-    const conn = this.bidiSession.getConnection();
+    this.requireBiDi(
+      'openPage()',
+      'openPage() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic cannot create top-level browsing contexts.'
+    );
+    const conn = this.bidiSession!.getConnection();
     const created = await conn.send<{ context: string }>('browsingContext.create', {
       type: opts?.type ?? 'tab',
     });
@@ -2294,13 +2372,12 @@ export class Browser {
      */
     geolocation?: { latitude: number; longitude: number; accuracy?: number };
   }): Promise<BrowserContext> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'newContext() requires BiDi (enableBiDi: true). ' +
-          'WebDriver Classic has no concept of user contexts.'
-      );
-    }
-    const conn = this.bidiSession.getConnection();
+    this.requireBiDi(
+      'newContext()',
+      'newContext() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts.'
+    );
+    const conn = this.bidiSession!.getConnection();
     const created = await conn.send<{ userContext: string }>('browser.createUserContext', {});
     const ctx = this._wrapContext(created.userContext, {
       baseURL: opts?.baseURL,
@@ -2309,7 +2386,7 @@ export class Browser {
     if (opts?.storageState !== undefined) {
       await ctx.loadStorageState(opts.storageState);
     }
-    // Apply Milestone-C emulation options. Each setter is `userContexts`-scoped,
+    // Apply identity & device emulation options. Each setter is `userContexts`-scoped,
     // so future pages in this context inherit automatically.
     if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
     if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
@@ -2323,14 +2400,13 @@ export class Browser {
    * Maps to BiDi `browser.getUserContexts`. **BiDi-only.**
    */
   async contexts(): Promise<BrowserContext[]> {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'contexts() requires BiDi (enableBiDi: true). ' +
-          'WebDriver Classic has no concept of user contexts. ' +
-          'Use browser.pages() to list tabs instead.'
-      );
-    }
-    const conn = this.bidiSession.getConnection();
+    this.requireBiDi(
+      'contexts()',
+      'contexts() requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts. ' +
+        'Use browser.pages() to list tabs instead.'
+    );
+    const conn = this.bidiSession!.getConnection();
     const result = await conn.send<{ userContexts: Array<{ userContext: string }> }>(
       'browser.getUserContexts',
       {}
@@ -2344,12 +2420,11 @@ export class Browser {
    * to this context. **BiDi-only.**
    */
   get defaultContext(): BrowserContext {
-    if (!this.bidiSession?.isConnected()) {
-      throw new Error(
-        'defaultContext requires BiDi (enableBiDi: true). ' +
-          'WebDriver Classic has no concept of user contexts.'
-      );
-    }
+    this.requireBiDi(
+      'defaultContext',
+      'defaultContext requires BiDi (enableBiDi: true). ' +
+        'WebDriver Classic has no concept of user contexts.'
+    );
     if (this._defaultContext) return this._defaultContext;
     this._defaultContext = this._wrapContext('default');
     return this._defaultContext;
@@ -2591,6 +2666,7 @@ export class Browser {
       to: [number, number];
       durationMs?: number;
     }) => {
+      this.rejectTouchActionsOnSafari('gesture.swipe()');
       await this.driver.performTouchSwipe(from, to, durationMs);
     },
     pinch: async ({
@@ -2604,9 +2680,31 @@ export class Browser {
       distance?: number;
       durationMs?: number;
     }) => {
+      this.rejectTouchActionsOnSafari('gesture.pinch()');
       await this.driver.performTouchPinch(center, scale, distance, durationMs);
     },
   };
+
+  /**
+   * `gesture.swipe()`/`gesture.pinch()` send W3C actions with a `pointer`
+   * input source whose `parameters.pointerType` is `'touch'`. Desktop Safari
+   * has no touchscreen and Apple's Safari 12+ WebDriver command table gives
+   * no indication `safaridriver` synthesizes touch-type pointer input —
+   * unlike `pointerType: 'mouse'`, which is exercised by every other pointer
+   * helper and is squarely in scope. Rather than let the action silently
+   * no-op (or behave unpredictably) on real Safari, fail loudly before
+   * sending it.
+   */
+  private rejectTouchActionsOnSafari(feature: string): void {
+    if (this._browserName !== 'safari') return;
+    throw new CraftdriverError(
+      ErrorCode.UNSUPPORTED,
+      `${feature} sends a touch-type pointer action, which desktop Safari does not support. ` +
+        'Safari has no touchscreen and no documented touch-pointer WebDriver behavior; ' +
+        'this is desktop browser automation, not iPhone/iPad Safari coverage.',
+      { detail: { browserName: 'safari', feature } }
+    );
+  }
 
   /**
    * Capture a screenshot of the active page (viewport by default), the
@@ -2646,14 +2744,13 @@ export class Browser {
       const b64 = await el.screenshotBase64();
       buf = Buffer.from(b64, 'base64');
     } else if (opts?.fullPage) {
-      if (!this.bidiSession?.isConnected()) {
-        throw new Error(
-          'screenshot({ fullPage: true }) requires BiDi (enableBiDi: true). ' +
-            'Full-page screenshots use the W3C BiDi `browsingContext.captureScreenshot` ' +
-            'command with `origin: "document"`, which has no Classic-WebDriver equivalent.'
-        );
-      }
-      const conn = this.bidiSession.getConnection();
+      this.requireBiDi(
+        'screenshot({ fullPage: true })',
+        'screenshot({ fullPage: true }) requires BiDi (enableBiDi: true). ' +
+          'Full-page screenshots use the W3C BiDi `browsingContext.captureScreenshot` ' +
+          'command with `origin: "document"`, which has no Classic-WebDriver equivalent.'
+      );
+      const conn = this.bidiSession!.getConnection();
       const page = await this.activePage();
       const result = await conn.send<{ data: string }>('browsingContext.captureScreenshot', {
         context: page.id(),

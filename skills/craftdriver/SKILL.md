@@ -36,7 +36,10 @@ break the moment markup shifts.
 4. BiDi features (`network`, `logs`, tracing, init scripts, true load
    events) work out of the box — `enableBiDi` defaults to `true`. They only
    break if you explicitly pass `enableBiDi: false`; the error code on the
-   wrong transport is `UNSUPPORTED`.
+   wrong transport is `UNSUPPORTED`. Exception: `browserName: 'safari'`
+   defaults `enableBiDi` to `false` and rejects `true` — Safari is
+   Classic-only (macOS, headed, one session at a time). See
+   [docs/safari.md](../../docs/safari.md).
 5. Tests fetch from the example server. Start it in a separate
    terminal: `npm run examples:start` before `npm test`.
 

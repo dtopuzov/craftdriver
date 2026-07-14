@@ -1049,3 +1049,69 @@ export async function resolveFirefoxDriver(options?: { binaryPath?: string }): P
   }
   return downloadGeckodriver();
 }
+
+/** The fixed location Apple installs `safaridriver` at on every real macOS. */
+const SYSTEM_SAFARIDRIVER_PATH = '/usr/bin/safaridriver';
+
+/**
+ * Resolves the path to a `safaridriver` binary.
+ *
+ * Unlike {@link resolveChromeDriver}/{@link resolveFirefoxDriver}, this chain
+ * has **no download step and never fetches anything**. Safari's WebDriver
+ * remote end ships with macOS/Safari itself (there is no separate driver to
+ * download, and nothing licensed to fetch even if we wanted to — Apple bundles
+ * a version-matched `safaridriver` with each Safari build). So resolution can
+ * only ever *locate* an already-installed binary, and its terminal step is a
+ * clear, actionable error rather than an auto-download.
+ *
+ * Resolution chain (first match wins):
+ *   1. `options.binaryPath` (explicit — e.g. `SafariService`'s `binaryPath`,
+ *      also how Safari Technology Preview's own `safaridriver` is selected)
+ *   2. `CRAFTDRIVER_SAFARIDRIVER_PATH` env var
+ *   3. `CRAFTDRIVER_DRIVER_PATH` generic env var
+ *   4. `/usr/bin/safaridriver` (the fixed system location on every real macOS)
+ *   5. `safaridriver` on `PATH`
+ *   6. Throw with actionable guidance (never a silent hang or a bare `ENOENT`).
+ *
+ * This function only finds the *binary*. Whether Safari's "Allow Remote
+ * Automation" is enabled is a separate, session-creation-time concern (see the
+ * lifecycle task): detecting it needs a real `safaridriver` response, so it is
+ * deliberately not attempted here.
+ */
+export async function resolveSafariDriver(options?: { binaryPath?: string }): Promise<string> {
+  // 1. Explicit constructor argument.
+  if (options?.binaryPath && fs.existsSync(options.binaryPath)) {
+    return options.binaryPath;
+  }
+
+  // 2 & 3. craftdriver-specific env vars (Safari-specific first, then generic).
+  for (const envVar of ['CRAFTDRIVER_SAFARIDRIVER_PATH', 'CRAFTDRIVER_DRIVER_PATH']) {
+    const p = process.env[envVar];
+    if (p && fs.existsSync(p)) return p;
+  }
+
+  // 4. The fixed system location Apple installs safaridriver at on macOS.
+  if (fs.existsSync(SYSTEM_SAFARIDRIVER_PATH)) return SYSTEM_SAFARIDRIVER_PATH;
+
+  // 5. PATH probe (skipped when CRAFTDRIVER_SKIP_PATH_PROBE is set, matching
+  //    resolveChromeDriver/resolveFirefoxDriver). Covers Safari Technology
+  //    Preview installs that put their safaridriver on PATH, or unusual layouts.
+  if (!process.env.CRAFTDRIVER_SKIP_PATH_PROBE && commandOnPath('safaridriver')) {
+    return 'safaridriver';
+  }
+
+  // 6. Nothing resolved. There is no download fallback: safaridriver ships with
+  //    macOS/Safari, so a missing binary means Safari/macOS itself is absent or
+  //    the environment isn't macOS — not something craftdriver can fetch. Match
+  //    the plain-`Error` shape resolveChromeDriver/resolveFirefoxDriver use for
+  //    their own terminal "nothing resolved" case, with actionable guidance.
+  throw new Error(
+    "Could not find 'safaridriver'. Safari's WebDriver support ships with " +
+      `macOS/Safari itself — it is not downloaded — and is normally at ${SYSTEM_SAFARIDRIVER_PATH}.\n` +
+      'Safari automation must also be enabled once per machine, via ' +
+      '`safaridriver --enable` or Safari → Develop → Allow Remote Automation ' +
+      '(craftdriver does not run this for you — it changes a security setting).\n' +
+      'For Safari Technology Preview, or a non-standard install, point ' +
+      'SafariService({ binaryPath }) or CRAFTDRIVER_SAFARIDRIVER_PATH at its safaridriver binary.'
+  );
+}

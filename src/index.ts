@@ -65,6 +65,7 @@ export {
 export { ChromeService, type ChromeServiceOptions } from './lib/chrome.js';
 export { ElectronService, type ElectronServiceOptions } from './lib/electron.js';
 export { FirefoxService, type FirefoxServiceOptions } from './lib/firefox.js';
+export { SafariService, type SafariServiceOptions } from './lib/safari.js';
 
 // Electron main-process access (browser.electron)
 export {

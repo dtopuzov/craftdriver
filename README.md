@@ -16,7 +16,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 ## Why CraftDriver?
 
 - 🍺 **Focused Node.js API** - browser automation without a giant framework around it.
-- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds.
+- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds, plus real ([Safari on macOS](https://dtopuzov.github.io/craftdriver/safari)).
 - 🌐 **Standards that age well** - W3C WebDriver standards stay stable while browser-private protocols change.
 - 🚦 **Readable, auto-waited flows** - role, label, text, test id, CSS, XPath, click, fill, and expect.
 - 📡 **Network control** - mock, block, intercept, and wait for browser requests and responses.
@@ -116,6 +116,7 @@ await browser.a11y.check();
 | Accessibility        | Built-in axe-core audits for page, element, and locator scopes                     | [Accessibility](https://dtopuzov.github.io/craftdriver/accessibility)                                                                      |
 | Virtual time         | Fake `Date`, `setTimeout`, and `setInterval` for time-sensitive flows              | [Virtual clock](https://dtopuzov.github.io/craftdriver/clock)                                                                              |
 | Electron apps        | Drive packaged Electron renderers with a version-pinned chromedriver               | [Electron apps](https://dtopuzov.github.io/craftdriver/electron)                                                                            |
+| Safari (macOS)       | Real desktop Safari via WebDriver Classic — enable once with `safaridriver --enable` | [Safari](https://dtopuzov.github.io/craftdriver/safari)                                                                                     |
 | AI agents            | CLI, MCP server, assistant bootstrap, packaged skill files                         | [AI agent guide](https://dtopuzov.github.io/craftdriver/agents)                                                                            |
 
 ## Links

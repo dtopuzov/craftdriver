@@ -87,7 +87,7 @@ describe('error codes', () => {
     );
   });
 
-  // ── Phase 0: WebDriver protocol errors surface as DRIVER_ERROR ────────────
+  // ── WebDriver protocol errors surface as DRIVER_ERROR ─────────────────────
   // A snapshot handle from findAll() clicks its captured element directly with
   // no retry, so a genuine protocol failure (stale / intercepted) surfaces raw
   // instead of being retried away — the ideal probe for the HTTP-layer fix.

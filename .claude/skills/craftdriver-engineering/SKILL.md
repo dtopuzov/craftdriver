@@ -80,6 +80,15 @@ branches and months. **Delete or mark done when it lands — a stale plan is wor
 than none.** Keep `plans/` to *pending, actionable* work; move resolved
 decisions to `docs/` (or git history + memory) and remove them from `plans/`.
 
+**Internal planning vocabulary never ships.** Milestones, phases, task numbers
+(`task 1.5.1`), sprint/plan names, and "the plan said X" narration are private
+process — keep them in `plans/`, never in code comments, test names, doc-comments,
+docs, or the changelog. Name the behaviour instead ("identity & device emulation",
+not "Milestone C"). Genuine domain terms that contain these words (BiDi's
+`InterceptPhase`) stay. Before committing, sweep the diff for leaks:
+`grep -rniE 'milestone|phase [0-9]|task [0-9]+\.[0-9]|the plan\b'` over changed
+`src`/`tests`/`docs`/`CHANGELOG`, clearing any hit that isn't a domain term.
+
 ## Release & changelog
 
 Changelog per release has three sections: features, fixes, **performance (with

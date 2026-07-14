@@ -42,6 +42,7 @@ const TOPIC_DOC = {
   electronMainLogs: 'docs/electron.md',
   electronRemote: 'docs/electron.md',
   firefox: 'docs/getting-started.md',
+  safari: 'docs/getting-started.md',
   errors: 'docs/error-codes.md',
   index: 'docs/getting-started.md',
 };
@@ -193,6 +194,8 @@ const CATEGORIES = [
       'ChromeServiceOptions',
       'FirefoxService',
       'FirefoxServiceOptions',
+      'SafariService',
+      'SafariServiceOptions',
     ],
   },
 ];

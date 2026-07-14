@@ -2,7 +2,7 @@
  * Unit tests for the Electron launch surface — pure capability building and
  * Electron driver resolution. No Electron app, no chromedriver, no network:
  * these assert the W3C caps and the resolution chain in isolation so failures
- * localize (the real end-to-end drive lives in the Phase 3 integration suite).
+ * localize (the real end-to-end drive lives in the integration suite).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs';
@@ -201,6 +201,41 @@ describe('buildLaunchCapabilities — browser regression (unchanged behavior)', 
     expect((moz.args as string[])).toContain('-headless');
     expect((moz.prefs as Record<string, unknown>)['browser.download.dir']).toBe('/tmp/dl');
     expect(caps['goog:chromeOptions']).toBeUndefined();
+  });
+});
+
+describe('buildLaunchCapabilities — Safari (no vendor capabilities)', () => {
+  it('emits only browserName-level input, no goog:chromeOptions/moz:firefoxOptions/webSocketUrl', () => {
+    const caps = buildLaunchCapabilities({
+      browserName: 'safari', isHeadless: false, bidiRequested: false,
+      downloadsDir: '/tmp/dl',
+    });
+    expect(caps['goog:chromeOptions']).toBeUndefined();
+    expect(caps['moz:firefoxOptions']).toBeUndefined();
+    expect(caps.webSocketUrl).toBeUndefined();
+    expect(caps.unhandledPromptBehavior).toBeUndefined();
+    expect(caps).toEqual({});
+  });
+
+  it('never emits webSocketUrl for Safari even if bidiRequested were miscomputed true', () => {
+    // Defense in depth: resolveLaunchTarget()/Browser.launch already guarantee
+    // bidiRequested is false for Safari — this proves the
+    // capabilities branch itself doesn't trust that invariant either.
+    const caps = buildLaunchCapabilities({
+      browserName: 'safari', isHeadless: false, bidiRequested: true,
+      downloadsDir: '/tmp/dl',
+    });
+    expect(caps.webSocketUrl).toBeUndefined();
+    expect(caps.unhandledPromptBehavior).toBeUndefined();
+  });
+
+  it('ignores args/browserBinary/mobileEmulation inputs for Safari (not applicable, rejected upstream)', () => {
+    const caps = buildLaunchCapabilities({
+      browserName: 'safari', isHeadless: false, bidiRequested: false,
+      downloadsDir: '/tmp/dl', browserBinary: '/Applications/Safari.app',
+      args: ['--foo'], mobileEmulation: { deviceName: 'Pixel 7' },
+    });
+    expect(caps).toEqual({});
   });
 });
 

@@ -1,4 +1,46 @@
 /**
+ * Driver-process acquisition and lifecycle, in one lane.
+ *
+ * Everything here is about how craftdriver *obtains and runs* its driver
+ * process — no page-level browser behavior. Four concerns share this file:
+ *
+ *   1. Auto-download integration — real chromedriver resolution from Chrome
+ *      for Testing into an isolated cache (makes real network requests).
+ *   2. Concurrent resolution — the temp-file race regression when parallel
+ *      callers resolve the same missing version at once (real network).
+ *   3. Cache recovery — a stale cached chromedriver path is invalidated and
+ *      the launch retried once (fake driver service, no network).
+ *   4. DriverService startup diagnostics — the generic service base class
+ *      drains output, keeps a bounded tail, and reports an early exit.
+ */
+import { describe, it, beforeAll, afterAll, afterEach, expect } from 'vitest';
+import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { Browser } from '../src';
+import { resolveChromeDriver } from '../src/lib/driverManager';
+import { DriverService } from '../src/lib/service';
+import type { Driver } from '../src/lib/driver.js';
+import { Builder } from '../src/lib/builder.js';
+import { ChromeService } from '../src/lib/chrome.js';
+
+/** Remove a list of keys from process.env, returning a restore function. */
+function unsetEnvVars(keys: string[]): () => void {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of keys) {
+    saved[key] = process.env[key];
+    delete process.env[key];
+  }
+  return () => {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  };
+}
+
+/**
  * Integration test for the automatic driver resolution in driverManager.ts.
  *
  * Strategy: point CRAFTDRIVER_CACHE_DIR at a fresh temp dir, unset all driver
@@ -11,31 +53,6 @@
  * The cache is preserved between runs so subsequent runs are instant
  * (the cache hit path is exercised by the second `it` block).
  */
-
-import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { Browser } from '../src';
-import path from 'path';
-import os from 'os';
-import fs from 'fs';
-
-/** Remove a list of keys from process.env, returning a restore function. */
-function unsetEnvVars(keys: string[]): () => void {
-  const saved: Record<string, string | undefined> = {};
-  for (const key of keys) {
-    saved[key] = process.env[key];
-    delete process.env[key];
-  }
-  return () => {
-    for (const key of keys) {
-      if (saved[key] === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = saved[key];
-      }
-    }
-  };
-}
-
 describe('driver manager — auto-download integration', () => {
   // Use a project-local temp cache so we don't pollute ~/.cache/craftdriver
   // during the test run, and so we can easily inspect what was written.
@@ -117,5 +134,273 @@ describe('driver manager — auto-download integration', () => {
     await launchedBrowser.navigateTo('about:blank');
     const url = await launchedBrowser.url();
     expect(url).toBe('about:blank');
+  });
+});
+
+/**
+ * Regression test for the temp-file race in driverManager's download path.
+ *
+ * Several launches can resolve the same *missing* chromedriver version at the
+ * same time — most commonly parallel vitest workers, each its own process,
+ * sharing the one on-disk cache. They all pass the "already downloaded?" check
+ * together and take the download+extract path at once. With a fixed temp path
+ * (`_chromedriver-<ver>.zip` / `_extract_chromedriver_<ver>`) one process's
+ * cleanup deleted the zip another was mid-extract on, surfacing as
+ * `unzip failed: cannot find or open …` and a failed launch.
+ *
+ * This test forces that exact condition in one process via Promise.all against
+ * a cold, isolated cache: everything up to `downloadChromedriver`'s first
+ * network await runs synchronously, so all callers reach the download step
+ * before any finishes. It makes real network requests (first-run download from
+ * Chrome for Testing); the cache is isolated to a temp dir.
+ */
+describe('driver manager — concurrent resolution', () => {
+  const testCacheDir = path.join(os.tmpdir(), `craftdriver-concurrent-cache-${process.pid}`);
+  let restoreEnv = () => {};
+
+  beforeAll(() => {
+    // Start from an empty cache so every caller exercises the download path.
+    fs.rmSync(testCacheDir, { recursive: true, force: true });
+
+    restoreEnv = unsetEnvVars([
+      'CRAFTDRIVER_CHROMEDRIVER_PATH',
+      'CRAFTDRIVER_GECKODRIVER_PATH',
+      'CRAFTDRIVER_DRIVER_PATH',
+      'CRAFTDRIVER_CACHE_DIR',
+      'CRAFTDRIVER_OFFLINE',
+      'CHROMEDRIVER_PATH',
+      'SE_CHROMEDRIVER',
+      'CRAFTDRIVER_SKIP_PATH_PROBE',
+    ]);
+
+    // Skip the PATH probe so a pre-installed chromedriver (CI runners, nvm envs)
+    // does not short-circuit before the auto-download path we want to test.
+    process.env.CRAFTDRIVER_SKIP_PATH_PROBE = '1';
+    process.env.CRAFTDRIVER_CACHE_DIR = testCacheDir;
+  });
+
+  afterAll(() => {
+    restoreEnv?.();
+    fs.rmSync(testCacheDir, { recursive: true, force: true });
+  });
+
+  it('resolves the same chromedriver from concurrent callers without a temp-file race', async () => {
+    const N = 3;
+    const results = await Promise.all(Array.from({ length: N }, () => resolveChromeDriver()));
+
+    // All callers land on the one cached binary, and it exists + is executable.
+    const unique = new Set(results.map((p) => path.resolve(p)));
+    expect(unique.size).toBe(1);
+
+    const bin = results[0];
+    expect(fs.existsSync(bin)).toBe(true);
+    if (os.platform() !== 'win32') {
+      expect(fs.statSync(bin).mode & 0o100).toBe(0o100);
+    }
+  }, 120_000);
+});
+
+/**
+ * Cache recovery: a stale cached chromedriver whose version no longer matches
+ * the installed Chrome must be invalidated and the launch retried once — not
+ * surfaced as a hard "unsupported Chrome version" failure. Uses a fake driver
+ * service (no real network / no real chromedriver) that returns a version
+ * mismatch on the first /session and succeeds on the second.
+ */
+function cftPlatformForTest(): string {
+  const p = os.platform();
+  const a = os.arch();
+  if (p === 'darwin') return a === 'arm64' ? 'mac-arm64' : 'mac-x64';
+  if (p === 'win32') return a === 'x64' ? 'win64' : 'win32';
+  return a === 'arm64' ? 'linux-aarch64' : 'linux64';
+}
+
+function writeJson(res: http.ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+class FakeChromeService extends ChromeService {
+  startCalls = 0;
+  stopCalls = 0;
+  private server?: http.Server;
+
+  constructor(
+    private readonly staleDriverPath: string,
+    private readonly freshDriverPath: string
+  ) {
+    super();
+  }
+
+  override async start(): Promise<void> {
+    if (this.server) return;
+    this.startCalls++;
+    const generation = this.startCalls;
+    this.opts.command = generation === 1 ? this.staleDriverPath : this.freshDriverPath;
+
+    this.server = http.createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/session') {
+        if (generation === 1) {
+          writeJson(res, 500, {
+            value: {
+              error: 'session not created',
+              message:
+                'session not created: This version of ChromeDriver only supports Chrome version 139',
+            },
+          });
+          return;
+        }
+
+        writeJson(res, 200, {
+          value: {
+            sessionId: 'fresh-session',
+            capabilities: { browserName: 'chrome' },
+          },
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE' && req.url === '/session/fresh-session') {
+        writeJson(res, 200, { value: null });
+        return;
+      }
+
+      writeJson(res, 404, { value: { error: 'unknown command', message: req.url } });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      this.server!.listen(0, '127.0.0.1', () => {
+        const address = this.server!.address();
+        if (typeof address !== 'object' || !address) {
+          reject(new Error('No fake service port'));
+          return;
+        }
+        this.endpoint = {
+          protocol: 'http',
+          hostname: '127.0.0.1',
+          port: address.port,
+          path: '',
+        };
+        resolve();
+      });
+    });
+  }
+
+  override async stop(): Promise<void> {
+    if (!this.server) return;
+    this.stopCalls++;
+    const server = this.server;
+    this.server = undefined;
+    await new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    });
+  }
+}
+
+describe('chromedriver auto-resolution cache recovery', () => {
+  const envCacheDir = process.env.CRAFTDRIVER_CACHE_DIR;
+  let cacheDir: string | undefined;
+
+  afterEach(() => {
+    if (envCacheDir === undefined) {
+      delete process.env.CRAFTDRIVER_CACHE_DIR;
+    } else {
+      process.env.CRAFTDRIVER_CACHE_DIR = envCacheDir;
+    }
+    if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
+    cacheDir = undefined;
+  });
+
+  it('invalidates a stale cached chromedriver path and retries launch once', async () => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-cache-retry-'));
+    process.env.CRAFTDRIVER_CACHE_DIR = cacheDir;
+
+    const staleDriverPath = path.join(cacheDir, 'chromedriver-139');
+    const freshDriverPath = path.join(cacheDir, 'chromedriver-140');
+    fs.writeFileSync(staleDriverPath, '');
+    fs.writeFileSync(freshDriverPath, '');
+
+    const cacheKey = `chromedriver/${cftPlatformForTest()}`;
+    fs.writeFileSync(
+      path.join(cacheDir, 'metadata.json'),
+      JSON.stringify({
+        [cacheKey]: {
+          version: '139.0.0.0',
+          driverPath: staleDriverPath,
+          timestamp: Date.now(),
+        },
+      })
+    );
+
+    const service = new FakeChromeService(staleDriverPath, freshDriverPath);
+    let driver: Driver | undefined;
+    try {
+      driver = await new Builder().forBrowser('chrome').setChromeService(service).build();
+
+      expect(service.startCalls).toBe(2);
+      expect(service.stopCalls).toBe(1);
+      const metadata = JSON.parse(
+        fs.readFileSync(path.join(cacheDir, 'metadata.json'), 'utf-8')
+      ) as Record<string, unknown>;
+      expect(metadata[cacheKey]).toBeUndefined();
+    } finally {
+      await driver?.quit();
+      await service.stop();
+    }
+  });
+});
+
+/**
+ * DriverService is the generic base class every driver service (chrome,
+ * firefox, safari) extends. Its startup path must drain the driver's stdout/
+ * stderr (so a chatty driver can't deadlock on a full pipe), keep only a
+ * bounded tail of that output, and turn an early process exit into a clear
+ * error rather than a hang.
+ */
+class NodeScriptService extends DriverService {
+  constructor(private readonly scriptPath: string) {
+    super({ command: process.execPath, readinessTimeoutMs: 5_000 });
+  }
+
+  protected buildCommandArgs(): string[] {
+    return [this.scriptPath];
+  }
+}
+
+describe('DriverService startup diagnostics', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drains driver output, keeps a bounded tail, and reports an early exit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-service-'));
+    tempDirs.push(dir);
+    const script = path.join(dir, 'noisy-driver.cjs');
+    fs.writeFileSync(script, [
+      "process.stdout.write('discard-me-' + 'x'.repeat(128 * 1024));",
+      "process.stdout.write('STDOUT-TAIL\\n');",
+      "process.stderr.write('STDERR-TAIL\\n');",
+      'setTimeout(() => process.exit(17), 20);',
+    ].join('\n'));
+
+    const service = new NodeScriptService(script);
+    const startedAt = Date.now();
+
+    await expect(service.start()).rejects.toThrow(/exited before it was ready \(code 17\)/);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+
+    const output = service.getOutputTail();
+    expect(output).toContain('STDOUT-TAIL');
+    expect(output).toContain('STDERR-TAIL');
+    expect(output).not.toContain('discard-me-');
+    expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(64 * 1024);
   });
 });

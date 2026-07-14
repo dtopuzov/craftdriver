@@ -1,5 +1,5 @@
 /**
- * BrowserContext — page-scoped hooks & routing (Milestone B).
+ * BrowserContext — page-scoped hooks & routing.
  *
  * Real-world scenarios this exercises:
  *
@@ -21,7 +21,7 @@ import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 type NewContextOptions = Parameters<Browser['newContext']>[0];
 
-describe('BrowserContext hooks & routing (Milestone B)', () => {
+describe('BrowserContext hooks & routing', () => {
   let browser: Browser;
   const baseUrl = EXAMPLES_BASE_URL;
 

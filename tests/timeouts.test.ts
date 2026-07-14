@@ -60,7 +60,7 @@ describe('configurable timeouts', () => {
   });
 
   it('setDefaultNavigationTimeout() is accepted', () => {
-    // Smoke test — behaviour exercised once navigateTo() uses it (task 2).
+    // Smoke test — behaviour exercised once navigateTo() uses it.
     expect(() => browser.setDefaultNavigationTimeout(15000)).not.toThrow();
   });
 });

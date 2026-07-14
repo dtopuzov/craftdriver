@@ -1,5 +1,5 @@
 /**
- * BrowserContext — identity & device emulation (Milestone C).
+ * BrowserContext — identity & device emulation.
  *
  * Real-world scenarios this exercises:
  *
@@ -11,7 +11,7 @@
  *   - "Don't make the test click through the browser's notification
  *     prompt." → per-context `grantPermissions(['notifications'])`.
  *
- * All Milestone-C setters are scoped via BiDi `userContexts: [<id>]`, so
+ * All emulation setters are scoped via BiDi `userContexts: [<id>]`, so
  * pages opened **after** the override is set inherit it automatically —
  * no per-test plumbing for popups or programmatically opened tabs.
  */
@@ -22,7 +22,7 @@ import { EXAMPLES_BASE_URL, BROWSER_NAME, IS_CHROMIUM } from './utils';
 
 type NewContextOptions = Parameters<Browser['newContext']>[0];
 
-describe('BrowserContext identity & device (Milestone C)', () => {
+describe('BrowserContext identity & device', () => {
   let browser: Browser;
   const baseUrl = EXAMPLES_BASE_URL;
 
@@ -171,7 +171,7 @@ describe('BrowserContext identity & device (Milestone C)', () => {
 
   // ── Closed-context safety ───────────────────────────────────────────────
 
-  it('the Milestone-C setters throw after the context is closed', async () => {
+  it('the emulation setters throw after the context is closed', async () => {
     const ctx = await browser.newContext();
     await ctx.close();
     await expect(ctx.setLocale('de-DE')).rejects.toThrow(/closed/);

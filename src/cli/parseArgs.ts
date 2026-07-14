@@ -9,7 +9,7 @@
  *   --pretty                force pretty output even when piped
  *   --explain               include one-line BiDi step log (placeholder)
  *   --headless / --headed   launch option (only honoured for ephemeral / first daemon start)
- *   --browser <name>        chrome|chromium|firefox
+ *   --browser <name>        chrome|chromium|firefox|safari
  *   --ephemeral             run from stdin, don't talk to daemon
  *
  * Returns `null` when the user only asked for help / version.
@@ -98,7 +98,7 @@ FLAGS
   --timeout <ms>                    per-call timeout (default ${5000}ms)
   --json | --pretty                 force output format
   --headless / --headed             override headless mode (first launch only)
-  --browser <chrome|chromium|firefox>
+  --browser <chrome|chromium|firefox|safari>
   --ephemeral                       no daemon; read commands from stdin
 
 EXIT CODES

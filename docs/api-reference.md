@@ -153,6 +153,8 @@ Handle stable CraftDriver errors or customize browser driver services.
 | `ChromeServiceOptions` | type | — | [getting-started](getting-started.md) |
 | `FirefoxService` | class | — | [getting-started](getting-started.md) |
 | `FirefoxServiceOptions` | type | — | [getting-started](getting-started.md) |
+| `SafariService` | class | — | [getting-started](getting-started.md) |
+| `SafariServiceOptions` | type | — | [getting-started](getting-started.md) |
 
 ## Other Exports
 
@@ -166,4 +168,4 @@ Exports that are public but not yet assigned to a feature group.
 | `ElectronRemoteOptions` | type | Extra context ElectronRemote needs beyond the inspector endpoint. | [electron](electron.md) |
 | `PageMatcher` | type | Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}. A string matches as a substring; a `RegExp` is tested. When both fields are given, both must match. | [browser-api](browser-api.md) |
 
-Total exports: **82**.
+Total exports: **84**.

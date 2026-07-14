@@ -6,6 +6,8 @@
 import fs from 'fs/promises';
 import type { BiDiConnection } from './connection.js';
 import type { Driver } from '../driver.js';
+import { CraftdriverError, ErrorCode } from '../errors.js';
+import type { ClassicCookie, ClassicCookieInput } from '../types.js';
 import type {
   BrowsingContext,
   Cookie,
@@ -141,14 +143,18 @@ export class SessionStateManager {
         ...(this.context ? { partition: { type: 'context', context: this.context } } : {}),
       });
     } else {
-      // Classic WebDriver - delete all cookies
+      // Classic WebDriver — delete cookies via the native cookie store, which
+      // (unlike `document.cookie = "...expires=..."`) can also remove HttpOnly
+      // cookies. No filter → clear everything in one call.
+      if (!filter?.domain && !filter?.name) {
+        await this.driver.deleteAllCookies();
+        return;
+      }
       const cookies = await this.getCookiesClassic();
       for (const cookie of cookies) {
         if (filter?.domain && cookie.domain !== filter.domain) continue;
         if (filter?.name && cookie.name !== filter.name) continue;
-        await this.driver.executeScript(
-          `document.cookie = "${cookie.name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${cookie.domain}"`
-        );
+        await this.driver.deleteCookie(cookie.name);
       }
     }
   }
@@ -204,34 +210,28 @@ export class SessionStateManager {
   }
 
   private async getCookiesClassic(): Promise<Cookie[]> {
-    const cookies = await this.driver.executeScript<
-      Array<{
-        name: string;
-        value: string;
-        domain: string;
-        path: string;
-        expiry?: number;
-        httpOnly: boolean;
-        secure: boolean;
-        sameSite?: string;
-      }>
-    >(`
-      return document.cookie.split(';').map(c => {
-        const [name, ...valueParts] = c.trim().split('=');
-        return {
-          name: name,
-          value: valueParts.join('='),
-          domain: location.hostname,
-          path: '/',
-          httpOnly: false,
-          secure: location.protocol === 'https:',
-          size: c.length,
-          sameSite: 'lax'
-        };
-      }).filter(c => c.name);
-    `);
+    // Read from the browser's native cookie store via the W3C Classic cookie
+    // endpoint (not `document.cookie`), so HttpOnly cookies are included and
+    // secure/sameSite/path/expiry reflect the real stored values.
+    const cookies = await this.driver.getCookies();
+    return (cookies || []).map((c) => this.classicCookieToCookie(c));
+  }
 
-    return (cookies || []).map((c) => ({
+  /**
+   * Map a W3C Classic cookie object onto the `Cookie` shape this module's
+   * callers expect. The Classic endpoint carries no `size`, so we compute it
+   * the same way the old JS-based path did — `(name + value).length` — to keep
+   * the return shape backward compatible.
+   */
+  private classicCookieToCookie(c: ClassicCookie): Cookie {
+    const raw = (c.sameSite || '').toLowerCase();
+    const sameSite: Cookie['sameSite'] =
+      raw === 'strict' || raw === 'lax' || raw === 'none'
+        ? raw
+        : c.sameSite
+          ? 'default'
+          : 'lax';
+    return {
       name: c.name,
       value: c.value,
       domain: c.domain,
@@ -239,9 +239,9 @@ export class SessionStateManager {
       size: (c.name + c.value).length,
       httpOnly: c.httpOnly ?? false,
       secure: c.secure ?? false,
-      sameSite: (c.sameSite?.toLowerCase() as 'strict' | 'lax' | 'none' | 'default') || 'lax',
+      sameSite,
       expiry: c.expiry,
-    }));
+    };
   }
 
   private async setCookiesBiDi(cookies: Cookie[] | CookieInput[]): Promise<void> {
@@ -279,19 +279,58 @@ export class SessionStateManager {
 
   private async setCookiesClassic(cookies: Cookie[] | CookieInput[]): Promise<void> {
     for (const cookie of cookies) {
-      const value = this.normalizeCookieValue(cookie.value);
+      const input: ClassicCookieInput = {
+        name: cookie.name,
+        value: this.normalizeCookieValue(cookie.value),
+      };
+      if (cookie.domain) input.domain = cookie.domain;
+      if (cookie.path) input.path = cookie.path;
+      if (cookie.secure !== undefined) input.secure = cookie.secure;
+      if (cookie.httpOnly !== undefined) input.httpOnly = cookie.httpOnly;
+      if (cookie.expiry !== undefined) input.expiry = cookie.expiry;
+      const sameSite = this.toClassicSameSite(cookie.sameSite);
+      if (sameSite) input.sameSite = sameSite;
 
-      let cookieStr = `${cookie.name}=${encodeURIComponent(value)}`;
-      if (cookie.path) cookieStr += `; path=${cookie.path}`;
-      if (cookie.domain) cookieStr += `; domain=${cookie.domain}`;
-      if (cookie.secure) cookieStr += '; secure';
-      if (cookie.sameSite) cookieStr += `; samesite=${cookie.sameSite}`;
-      if (cookie.expiry) {
-        const date = new Date(cookie.expiry * 1000);
-        cookieStr += `; expires=${date.toUTCString()}`;
+      // Native `POST /cookie` — sets HttpOnly and the real sameSite/secure
+      // flags, which a `document.cookie = "..."` assignment cannot do.
+      try {
+        await this.driver.addCookie(input);
+      } catch (err) {
+        // The W3C cookie endpoint rejects a cookie whose domain doesn't match
+        // the current document with `invalid cookie domain`. The previous
+        // `document.cookie = "..."` path silently ignored such cookies (the
+        // browser refuses cross-origin document.cookie writes without error),
+        // so preserve that best-effort behavior for state restore — skip the
+        // unsettable cookie rather than aborting the whole restore. Any other
+        // addCookie failure still propagates.
+        if (
+          CraftdriverError.is(err, ErrorCode.DRIVER_ERROR) &&
+          err.detail?.webDriverError === 'invalid cookie domain'
+        ) {
+          continue;
+        }
+        throw err;
       }
+    }
+  }
 
-      await this.driver.executeScript(`document.cookie = ${JSON.stringify(cookieStr)}`);
+  /**
+   * Convert this module's lowercase sameSite (`strict`/`lax`/`none`/`default`)
+   * to the W3C Classic capitalized form. `default`/undefined is dropped so the
+   * driver applies the browser's own default.
+   */
+  private toClassicSameSite(
+    sameSite?: 'strict' | 'lax' | 'none' | 'default'
+  ): 'Strict' | 'Lax' | 'None' | undefined {
+    switch (sameSite) {
+      case 'strict':
+        return 'Strict';
+      case 'lax':
+        return 'Lax';
+      case 'none':
+        return 'None';
+      default:
+        return undefined;
     }
   }
 

@@ -61,8 +61,8 @@ export interface ContextStorageStateOptions {
 export interface BrowserContextHooks {
   /** Returns the singleton {@link NetworkInterceptor} — used by {@link BrowserContext.route}. */
   getNetwork: () => NetworkInterceptor;
-  /** Returns the engine name, used by Milestone-C setters to gate engine-specific BiDi calls. */
-  getBrowserName?: () => 'chrome' | 'chromium' | 'firefox';
+  /** Returns the engine name, used by the emulation setters to gate engine-specific BiDi calls. */
+  getBrowserName?: () => 'chrome' | 'chromium' | 'firefox' | 'safari';
   /** True when browser-level preload scripts can run in this context's pages. */
   hasBrowserInitScripts?: () => boolean;
 }
@@ -750,7 +750,7 @@ export class BrowserContext {
     }
   }
 
-  // ── Identity & device emulation (Milestone C) ────────────────────────────
+  // ── Identity & device emulation ──────────────────────────────────────────
 
   /**
    * Override the locale reported to every page in this context.

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Craftdriver Displayedness</title>
+  <style>
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      margin: 1rem;
+    }
+
+    /* An ancestor hidden via display:none. Its descendant #hidden-by-ancestor
+       has no style of its own but must count as not displayed. */
+    #display-none-ancestor {
+      display: none;
+    }
+
+    /* Own visibility:hidden. */
+    #visibility-hidden {
+      visibility: hidden;
+    }
+
+    /* Zero-sized content: no rendered box, overflow clipped. */
+    #zero-size {
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    /* A scrollable-but-CLIPPING (overflow:hidden) container. The child at the
+       bottom is scrolled out of the container's viewport, so it is clipped and
+       not displayed (bot.dom OverflowState.HIDDEN). */
+    #clip-container {
+      width: 120px;
+      height: 80px;
+      overflow: hidden;
+      border: 1px solid #ccc;
+    }
+
+    #clip-spacer {
+      height: 400px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <!-- Plainly visible baseline. -->
+    <div id="visible-el">I am visible</div>
+
+    <!-- Hidden by a display:none ancestor. -->
+    <div id="display-none-ancestor">
+      <div id="hidden-by-ancestor">Hidden because my ancestor is display:none</div>
+    </div>
+
+    <!-- Own display:none. -->
+    <div id="display-none-self" style="display: none">Hidden by my own display:none</div>
+
+    <!-- Own visibility:hidden. -->
+    <div id="visibility-hidden">Hidden by my own visibility:hidden</div>
+
+    <!-- Visibility hidden ancestor with a visible descendant override:
+         the child sets visibility:visible and MUST count as displayed. -->
+    <div style="visibility: hidden">
+      <div id="visibility-visible-override" style="visibility: visible">
+        Visible again despite hidden ancestor
+      </div>
+    </div>
+
+    <!-- Zero-sized content. -->
+    <div id="zero-size">unrenderable</div>
+
+    <!-- A <br> is legitimately zero-width but should count as displayed. -->
+    <br id="line-break" />
+
+    <!-- Element scrolled out of an overflow:hidden container's viewport. -->
+    <div id="clip-container">
+      <div id="clip-spacer"></div>
+      <div id="scrolled-out-of-clip">I am below the clipped fold</div>
+    </div>
+  </div>
+</body>
+
+</html>
