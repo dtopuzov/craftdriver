@@ -312,10 +312,21 @@ describe('Browser-level element methods', () => {
       }, 300);
     });
 
-    const start = Date.now();
-    await browser.clear('#delayed-clear', { timeout: 3000 });
+    const driver = (browser as any).driver;
+    const originalWait = driver.wait.bind(driver);
+    let waitCalls = 0;
+    driver.wait = (...args: any[]) => {
+      waitCalls += 1;
+      return originalWait(...args);
+    };
 
-    expect(Date.now() - start).toBeGreaterThanOrEqual(200);
+    try {
+      await browser.clear('#delayed-clear', { timeout: 3000 });
+    } finally {
+      driver.wait = originalWait;
+    }
+
+    expect(waitCalls).toBeGreaterThan(0);
     await browser.expect('#delayed-clear').toHaveValue('');
   });
 

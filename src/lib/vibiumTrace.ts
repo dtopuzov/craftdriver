@@ -16,7 +16,7 @@ const pkg = require('../../package.json') as { version: string };
 interface VibiumExportOptions {
   sourceDir: string;
   path: string;
-  browserName: 'chrome' | 'chromium' | 'firefox' | 'safari';
+  browserName: string;
   title?: string;
 }
 

@@ -13,7 +13,12 @@ import { CraftdriverError, ErrorCode } from './errors.js';
 const agents = new Map<string, http.Agent | https.Agent>();
 
 function agentKey(endpoint: WebDriverEndpoint): string {
-  return `${endpoint.protocol}//${endpoint.hostname}:${endpoint.port}`;
+  // Remote endpoints stamp a unique poolKey (see parseRemoteEndpoint) so
+  // concurrent sessions sharing one grid/hub host:port never share an agent
+  // — quitting one session must not destroy another's in-flight sockets.
+  // Local endpoints never set poolKey and keep the original host:port
+  // keying (every local DriverService already picks its own free port).
+  return endpoint.poolKey ?? `${endpoint.protocol}//${endpoint.hostname}:${endpoint.port}`;
 }
 
 function getAgent(endpoint: WebDriverEndpoint): http.Agent | https.Agent {
@@ -116,10 +121,19 @@ export class HttpClient {
     body,
     timeoutMs,
   }: RequestOptions): Promise<CommandResponse<T>> {
-    const base = `${this.endpoint.protocol}://${this.endpoint.hostname}:${this.endpoint.port}${this.endpoint.path ?? ''}`;
-    const url = new URL(path, base);
+    // WHATWG URL: an absolute-path second arg to `new URL(path, base)`
+    // *replaces* base's path rather than concatenating — so joining directly
+    // against a base carrying `endpoint.path` (e.g. a Grid's `/wd/hub`)
+    // silently dropped it. Concatenate the base path onto `path` ourselves
+    // first, then resolve against the origin only. For local endpoints
+    // `endpoint.path` is always `''`, so `basePath` is `''` and this is
+    // byte-identical to the previous behavior.
+    const basePath = (this.endpoint.path ?? '').replace(/\/$/, '');
+    const origin = `${this.endpoint.protocol}://${this.endpoint.hostname}:${this.endpoint.port}`;
+    const url = new URL(`${basePath}${path}`, origin);
     const isHttps = url.protocol === 'https:';
     const payload = body ? JSON.stringify(body) : undefined;
+    const effectiveTimeoutMs = timeoutMs ?? this.endpoint.commandTimeoutMs;
 
     const options: http.RequestOptions = {
       method,
@@ -128,6 +142,15 @@ export class HttpClient {
         'Content-Type': 'application/json; charset=utf-8',
         Accept: 'application/json',
         ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...(this.endpoint.auth
+          ? {
+              Authorization:
+                'Basic ' +
+                Buffer.from(`${this.endpoint.auth.username}:${this.endpoint.auth.password}`).toString(
+                  'base64'
+                ),
+            }
+          : {}),
       },
     };
 
@@ -182,21 +205,22 @@ export class HttpClient {
       });
       req.on('error', (err: Error) => settleReject(buildTransportError(err, method, path)));
 
-      // Only armed when the caller opts in (timeoutMs is undefined for every
-      // regular WebDriver command today) — a hung connection otherwise waits
-      // forever with no way for the caller to recover. See Driver.create(),
-      // the one call site that currently sets this.
-      if (timeoutMs) {
+      // Only armed when the caller opts in, or the endpoint carries a
+      // default (remote endpoints only — see `commandTimeoutMs`) — a hung
+      // connection otherwise waits forever with no way for the caller to
+      // recover. `Driver.create()` is the one local call site that sets its
+      // own `timeoutMs`; every other local command leaves both unset.
+      if (effectiveTimeoutMs) {
         timer = setTimeout(() => {
           settleReject(
             new CraftdriverError(
               ErrorCode.DRIVER_ERROR,
-              `WebDriver command ${method} ${path} timed out after ${timeoutMs}ms waiting for a response`,
-              { detail: { method, path, timeoutMs } }
+              `WebDriver command ${method} ${path} timed out after ${effectiveTimeoutMs}ms waiting for a response`,
+              { detail: { method, path, timeoutMs: effectiveTimeoutMs } }
             )
           );
           req.destroy();
-        }, timeoutMs);
+        }, effectiveTimeoutMs);
       }
 
       if (payload) req.write(payload);

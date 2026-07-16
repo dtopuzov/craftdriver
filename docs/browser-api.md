@@ -27,7 +27,7 @@ const browser = await Browser.launch({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `browserName` | `'chrome' \| 'chromium' \| 'firefox'` | `'chrome'` | Browser to launch |
+| `browserName` | `'chrome' \| 'chromium' \| 'firefox' \| 'safari'`; any non-empty `string` remotely | `'chrome'` | Local browser to launch or provider-facing remote browser name |
 | `enableBiDi` | `boolean` | browsers: `true`; Electron: `false` | Use WebDriver BiDi. Electron requires an explicit opt-in because negotiation resets its initial renderer to `about:blank`. |
 | `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
@@ -35,10 +35,11 @@ const browser = await Browser.launch({
 | `browserPath` | `string` | — | Custom browser binary to launch (Chrome/Chromium/Firefox) — see [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration) |
 | `electron` | `ElectronLaunchOptions` | — | Launch a packaged Electron application renderer instead of a browser. Mutually exclusive with browser-only options; see [Testing Electron Apps](./electron.md). |
 | `electronService` | `ElectronService` | automatic | Customize the Electron-specific chromedriver service. Valid only with `electron`. |
+| `remote` | `RemoteWebDriverOptions` | — | Connect to a remote W3C WebDriver endpoint instead of launching locally. It supports `browserName`, `enableBiDi`, and `storageState`, but not local service, binary, argument, emulation, or download-directory options. **Not supported by the CLI or MCP server.** See [Remote WebDriver](./remote-webdriver.md). |
 
-The TypeScript surface is a discriminated union: browser options and Electron
-options cannot be mixed. The same validation runs at runtime for JavaScript and
-JSON-driven callers.
+The TypeScript surface is a discriminated union for local browser, Electron,
+and remote targets. Target-specific conflicts are also validated at runtime
+for JavaScript and JSON-driven callers.
 
 ## Navigation
 

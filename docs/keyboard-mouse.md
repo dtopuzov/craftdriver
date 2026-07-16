@@ -255,10 +255,11 @@ This is often more convenient than using the global keyboard API.
 
 ---
 
-## Touch gestures (mobile emulation)
+## Touch gestures
 
-When running with `mobileEmulation`, two convenience gestures are
-exposed under `browser.gesture`:
+When running Chrome/Chromium with `mobileEmulation`, or a remote real-device
+session whose provider supports W3C touch-pointer actions, two convenience
+gestures are exposed under `browser.gesture`:
 
 ```typescript
 // Swipe from one point to another (px coordinates).
@@ -277,5 +278,6 @@ await browser.gesture.pinch({
 });
 ```
 
-These wrap the W3C Pointer Actions API with two simulated touch
-pointers. They work whether or not BiDi is enabled.
+These use W3C Pointer Actions and do not require BiDi. Remote support depends
+on the selected device, browser, and provider. Local desktop Safari rejects
+touch gestures because it has no documented touch-pointer automation surface.

@@ -1,5 +1,11 @@
 # Driver Configuration
 
+> This page is **local-only** — it covers resolving a local
+> chromedriver/geckodriver/safaridriver binary. Connecting to a remote
+> Selenium Grid or cloud provider instead of a local driver process is a
+> different, simpler configuration surface — see
+> [Remote WebDriver](./remote-webdriver.md).
+
 Craftdriver resolves the WebDriver binary through a chain — first match wins:
 
 | Step | Source |

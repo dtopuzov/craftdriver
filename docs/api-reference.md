@@ -14,7 +14,7 @@ Launch browsers, move between pages and frames, handle dialogs, and wait for nav
 | Symbol | Kind | Summary | Docs |
 |---|---|---|---|
 | `Browser` | class | — | [browser-api](browser-api.md) |
-| `LaunchOptions` | type | Mutually-exclusive browser and Electron renderer launch configurations. | [browser-api](browser-api.md) |
+| `LaunchOptions` | type | Mutually-exclusive browser, Electron, and remote-WebDriver launch configurations. | [browser-api](browser-api.md) |
 | `LoadState` | type | When to consider a navigation complete. - `'load'` — page `load` event has fired (default) - `'domcontentloaded'` — `DOMContentLoaded` has fired (faster, no waiting for images/fonts) - `'networkidle'` — `load` + no in-flight requests for 500 ms - `'none'` — do not wait; return as soon as the navigation is initiated | [browser-api](browser-api.md) |
 | `Page` | class | — | [browser-api](browser-api.md) |
 | `Frame` | class | — | [browser-api](browser-api.md) |
@@ -167,5 +167,7 @@ Exports that are public but not yet assigned to a feature group.
 | `ElectronMockCall` | type | One recorded invocation of a mocked Electron main-process method. | — |
 | `ElectronRemoteOptions` | type | Extra context ElectronRemote needs beyond the inspector endpoint. | [electron](electron.md) |
 | `PageMatcher` | type | Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}. A string matches as a substring; a `RegExp` is tested. When both fields are given, both must match. | [browser-api](browser-api.md) |
+| `RemoteAuth` | type | — | — |
+| `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
 
-Total exports: **84**.
+Total exports: **86**.

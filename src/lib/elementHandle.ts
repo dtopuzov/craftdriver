@@ -3,6 +3,8 @@ import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
 import { until } from './wait.js';
 import fs from 'fs/promises';
+import path from 'path';
+import yazl from 'yazl';
 import { expectSelector } from './expect.js';
 import { getKeyValue, type KeyValue } from './keys.js';
 import { A11y } from './a11y.js';
@@ -16,6 +18,25 @@ export interface ElementOptions {
 }
 
 export type ContextSwitcher = { in: () => Promise<void>; out: () => Promise<void> };
+
+/**
+ * Zip a single local file in memory (as Selenium's `se/file` upload
+ * extension expects: one file, at the zip root, named by its own basename)
+ * and return it base64-encoded, ready for `Driver.uploadFile()`. Reuses
+ * `yazl` (already a runtime dependency for `vibiumTrace.ts`) rather than
+ * adding a second zip approach.
+ */
+function zipFileToBase64(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const zip = new yazl.ZipFile();
+    zip.addFile(filePath, path.basename(filePath));
+    const chunks: Buffer[] = [];
+    zip.outputStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    zip.outputStream.on('error', reject);
+    zip.outputStream.on('end', () => resolve(Buffer.concat(chunks).toString('base64')));
+    zip.end();
+  });
+}
 
 export class ElementHandle {
   /** Set only for snapshot handles created via `ElementHandle.fromWebElement()`. */
@@ -291,6 +312,21 @@ export class ElementHandle {
           `setInputFiles() requires an <input type="file"> element. ` +
           `Found <input type="${type ?? ''}"> instead.`
         );
+      }
+
+      // Remote sessions: the caller's local path doesn't exist on the grid
+      // node, so it can't be sent directly via sendKeys. Zip each file and
+      // upload it through Selenium's se/file extension, then sendKeys() the
+      // path(s) the remote node extracted it to. Gated on driver.isRemote()
+      // so the local branch below is untouched.
+      if (this.driver.isRemote()) {
+        const remotePaths: string[] = [];
+        for (const filePath of paths) {
+          const base64Zip = await zipFileToBase64(filePath);
+          remotePaths.push(await this.driver.uploadFile(base64Zip));
+        }
+        await el.sendKeys(remotePaths.join('\n'));
+        return;
       }
 
       await el.sendKeys(paths.join('\n'));

@@ -1,7 +1,12 @@
 name: CI
 
 on:
+  # Push CI runs only on main (post-merge / release validation). Feature
+  # branches are covered by the `pull_request` trigger, so a branch with an
+  # open PR gets a single run — not a duplicate `(push)` + `(pull_request)` pair.
   push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -9,7 +14,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-test:
@@ -134,6 +139,91 @@ jobs:
 
       - name: Run tests (Safari)
         run: npm run test:safari
+
+  browserstack-smoke:
+    # Fork pull requests cannot access repository secrets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Only the desktop smokes run in CI. The real-device gesture and
+      # BrowserStack Local flows stay opt-in (BROWSERSTACK_TEST_MOBILE /
+      # BROWSERSTACK_TEST_LOCAL) for manual runs — they need live iteration a
+      # push cannot give them.
+      - name: Run BrowserStack smoke tests
+        run: npm run test:browserstack
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+
+  selenium-grid-smoke:
+    # Exercises the generic remote path against a real standalone Grid.
+    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Selenium Server 4.46.0
+        run: |
+          curl -fsSL -o selenium-server.jar https://github.com/SeleniumHQ/selenium/releases/download/selenium-4.46.0/selenium-server-4.46.0.jar
+          echo '2c60f188f136051b2565f709fc2272b0bb1ff37ad861d63cb16677a5c2876862  selenium-server.jar' | sha256sum --check --strict
+
+      - name: Start test server
+        run: npm run serve &
+
+      - name: Wait for test server
+        run: timeout 2m bash -c 'until curl -fsS http://127.0.0.1:8080/login.html >/dev/null; do sleep 1; done'
+
+      - name: Start Selenium Grid (standalone)
+        run: |
+          driver_path="$CHROMEWEBDRIVER/chromedriver"
+          test -x "$driver_path"
+          java -jar selenium-server.jar standalone --port 4444 \
+            --driver-implementation chrome \
+            --driver-configuration display-name=Chrome max-sessions=2 \
+            webdriver-executable="$driver_path" 'stereotype={"browserName":"chrome"}' \
+            > selenium-grid.log 2>&1 &
+
+      - name: Wait for Grid to be ready
+        run: |
+          timeout 3m bash -c 'until curl -sSf http://localhost:4444/status | grep -Eq "\"ready\": *true"; do sleep 2; done'
+
+      - name: Run Selenium Grid smoke tests (headless)
+        run: npm run test:grid
+        env:
+          HEADLESS: 'true'
+          SELENIUM_GRID_URL: http://localhost:4444
+          SELENIUM_GRID_EXAMPLES_URL: http://127.0.0.1:8080
+
+      - name: Dump Grid log on failure
+        if: failure()
+        run: cat selenium-grid.log
 
   electron-e2e:
     timeout-minutes: 25

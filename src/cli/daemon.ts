@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { Browser } from '../lib/browser.js';
 import type { LaunchOptions } from '../lib/browser.js';
+import { assertLocalOnlyLaunch } from '../lib/launchTarget.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH } from './defaults.js';
 import { createBrowserHandle, dispatch, type BrowserHandle } from './dispatcher.js';
@@ -27,6 +28,10 @@ interface DaemonOptions {
 }
 
 export async function runDaemon(opts: DaemonOptions): Promise<void> {
+  // The daemon is a local dev tool only — never reachable against a
+  // Grid/cloud. Fail fast at startup, not on first browser use.
+  assertLocalOnlyLaunch(opts.launch as unknown as Record<string, unknown>);
+
   const socketPath = opts.socketPath ?? DAEMON_SOCKET_PATH;
   const pidPath = opts.pidPath ?? DAEMON_PID_PATH;
 

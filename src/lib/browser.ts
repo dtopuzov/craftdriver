@@ -8,7 +8,8 @@ import { FirefoxService } from './firefox.js';
 import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
-import { resolveLaunchTarget } from './launchTarget.js';
+import { resolveLaunchTarget, type RemoteLaunchTarget } from './launchTarget.js';
+import { parseRemoteEndpoint, buildRemoteCapabilities, redactUrlForLog, type RemoteWebDriverOptions } from './remote.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
@@ -276,6 +277,7 @@ interface SharedLaunchOptions {
 interface BrowserLaunchOptions extends SharedLaunchOptions {
   electron?: never;
   electronService?: never;
+  remote?: never;
   browserName?: 'chrome' | 'chromium' | 'firefox' | 'safari';
   chromeService?: ChromeService;
   firefoxService?: FirefoxService;
@@ -328,6 +330,7 @@ interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
    * or driver logging. When omitted, craftdriver creates one automatically.
    */
   electronService?: ElectronService;
+  remote?: never;
   browserName?: never;
   chromeService?: never;
   firefoxService?: never;
@@ -337,8 +340,32 @@ interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
   browserPath?: never;
 }
 
-/** Mutually-exclusive browser and Electron renderer launch configurations. */
-export type LaunchOptions = BrowserLaunchOptions | ElectronTargetLaunchOptions;
+interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
+  /**
+   * Connect to a W3C-compatible remote WebDriver endpoint — a self-hosted
+   * Selenium Grid, BrowserStack, or another cloud provider — instead of
+   * launching a local browser/driver process. See `docs/remote-webdriver.md`.
+   *
+   * Not reachable from the CLI daemon or MCP server: both are local dev
+   * tools only (see `assertLocalOnlyLaunch` in `launchTarget.ts`).
+   */
+  remote: RemoteWebDriverOptions;
+  electron?: never;
+  electronService?: never;
+  /** Any non-empty name the remote endpoint understands — not restricted to craftdriver's local browser whitelist. */
+  browserName?: string;
+  chromeService?: never;
+  firefoxService?: never;
+  safariService?: never;
+  mobileEmulation?: never;
+  args?: never;
+  browserPath?: never;
+  /** Remote sessions have no client-visible downloads directory; omit this option. */
+  downloadsDir?: never;
+}
+
+/** Mutually-exclusive browser, Electron, and remote-WebDriver launch configurations. */
+export type LaunchOptions = BrowserLaunchOptions | ElectronTargetLaunchOptions | RemoteTargetLaunchOptions;
 
 /**
  * When to consider a navigation complete.
@@ -555,7 +582,12 @@ export class Browser {
   /** The launched Electron app's executable path (for deep-link routing on Windows). */
   private _electronAppBinaryPath?: string;
   private _electron?: ElectronRemote;
-  private _browserName: 'chrome' | 'chromium' | 'firefox' | 'safari' = 'chrome';
+  /** Requested local name or provider-facing remote name. */
+  private _browserName: string = 'chrome';
+  /** Lowercase engine family for engine-specific branches (Edge → `chrome`); see `normalizeEngine`. */
+  private _engine: string = 'chrome';
+  /** Set for sessions created via `remote` — no local driver process/filesystem ever backs these. */
+  private _isRemote = false;
   /** Active emulation overrides, re-applied to new top-level contexts. */
   private _emulation: EmulateOptions = {};
 
@@ -598,6 +630,11 @@ export class Browser {
     // Normalize first: callers may be JavaScript or JSON-driven, so reject
     // malformed/mixed targets before touching disk or starting a driver.
     const target = resolveLaunchTarget(options as unknown as Record<string, unknown>);
+
+    if (target.kind === 'remote') {
+      return await Browser.launchRemote(target, options as RemoteTargetLaunchOptions);
+    }
+
     const isElectron = target.kind === 'electron';
     const name = target.browserName;
     const isChromeFamily = name === 'chrome' || name === 'chromium';
@@ -742,6 +779,9 @@ export class Browser {
     browser._downloadsDir = downloadsDir;
     browser._driverService = driverService;
     browser._browserName = name;
+    // Local names are already the normalized `SupportedBrowserName`, so engine
+    // and provider-facing name coincide here (they diverge only for remote).
+    browser._engine = name;
     browser._electronInspect = electronInspect;
     browser._electronAppBinaryPath = electronBinary;
 
@@ -762,15 +802,67 @@ export class Browser {
       });
     }
 
-    // Initialize BiDi session if WebSocket URL available
-    const wsUrl = (driver as any).__wsUrl;
-    if (wsUrl && bidiRequested) {
-      await browser.initBiDi(wsUrl);
+    try {
+      // Initialize BiDi session if WebSocket URL available
+      const wsUrl = (driver as any).__wsUrl;
+      if (wsUrl && bidiRequested) {
+        await browser.initBiDi(wsUrl);
+      }
+
+      // Load session state if provided
+      if (options.storageState) {
+        await browser.loadState(options.storageState);
+      }
+    } catch (err) {
+      // The driver session (and, for Electron, the app) already exists — don't
+      // leak the process if post-launch initialization fails. Tear it down,
+      // then surface the original error.
+      await browser.quit().catch(() => {});
+      throw err;
     }
 
-    // Load session state if provided
-    if (options.storageState) {
-      await browser.loadState(options.storageState);
+    return browser;
+  }
+
+  /** Create a remote session without local driver or filesystem setup. */
+  private static async launchRemote(
+    target: RemoteLaunchTarget,
+    options: RemoteTargetLaunchOptions
+  ): Promise<Browser> {
+    const { endpoint, sessionTimeoutMs } = parseRemoteEndpoint(target.remote);
+
+    const caps = buildRemoteCapabilities({
+      browserName: target.browserName,
+      bidiRequested: target.bidiRequested,
+      userCapabilities: target.remote.capabilities,
+    });
+
+    const builder = new Builder()
+      .forBrowser(target.browserName)
+      .usingServer(endpoint, { sessionTimeoutMs })
+      .withCapabilities(caps);
+    const driver = await builder.build();
+
+    const browser = new Browser(driver);
+    browser._isRemote = true;
+    browser._browserName = target.browserName;
+    browser._engine = target.engine;
+
+    try {
+      const wsUrl = (driver as any).__wsUrl;
+      if (wsUrl && target.bidiRequested) {
+        await browser.initBiDi(wsUrl);
+      }
+
+      if (options.storageState) {
+        await browser.loadState(options.storageState);
+      }
+    } catch (err) {
+      // POST /session already succeeded — a failure initializing the session
+      // must not strand it as a paid, orphaned session on the provider. Send
+      // DELETE /session (via quit()) before surfacing the original error.
+      await browser.quit().catch(() => {});
+      throw err;
     }
 
     return browser;
@@ -803,8 +895,16 @@ export class Browser {
           // Back-off: 300ms, 600ms, 900ms, 1200ms …
           await new Promise((r) => setTimeout(r, BIDI_CONNECT_BACKOFF_STEP_MS * attempt));
         } else {
-          // All attempts failed; fall back to Classic-only mode.
-          console.warn('BiDi connection failed after retries, using Classic WebDriver only:', err);
+          // All attempts failed; fall back to Classic-only mode. Redact the
+          // WebSocket URL and any occurrence of it inside the error message —
+          // some remote providers proxy webSocketUrl through query-string
+          // tokens or embedded credentials, which must never reach a log.
+          const redactedWsUrl = redactUrlForLog(wsUrl);
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          const redactedMessage = rawMessage.split(wsUrl).join(redactedWsUrl);
+          console.warn(
+            `BiDi connection to ${redactedWsUrl} failed after retries, using Classic WebDriver only: ${redactedMessage}`
+          );
           this.bidiSession = undefined;
         }
       }
@@ -818,20 +918,10 @@ export class Browser {
     return this.bidiSession?.isConnected() ?? false;
   }
 
-  /**
-   * Guard for the BiDi-only surface below. On Safari (which never
-   * negotiates BiDi) this throws `CraftdriverError`/`UNSUPPORTED` with a
-   * stable `{ browserName, feature }` detail so callers can branch on `code`
-   * instead of parsing prose. On every other browser the behavior is
-   * unchanged: the exact plain-`Error` message passed by the call site.
-   *
-   * Deliberately scoped to Safari's guards only — the pre-existing
-   * plain-`Error` guards elsewhere are a separate follow-up, not silently
-   * folded into this helper.
-   */
+  /** Require a connected BiDi session, with a stable Safari error code. */
   private requireBiDi(feature: string, chromeMessage: string): void {
     if (this.bidiSession?.isConnected()) return;
-    if (this._browserName === 'safari') {
+    if (this._engine === 'safari') {
       throw new CraftdriverError(
         ErrorCode.UNSUPPORTED,
         `${feature} is not supported on Safari (no WebDriver BiDi). ` +
@@ -1258,7 +1348,7 @@ export class Browser {
 
     // Validate Chromium-only fields up front so we fail before mutating state.
     const chromiumOnly = ['colorScheme', 'reducedMotion', 'forcedColors', 'offline'] as const;
-    const isFirefox = this._browserName === 'firefox';
+    const isFirefox = this._engine === 'firefox';
     if (isFirefox) {
       for (const k of chromiumOnly) {
         if (k in options) {
@@ -1506,7 +1596,7 @@ export class Browser {
     // URL comes from the session's own webSocketUrl, not a fixed port. So scope the
     // 500ms sleep to Firefox+BiDi; every other quit (all Chrome, Firefox w/o BiDi)
     // skips straight to stopping the driver.
-    if (this._browserName === 'firefox' && bidiWasActive) {
+    if (this._engine === 'firefox' && bidiWasActive) {
       await new Promise((r) => setTimeout(r, PORT_RELEASE_DELAY_MS));
     }
     // Stop the underlying driver service (chromedriver / geckodriver)
@@ -1546,7 +1636,7 @@ export class Browser {
       );
     }
     if (!this._tracer) {
-      this._tracer = new Tracer(this, this.bidiSession.getConnection(), this._browserName);
+      this._tracer = new Tracer(this, this.bidiSession.getConnection(), this._engine);
     }
     await this._tracer.start(opts);
   }
@@ -1778,7 +1868,7 @@ export class Browser {
     action: () => Promise<void> | void,
     opts?: { timeout?: number }
   ): Promise<Download> {
-    if (this._browserName === 'safari') {
+    if (this._engine === 'safari') {
       // safaridriver exposes no download-directory configuration craftdriver
       // can manage, so a browser download never lands in _downloadsDir — it
       // goes to the user's ~/Downloads. Without this guard, waitForDownload()
@@ -1791,6 +1881,19 @@ export class Browser {
           'download-directory configuration craftdriver can manage, so downloads ' +
           'cannot be routed to or observed in a controlled directory.',
         { detail: { browserName: 'safari', feature: 'waitForDownload()' } }
+      );
+    }
+    if (this._isRemote) {
+      // Same shape as the Safari guard above: a remote session has no
+      // client-visible downloads directory (downloadsDir is rejected at
+      // remote launch time), so a download never lands anywhere craftdriver
+      // can watch. Fail immediately with a clear error instead of an opaque
+      // timeout on an empty/nonexistent directory.
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'waitForDownload() is not supported on remote sessions: remote sessions have no ' +
+          "client-visible downloads directory; use your provider's download API if one exists.",
+        { detail: { feature: 'waitForDownload()' } }
       );
     }
     const dir = this._downloadsDir;
@@ -1852,7 +1955,7 @@ export class Browser {
         await handler(dialog);
       });
     }
-    if (this._browserName === 'safari') {
+    if (this._engine === 'safari') {
       // Safari is Classic-only and has no WebDriver BiDi push events, so there
       // is no event-driven way to detect a dialog opening. A polling fallback
       // (repeatedly calling getAlertText()/driver "no such alert" errors to
@@ -2666,7 +2769,7 @@ export class Browser {
       to: [number, number];
       durationMs?: number;
     }) => {
-      this.rejectTouchActionsOnSafari('gesture.swipe()');
+      this.rejectTouchActionsOnLocalSafari('gesture.swipe()');
       await this.driver.performTouchSwipe(from, to, durationMs);
     },
     pinch: async ({
@@ -2680,28 +2783,24 @@ export class Browser {
       distance?: number;
       durationMs?: number;
     }) => {
-      this.rejectTouchActionsOnSafari('gesture.pinch()');
+      this.rejectTouchActionsOnLocalSafari('gesture.pinch()');
       await this.driver.performTouchPinch(center, scale, distance, durationMs);
     },
   };
 
   /**
-   * `gesture.swipe()`/`gesture.pinch()` send W3C actions with a `pointer`
-   * input source whose `parameters.pointerType` is `'touch'`. Desktop Safari
-   * has no touchscreen and Apple's Safari 12+ WebDriver command table gives
-   * no indication `safaridriver` synthesizes touch-type pointer input —
-   * unlike `pointerType: 'mouse'`, which is exercised by every other pointer
-   * helper and is squarely in scope. Rather than let the action silently
-   * no-op (or behave unpredictably) on real Safari, fail loudly before
-   * sending it.
+   * Local desktop Safari has no documented touch-pointer automation surface, so
+   * fail loudly rather than let the action silently no-op. Local only: a remote
+   * `safari` session may be a real iOS device with a touchscreen (BrowserStack
+   * et al.), where these gestures are legitimate — forward those.
    */
-  private rejectTouchActionsOnSafari(feature: string): void {
-    if (this._browserName !== 'safari') return;
+  private rejectTouchActionsOnLocalSafari(feature: string): void {
+    if (this._isRemote) return;
+    if (this._engine !== 'safari') return;
     throw new CraftdriverError(
       ErrorCode.UNSUPPORTED,
-      `${feature} sends a touch-type pointer action, which desktop Safari does not support. ` +
-        'Safari has no touchscreen and no documented touch-pointer WebDriver behavior; ' +
-        'this is desktop browser automation, not iPhone/iPad Safari coverage.',
+      `${feature} sends a touch-pointer action, which local desktop Safari does not support. ` +
+        'Use a remote real-device session for iPhone/iPad Safari coverage.',
       { detail: { browserName: 'safari', feature } }
     );
   }

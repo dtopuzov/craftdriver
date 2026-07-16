@@ -1,35 +1,4 @@
-/**
- * Safari's `browserName`-keyed UNSUPPORTED guards, in one lane.
- *
- * Two families of guard share the same shape and the same test harness, so
- * they live together here:
- *
- *   1. BiDi-only surface (`network`, `logs`, `grantPermissions()`,
- *      `setGeolocation()`, `emulate()`, `newContext()`, `contexts()`,
- *      full-page `screenshot()`, dialogs, etc.) — unavailable because Safari
- *      has no WebDriver BiDi.
- *   2. Touch actions (`gesture.swipe()`/`gesture.pinch()`), which send W3C
- *      pointer input with `pointerType: 'touch'` that desktop `safaridriver`
- *      gives no indication it synthesizes on a touchscreen-less Mac.
- *
- * Both must throw `CraftdriverError`/`UNSUPPORTED` with a stable
- * `{ browserName: 'safari', feature }` detail when `browserName` is Safari,
- * while every other browser launched with `enableBiDi: false` keeps
- * throwing the exact same plain `Error` it always has.
- *
- * This does not require a real Safari install. Every guard here is a
- * pre-flight check keyed on `this._browserName` (and, for the BiDi family,
- * `bidiSession` connectivity), so it's exercised against a real browser
- * launched with `enableBiDi: false` (giving an unconnected `bidiSession`,
- * exactly as Safari's would be) with `_browserName` patched to `'safari'` to
- * prove the Safari branch fires before any network call is made.
- *
- * All groups below share ONE ambient browser launched Classic (`enableBiDi:
- * false`). They previously launched three separate browsers; on the Firefox
- * lane those extra geckodriver launches were a CI launch-contention flake
- * source, and nothing here needs its own instance — the guards are pre-flight
- * and don't depend on page state.
- */
+/** Safari pre-flight guards share one Classic browser; no Safari install is required. */
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { Browser, CraftdriverError, ErrorCode } from '../src';
 import { BROWSER_NAME, EXAMPLES_BASE_URL } from './utils';
@@ -46,13 +15,16 @@ describe('Safari-specific guards (Classic, browserName patched)', () => {
   });
 
   function asSafari<T>(run: () => T): T {
-    const b = browser as unknown as { _browserName: string };
-    const original = b._browserName;
+    const b = browser as unknown as { _browserName: string; _engine: string };
+    const originalName = b._browserName;
+    const originalEngine = b._engine;
     b._browserName = 'safari';
+    b._engine = 'safari';
     try {
       return run();
     } finally {
-      b._browserName = original;
+      b._browserName = originalName;
+      b._engine = originalEngine;
     }
   }
 
