@@ -110,6 +110,10 @@ export default defineConfig({
             ],
           },
           {
+            text: 'External Providers',
+            items: [{ text: 'Run On BrowserStack', link: '/recipes/run-on-browserstack' }],
+          },
+          {
             text: 'Electron',
             items: [
               { text: 'App From Another Repo', link: '/recipes/electron-app-from-another-repo' },
@@ -137,6 +141,7 @@ export default defineConfig({
         text: 'Browser Capabilities',
         items: [
           { text: 'Driver Configuration', link: '/driver-configuration' },
+          { text: 'Remote WebDriver', link: '/remote-webdriver' },
           { text: 'Safari', link: '/safari' },
           { text: 'Electron Apps', link: '/electron' },
           { text: 'Browser Contexts', link: '/browser-context' },

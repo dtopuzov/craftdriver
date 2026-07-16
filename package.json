@@ -20,6 +20,8 @@
     "test:safari": "BROWSER_NAME=safari vitest run tests/safari.test.ts --maxWorkers=1",
     "test:recipes": "HEADLESS=true vitest run --config vitest.recipes.config.ts",
     "test:electron": "vitest run --config vitest.electron.config.ts",
+    "test:browserstack": "vitest run --config vitest.browserstack.config.ts",
+    "test:grid": "vitest run --config vitest.grid.config.ts",
     "bench": "HEADLESS=true vitest run --config vitest.perf.config.ts",
     "clean": "rimraf dist",
     "serve": "http-server ./examples -a 127.0.0.1 -p 8080 -c-1 --cors",

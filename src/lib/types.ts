@@ -25,6 +25,25 @@ export interface WebDriverEndpoint {
   hostname: string;
   port: number;
   path?: string;
+  /**
+   * Basic auth credentials for this endpoint (remote WebDriver only — a
+   * local `DriverService` endpoint never sets this). Sent as an
+   * `Authorization` header by `HttpClient`, never logged.
+   */
+  auth?: { username: string; password: string };
+  /**
+   * Unique key stamped on remote endpoints (`parseRemoteEndpoint`) so each
+   * remote session gets its own keep-alive agent instead of sharing one by
+   * `host:port` — many concurrent sessions legitimately share one grid/hub
+   * host. Local endpoints never set this; they keep sharing by `host:port`
+   * (every local `DriverService` picks its own free port anyway).
+   */
+  poolKey?: string;
+  /**
+   * Default per-command timeout (remote WebDriver only). Applied by
+   * `HttpClient.send()` when the caller doesn't pass its own `timeoutMs`.
+   */
+  commandTimeoutMs?: number;
 }
 
 /**

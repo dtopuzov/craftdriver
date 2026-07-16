@@ -62,7 +62,7 @@ export interface BrowserContextHooks {
   /** Returns the singleton {@link NetworkInterceptor} — used by {@link BrowserContext.route}. */
   getNetwork: () => NetworkInterceptor;
   /** Returns the engine name, used by the emulation setters to gate engine-specific BiDi calls. */
-  getBrowserName?: () => 'chrome' | 'chromium' | 'firefox' | 'safari';
+  getBrowserName?: () => string;
   /** True when browser-level preload scripts can run in this context's pages. */
   hasBrowserInitScripts?: () => boolean;
 }

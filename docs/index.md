@@ -60,6 +60,7 @@ await browser.quit();
 | Write browser automation          | [Getting Started](./getting-started.md) |
 | Solve a common testing workflow   | [Recipes](./recipes.md)                 |
 | Give an AI coding agent a browser | [AI Agent Guide](./agents.md)           |
+| Run on a Grid or cloud provider   | [Remote WebDriver](./remote-webdriver.md) |
 
 ## Good Stuff To Read Next
 

@@ -1,22 +1,22 @@
 import { CraftdriverError, ErrorCode } from './errors.js';
+import type { RemoteWebDriverOptions } from './remote.js';
 
-// Keep in sync with the other independently-declared browser-name unions:
-// src/lib/browser.ts, src/lib/builder.ts, tests/utils.ts, src/cli/parseArgs.ts
-// (plus a few narrower call-site unions downstream, e.g. capabilities.ts,
-// tracing.ts, vibiumTrace.ts). This duplication is a known gap; consolidating
-// to one source of truth is a separate, out-of-scope refactor.
+// Unknown remote browser names must opt into BiDi explicitly.
+const BIDI_CAPABLE_BY_DEFAULT = new Set(['chrome', 'chromium', 'firefox', 'edge', 'microsoftedge']);
+
+// Local browser names — intentionally narrower than the free-form remote
+// provider name. Duplicated as parallel unions in browser.ts, builder.ts,
+// capabilities.ts, and tests/utils.ts; keep them in sync when adding a browser.
 export type SupportedBrowserName = 'chrome' | 'chromium' | 'firefox' | 'safari';
 
-/**
- * Launch options that don't map onto Safari's public `safaridriver` surface.
- * None of these have a faithful Safari equivalent:
- * there is no supported headless mode, no browser-arg passthrough, no
- * alternate-binary launch (STP is selected via `SafariService`'s
- * `binaryPath`, not `browserPath`), no mobile/device emulation, and no
- * download-directory configuration craftdriver can drive. Checked here, at
- * launch-target resolution, so a Safari launch fails before any service
- * process starts rather than partially launching and then failing.
- */
+/** Normalize a provider-facing name for internal engine-specific behavior. */
+export function normalizeEngine(browserName: string): string {
+  const lower = browserName.trim().toLowerCase();
+  if (lower === 'edge' || lower === 'msedge' || lower === 'microsoftedge') return 'chrome';
+  return lower;
+}
+
+/** Reject local launch options that safaridriver cannot honor. */
 function assertSafariCompatible(options: Record<string, unknown>): void {
   const headlessEnv = process.env.HEADLESS;
   const checks: Array<{ present: boolean; feature: string; hint: string }> = [
@@ -33,8 +33,9 @@ function assertSafariCompatible(options: Record<string, unknown>): void {
     {
       present: hasValue(options, 'browserPath'),
       feature: 'browserPath',
-      hint: 'Safari is launched from the installed app by safaridriver, not a chosen binary. ' +
-        'To use Safari Technology Preview, pass its safaridriver path via SafariService\'s binaryPath instead.',
+      hint:
+        'Safari is launched from the installed app by safaridriver, not a chosen binary. ' +
+        "To use Safari Technology Preview, pass its safaridriver path via SafariService's binaryPath instead.",
     },
     {
       present: hasValue(options, 'mobileEmulation'),
@@ -53,7 +54,7 @@ function assertSafariCompatible(options: Record<string, unknown>): void {
     throw new CraftdriverError(
       ErrorCode.UNSUPPORTED,
       `browserName: 'safari' cannot be combined with ${incompatible.feature}. ${incompatible.hint}`,
-      { detail: { browserName: 'safari', feature: incompatible.feature } },
+      { detail: { browserName: 'safari', feature: incompatible.feature } }
     );
   }
 }
@@ -78,7 +79,18 @@ export interface ElectronLaunchTarget {
   args?: string[];
 }
 
-export type LaunchTarget = BrowserLaunchTarget | ElectronLaunchTarget;
+export interface RemoteLaunchTarget {
+  kind: 'remote';
+  /** Provider-facing browser name, forwarded verbatim. */
+  browserName: string;
+  /** Normalized engine family for internal checks. */
+  engine: string;
+  bidiRequested: boolean;
+  /** Validated shape; `parseRemoteEndpoint` (`remote.ts`) turns this into a `WebDriverEndpoint`. */
+  remote: RemoteWebDriverOptions;
+}
+
+export type LaunchTarget = BrowserLaunchTarget | ElectronLaunchTarget | RemoteLaunchTarget;
 
 function hasValue(options: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(options, key) && options[key] !== undefined;
@@ -100,8 +112,123 @@ function optionalStringArray(value: unknown, optionName: string): string[] | und
   return value;
 }
 
+// Local-only options rejected on a remote launch.
+const REMOTE_CONFLICTS: Array<[string, string]> = [
+  ['electron', 'remote and electron are different launch targets; choose one'],
+  ['electronService', 'electronService only applies to an electron launch'],
+  ['chromeService', 'a remote session has no local driver process to configure'],
+  ['firefoxService', 'a remote session has no local driver process to configure'],
+  ['safariService', 'a remote session has no local driver process to configure'],
+  ['mobileEmulation', 'pass device capabilities via remote.capabilities instead'],
+  ['args', 'pass browser flags via remote.capabilities (e.g. goog:chromeOptions.args) instead'],
+  ['browserPath', 'a remote session launches whatever browser the grid/provider offers'],
+  ['downloadsDir', 'remote sessions have no client-visible downloads directory'],
+];
+
+function resolveRemoteLaunchTarget(
+  options: Record<string, unknown>,
+  enableBiDi: unknown
+): RemoteLaunchTarget {
+  for (const [key, guidance] of REMOTE_CONFLICTS) {
+    if (hasValue(options, key)) {
+      throw new Error(`remote cannot be combined with ${key}; ${guidance}.`);
+    }
+  }
+
+  const remote = options.remote;
+  if (!remote || typeof remote !== 'object' || Array.isArray(remote)) {
+    throw new Error('remote must be an object containing a url.');
+  }
+  const remoteOptions = remote as Record<string, unknown>;
+  if (typeof remoteOptions.url !== 'string' || remoteOptions.url.trim() === '') {
+    throw new Error('remote.url must be a non-empty string.');
+  }
+
+  const remoteCapabilities = remoteOptions.capabilities;
+  const capsObject =
+    remoteCapabilities &&
+    typeof remoteCapabilities === 'object' &&
+    !Array.isArray(remoteCapabilities)
+      ? (remoteCapabilities as Record<string, unknown>)
+      : undefined;
+  const capsBrowserName = capsObject?.browserName;
+
+  const topLevelBrowserName = options.browserName;
+  if (
+    topLevelBrowserName !== undefined &&
+    (typeof topLevelBrowserName !== 'string' || topLevelBrowserName.trim() === '')
+  ) {
+    throw new Error('browserName must be a non-empty string.');
+  }
+  if (
+    capsBrowserName !== undefined &&
+    (typeof capsBrowserName !== 'string' || capsBrowserName.trim() === '')
+  ) {
+    throw new Error('remote.capabilities.browserName must be a non-empty string.');
+  }
+
+  if (
+    typeof topLevelBrowserName === 'string' &&
+    typeof capsBrowserName === 'string' &&
+    topLevelBrowserName.toLowerCase() !== capsBrowserName.toLowerCase()
+  ) {
+    throw new Error(
+      `browserName ("${topLevelBrowserName}") conflicts with remote.capabilities.browserName ` +
+        `("${capsBrowserName}"); set only one.`
+    );
+  }
+
+  const requestedName =
+    (typeof topLevelBrowserName === 'string' ? topLevelBrowserName : undefined) ??
+    (typeof capsBrowserName === 'string' ? capsBrowserName : undefined) ??
+    'chrome';
+  const engine = normalizeEngine(requestedName);
+
+  // Known BiDi engines default on; other remote names require explicit opt-in.
+  const defaultsToBidi = BIDI_CAPABLE_BY_DEFAULT.has(engine);
+  const bidiRequested = defaultsToBidi ? enableBiDi !== false : enableBiDi === true;
+
+  // A caller can't keep BiDi on yet disable its transport: webSocketUrl:false would
+  // leave craftdriver negotiating a BiDi session the hub was never asked to provide,
+  // silently degrading every BiDi feature to Classic. Reject the contradiction early.
+  if (bidiRequested && capsObject?.webSocketUrl === false) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      'remote.capabilities.webSocketUrl is false, which disables WebDriver BiDi, but BiDi is ' +
+        `enabled for "${requestedName}". Pass enableBiDi: false to run over WebDriver Classic, ` +
+        'or remove webSocketUrl to keep BiDi.',
+      { detail: { browserName: requestedName, feature: 'WebDriver BiDi' } }
+    );
+  }
+
+  return {
+    kind: 'remote',
+    browserName: requestedName,
+    engine,
+    bidiRequested,
+    remote: remoteOptions as unknown as RemoteLaunchTarget['remote'],
+  };
+}
+
 /**
- * Normalize and validate the mutually-exclusive browser/Electron launch
+ * Reject `remote` at the CLI daemon and MCP entry points — both are local dev
+ * tools by design. Permanent product boundary, not a gap to fill: no CLI flag
+ * or MCP tool for remote exists, and none should be added.
+ */
+export function assertLocalOnlyLaunch(options: Record<string, unknown>): void {
+  if (hasValue(options, 'remote')) {
+    throw new CraftdriverError(
+      ErrorCode.UNSUPPORTED,
+      'The craftdriver CLI and MCP server are local dev tools and do not support remote ' +
+        '(Selenium Grid / BrowserStack / cloud) sessions. Use the Browser.launch({ remote }) ' +
+        'library API directly from your own script instead.',
+      { detail: { feature: 'remote' } }
+    );
+  }
+}
+
+/**
+ * Normalize and validate the mutually-exclusive browser/Electron/remote launch
  * surfaces before any filesystem I/O or driver process is started.
  *
  * This function deliberately accepts an untyped record: `Browser.launch` is a
@@ -114,8 +241,12 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
     throw new Error('enableBiDi must be a boolean.');
   }
 
-  const electronWasProvided = Object.prototype.hasOwnProperty.call(options, 'electron') &&
-    options.electron !== undefined;
+  if (hasValue(options, 'remote')) {
+    return resolveRemoteLaunchTarget(options, enableBiDi);
+  }
+
+  const electronWasProvided =
+    Object.prototype.hasOwnProperty.call(options, 'electron') && options.electron !== undefined;
 
   if (!electronWasProvided) {
     if (hasValue(options, 'electronService')) {
@@ -130,7 +261,7 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
       requestedName !== 'safari'
     ) {
       throw new Error(
-        `Unsupported browser "${String(requestedName)}". Supported: chrome, chromium, firefox, safari.`,
+        `Unsupported browser "${String(requestedName)}". Supported: chrome, chromium, firefox, safari.`
       );
     }
 
@@ -146,8 +277,8 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
       throw new CraftdriverError(
         ErrorCode.UNSUPPORTED,
         "browserName: 'safari' cannot be combined with enableBiDi: true. " +
-        'Safari has no supported WebDriver BiDi implementation. Omit enableBiDi (or pass false) for Safari.',
-        { detail: { browserName: 'safari', feature: 'WebDriver BiDi' } },
+          'Safari has no supported WebDriver BiDi implementation. Omit enableBiDi (or pass false) for Safari.',
+        { detail: { browserName: 'safari', feature: 'WebDriver BiDi' } }
       );
     }
     const bidiRequested = requestedName === 'safari' ? false : enableBiDi !== false;
@@ -168,14 +299,19 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
   const electronOptions = electron as Record<string, unknown>;
 
   const supportedElectronKeys = new Set([
-    'appBinaryPath', 'chromedriverPath', 'version', 'mainProcess', 'args',
+    'appBinaryPath',
+    'chromedriverPath',
+    'version',
+    'mainProcess',
+    'args',
   ]);
-  const unknownElectronKey = Object.keys(electronOptions)
-    .find((key) => !supportedElectronKeys.has(key));
+  const unknownElectronKey = Object.keys(electronOptions).find(
+    (key) => !supportedElectronKeys.has(key)
+  );
   if (unknownElectronKey) {
     throw new Error(
       `Unsupported electron option "${unknownElectronKey}". ` +
-      'Supported: appBinaryPath, chromedriverPath, version, mainProcess, args.',
+        'Supported: appBinaryPath, chromedriverPath, version, mainProcess, args.'
     );
   }
 
@@ -199,21 +335,18 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
     }
   }
 
-  const appBinaryPath = optionalString(
-    electronOptions.appBinaryPath,
-    'electron.appBinaryPath',
-  );
+  const appBinaryPath = optionalString(electronOptions.appBinaryPath, 'electron.appBinaryPath');
   if (!appBinaryPath) {
     throw new Error('electron.appBinaryPath is required.');
   }
 
   const chromedriverPath = optionalString(
     electronOptions.chromedriverPath,
-    'electron.chromedriverPath',
+    'electron.chromedriverPath'
   );
   if (chromedriverPath && hasValue(options, 'electronService')) {
     throw new Error(
-      'electron.chromedriverPath cannot be combined with electronService; configure the path on ElectronService instead.',
+      'electron.chromedriverPath cannot be combined with electronService; configure the path on ElectronService instead.'
     );
   }
 
@@ -222,14 +355,14 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
   // chromedriverPath silently win would ignore the version the user asked for.
   if (version && chromedriverPath) {
     throw new Error(
-      'electron.version cannot be combined with electron.chromedriverPath; choose one driver source.',
+      'electron.version cannot be combined with electron.chromedriverPath; choose one driver source.'
     );
   }
   // A caller-supplied ElectronService owns its own driver config — mirror the
   // chromedriverPath rule so the version isn't quietly dropped.
   if (version && hasValue(options, 'electronService')) {
     throw new Error(
-      'electron.version cannot be combined with electronService; configure version on ElectronService instead.',
+      'electron.version cannot be combined with electronService; configure version on ElectronService instead.'
     );
   }
 

@@ -27,6 +27,20 @@ export class Builder {
   private firefoxService: FirefoxService | undefined;
   private safariService: SafariService | undefined;
   private caps: Capabilities = {};
+  private remoteEndpoint: WebDriverEndpoint | undefined;
+  private remoteSessionTimeoutMs: number | undefined;
+
+  /**
+   * Target a remote W3C WebDriver endpoint instead of a local driver
+   * process. When set, `build()` skips `service.start()`/the local
+   * driver-process lifecycle entirely and creates the session directly
+   * against `endpoint`.
+   */
+  usingServer(endpoint: WebDriverEndpoint, options?: { sessionTimeoutMs?: number }): this {
+    this.remoteEndpoint = endpoint;
+    this.remoteSessionTimeoutMs = options?.sessionTimeoutMs;
+    return this;
+  }
 
   forBrowser(name: 'chrome' | 'chromium' | 'firefox' | 'safari' | string): this {
     this.browserName = name;
@@ -54,6 +68,20 @@ export class Builder {
   }
 
   async build(): Promise<Driver> {
+    if (this.remoteEndpoint) {
+      // Deliberately not routed through createSessionWithRetries(): that
+      // retry loop exists for local-driver-process lag (Firefox Marionette
+      // readiness, Chrome driver-cache mismatches). A remote POST /session
+      // that times out client-side may have already succeeded server-side —
+      // blind retry risks creating a second, paid, orphaned session on a
+      // metered provider. Create once; if it fails, fail.
+      const name = this.browserName ?? 'chrome';
+      const caps = { browserName: name, ...this.caps };
+      return await Driver.create(this.remoteEndpoint, caps, {
+        timeoutMs: this.remoteSessionTimeoutMs,
+      });
+    }
+
     const name = this.browserName ?? 'chrome';
     let service: DriverService;
     if (isChromeFamily(name)) {

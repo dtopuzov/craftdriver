@@ -27,7 +27,22 @@ export class Driver {
     private sessionId: string
   ) { }
 
-  static async create(endpoint: WebDriverEndpoint, caps: Capabilities): Promise<Driver> {
+  /**
+   * True for sessions created against a remote WebDriver endpoint.
+   * `poolKey` is only ever stamped by `parseRemoteEndpoint()` (`remote.ts`),
+   * never by a local `DriverService` endpoint, so its presence is a reliable
+   * signal — used by callers with no direct `Browser` reference (e.g.
+   * `ElementHandle`) that still need a remote/local branch.
+   */
+  isRemote(): boolean {
+    return this.endpoint.poolKey !== undefined;
+  }
+
+  static async create(
+    endpoint: WebDriverEndpoint,
+    caps: Capabilities,
+    options?: { timeoutMs?: number }
+  ): Promise<Driver> {
     const client = new HttpClient(endpoint);
     let res: CommandResponse<SessionResponse>;
     try {
@@ -35,7 +50,7 @@ export class Driver {
         method: 'POST',
         path: '/session',
         body: { capabilities: { alwaysMatch: caps } },
-        timeoutMs: SESSION_CREATE_TIMEOUT_MS,
+        timeoutMs: options?.timeoutMs ?? SESSION_CREATE_TIMEOUT_MS,
       });
     } catch (err) {
       client.close();
@@ -95,6 +110,22 @@ export class Driver {
       // don't keep the Node process alive after the session ends.
       client.close();
     }
+  }
+
+  /**
+   * Upload a base64-encoded zip through Selenium's `se/file` extension (Grid
+   * nodes and BrowserStack both accept it) and return the file's path on the
+   * remote node — pass that to a subsequent `sendKeys()` on the file input.
+   */
+  async uploadFile(base64Zip: string): Promise<string> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/se/file`,
+      body: { file: base64Zip },
+    });
+    const value = (res as CommandResponse<string>)?.value ?? (res as unknown as string);
+    return String(value ?? '');
   }
 
   async getCurrentUrl(): Promise<string> {

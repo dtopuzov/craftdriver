@@ -42,3 +42,55 @@ real packaged example app (downloaded by `tests/electron/global-setup.ts`, run v
 `npm run test:electron`): native-dialog mocking and the general `mock()` in
 `electron-main-process.test.ts`, deep links in `electron-deeplink.test.ts`. So the
 mirror rule holds — just against a different fixture and CI gate.
+
+## Exception: the BrowserStack recipe
+
+[`docs/recipes/run-on-browserstack.md`](../../docs/recipes/run-on-browserstack.md)
+also has no counterpart here. Its flows need a real BrowserStack account, so
+they're verified by
+[`tests/recipes/browserstack-remote.test.ts`](./browserstack-remote.test.ts)
+instead, under its own dedicated command:
+
+```bash
+BROWSERSTACK_USERNAME=... BROWSERSTACK_ACCESS_KEY=... npm run test:browserstack
+```
+
+That command **fails fast with a clear message if the credentials are
+missing** — it never silently skips and reports green — and it is never part
+of `npm test` or `npm run test:recipes`. The `browserstack-smoke` CI job runs
+only the **desktop** flows (Chrome + Safari smoke, `se/file` upload) on every
+push, every same-repository pull request, and manual dispatch. Fork pull
+requests are skipped because GitHub does not expose repository secrets to them.
+The real-device gesture group (`BROWSERSTACK_TEST_MOBILE=1`) and the
+BrowserStack Local group (`BROWSERSTACK_TEST_LOCAL=1` + `BROWSERSTACK_LOCAL_BINARY`)
+stay **opt-in and out of CI** — both need live iteration a push cannot give
+them — and are run manually via the environment variables documented in the
+test file's validation errors.
+
+## Exception: the self-hosted Selenium Grid smoke
+
+[`tests/recipes/selenium-grid-remote.test.ts`](./selenium-grid-remote.test.ts)
+is the executable counterpart to the **generic** remote path in
+[`docs/remote-webdriver.md`](../../docs/remote-webdriver.md), verified against a
+real Selenium Grid instead of the in-process fake grid. Same discipline as the
+BrowserStack smoke — its own command, never in `npm test` / `npm run
+test:recipes`, fails fast without an endpoint, zero retries:
+
+```bash
+SELENIUM_GRID_URL=http://<host>:4444 npm run test:grid
+```
+
+`SELENIUM_GRID_URL` is the Grid's **WebDriver endpoint** (its root, or
+`/wd/hub`), NOT the `/ui/` console. `SELENIUM_GRID_BROWSER` (default `chrome`)
+picks the node. `HEADLESS=true` (or `1`) asks the node to launch the browser
+headless via its vendor options — no display / Xvfb needed on a CI runner
+(craftdriver's remote path never injects `--headless` itself, so the smoke
+supplies it through `remote.capabilities`). Set
+`SELENIUM_GRID_EXAMPLES_URL` when the node cannot reach the hosted examples.
+The suite covers the full flow, connection-pool isolation, `se/file` upload,
+and BiDi relay behavior.
+
+The `selenium-grid-smoke` CI job runs on every configured event. It verifies
+the pinned Selenium Server 4.46.0 jar, serves the repository examples locally,
+starts a standalone Chrome node, and runs all four smokes including the BiDi
+relay check.

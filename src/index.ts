@@ -21,6 +21,7 @@ export {
   type ElectronLaunchOptions,
   type PageMatcher,
 } from './lib/browser.js';
+export { type RemoteWebDriverOptions, type RemoteAuth } from './lib/remote.js';
 export { Key } from './lib/keys.js';
 export { By } from './lib/by.js';
 export { Locator } from './lib/locator.js';

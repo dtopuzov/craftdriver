@@ -17,6 +17,7 @@
  *   stdin EOF (or SIGINT/SIGTERM)        → close browser, exit 0
  */
 import { Browser, type LaunchOptions } from '../../lib/browser.js';
+import { assertLocalOnlyLaunch } from '../../lib/launchTarget.js';
 import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
 import { createBrowserHandle, type DispatchContext } from '../dispatcher.js';
 import { TOOLS, getTool, runTool, type ToolDef } from './tools.js';
@@ -80,6 +81,10 @@ export interface McpServerOptions {
 }
 
 export async function runMcpServer(opts: McpServerOptions): Promise<void> {
+  // The MCP server is a local dev tool only — never reachable against a
+  // Grid/cloud. Fail fast at startup, not on first browser use.
+  assertLocalOnlyLaunch(opts.launch as unknown as Record<string, unknown>);
+
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
   const handle = createBrowserHandle(() => Browser.launch(opts.launch));

@@ -5,7 +5,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 ## What It Cares About
 
 - 🍺 **Focused Node.js API** - browser automation without a giant framework around it.
-- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds, plus real ([Safari on macOS](./safari.md)).
+- 🧭 **Real browsers** - drives installed Chrome, Chromium, and Firefox instead of patched browser engine builds, plus real [Safari on macOS](./safari.md).
 - 🌐 **Standards that age well** - W3C WebDriver standards stay stable while browser-private protocols change.
 - 🚦 **Readable, auto-waited flows** - role, label, text, test id, CSS, XPath, click, fill, and expect.
 - 📡 **Network control** - mock, block, intercept, and wait for browser requests and responses.
@@ -13,6 +13,8 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - ⏱️ **Virtual clock** - freeze or fast-forward `Date`, timers, and time-sensitive UI.
 - ♿ **Accessibility audits** - run axe-core checks on pages, elements, and locators.
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
+- ⚛️ **Electron apps** - drive packaged Electron desktop app renderers, matched to the app's bundled Chromium.
+- ☁️ **Remote WebDriver** - use the Browser API with a self-hosted Selenium Grid or a cloud provider like [BrowserStack](https://www.browserstack.com/).
 - 🤖 **Agent-friendly** - CLI, MCP, and assistant rules when coding agents need the browser.
 
 ## Good Fits

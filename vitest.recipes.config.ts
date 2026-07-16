@@ -18,7 +18,16 @@ export default defineConfig({
     pool: 'forks',
     maxWorkers: maxWorkers,
     include: ['tests/recipes/**/*.test.ts'],
-    exclude: [...configDefaults.exclude],
+    // browserstack-remote.test.ts and selenium-grid-remote.test.ts each need a
+    // live remote endpoint (a metered cloud account / a running Selenium Grid)
+    // and have their own dedicated commands + configs
+    // (`npm run test:browserstack`, `npm run test:grid`) — neither may run as
+    // part of this default recipes gate.
+    exclude: [
+      ...configDefaults.exclude,
+      'tests/recipes/browserstack-remote.test.ts',
+      'tests/recipes/selenium-grid-remote.test.ts',
+    ],
   },
   esbuild: {
     target: 'node18',

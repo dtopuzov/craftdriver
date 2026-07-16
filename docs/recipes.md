@@ -18,7 +18,10 @@ setup.
 
 The [Electron recipes](#electron) are different: they show the project shape for
 driving a packaged desktop app, so they use paths you adapt to your app repo
-rather than the hosted browser examples.
+rather than the hosted browser examples. The
+[BrowserStack recipe](#external-providers) is also different: it needs real
+provider credentials. Its live test is credential-gated, runs only for trusted
+repository events, and is skipped for forks.
 
 For exact signatures, use the linked feature docs and the
 [API reference](./api-reference.md).
@@ -54,6 +57,17 @@ For exact signatures, use the linked feature docs and the
 | Accessibility regression gate | CI should fail on serious page or component accessibility issues.               | [Run Accessibility Gates](./recipes/accessibility-gate.md)               |
 | Console and JavaScript errors | Tests should fail if the browser reports unexpected client-side errors.         | [Fail On Console And JavaScript Errors](./recipes/console-error-gate.md) |
 | Debug failing tests           | You need the actions, screenshots, logs, and network activity behind a failure. | [Use Traces To Debug Failing Tests](./recipes/debug-failing-tests-with-traces.md) |
+
+## External Providers
+
+Running against a remote Grid or cloud provider instead of a local browser.
+This recipe needs provider credentials. Its live test is credential-gated,
+runs on trusted pushes and pull requests, and is skipped for forks — see
+[`tests/recipes/README.md`](https://github.com/dtopuzov/craftdriver/blob/main/tests/recipes/README.md).
+
+| Scenario            | Use when                                                     | Recipe                                                   |
+| -------------------- | ------------------------------------------------------------- | --------------------------------------------------------- |
+| Run on BrowserStack | You want to run against real browsers/devices in the cloud.  | [Run On BrowserStack](./recipes/run-on-browserstack.md)  |
 
 ## Electron
 

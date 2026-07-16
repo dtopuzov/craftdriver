@@ -1,6 +1,33 @@
 import type { Capabilities } from './types.js';
 
 /**
+ * Fill the BiDi-request capabilities (`webSocketUrl` + prompt-ignore) when
+ * absent; explicit caller values are left untouched. `promptBehavior: 'string'`
+ * sends the plain `'ignore'` enum for strict W3C hubs (e.g. BrowserStack) that
+ * reject the per-prompt map form; `'map'` (local default) ignores `beforeUnload`
+ * explicitly. Either shape leaves prompts open so BiDi prompt events can fire.
+ */
+export function applyBidiDefaults(
+  caps: Capabilities,
+  bidiRequested: boolean,
+  promptBehavior: 'map' | 'string' = 'map'
+): void {
+  if (!bidiRequested) return;
+  if (caps.webSocketUrl === undefined) caps.webSocketUrl = true;
+  if (caps.unhandledPromptBehavior === undefined) {
+    caps.unhandledPromptBehavior =
+      promptBehavior === 'string'
+        ? 'ignore'
+        : {
+            alert: 'ignore',
+            confirm: 'ignore',
+            prompt: 'ignore',
+            beforeUnload: 'ignore',
+          };
+  }
+}
+
+/**
  * Inputs for {@link buildLaunchCapabilities}. Everything here is already
  * resolved by the caller (`Browser.launch`) — this module stays pure so the
  * W3C capability shape (and the one place the Classic-vs-BiDi protocol choice
@@ -118,16 +145,8 @@ export function buildLaunchCapabilities(input: LaunchCapabilityInput): Capabilit
   // Safari's branch above never reaches here with bidiRequested true (see the
   // comment in that branch) because it's rejected earlier in the launch
   // pipeline; this keeps the single-flag design for the other families.
-  if (input.browserName !== 'safari' && input.bidiRequested) {
-    // Request the BiDi WebSocket URL...
-    caps.webSocketUrl = true;
-    // ...and set all prompt types to 'ignore' so BiDi events fire and we can handle them.
-    caps.unhandledPromptBehavior = {
-      alert: 'ignore',
-      confirm: 'ignore',
-      prompt: 'ignore',
-      beforeUnload: 'ignore',
-    };
+  if (input.browserName !== 'safari') {
+    applyBidiDefaults(caps, input.bidiRequested);
   }
 
   return caps;

@@ -16,18 +16,23 @@ That protocol choice is the center of the project. CraftDriver tries to provide 
 
 CraftDriver picks the practical protocol path behind a single public API. You call `browser.click()`, `browser.navigateTo()`, `browser.network.mock()`, or `browser.startTrace()`; the library handles the transport details.
 
+### Remote sessions use the same two protocols
+
+`Browser.launch({ remote })` connects to a W3C-compatible remote endpoint
+(a self-hosted Selenium Grid, BrowserStack, or another cloud provider). The
+same protocols are used, but the endpoint decides which browser features and
+BiDi proxying are available. Remote uploads and downloads also have a
+different lifecycle. See [Remote WebDriver](./remote-webdriver.md).
+
 ### Safari is Classic-only
 
-`browserName: 'safari'` always uses WebDriver Classic and never negotiates
-`webSocketUrl`. This isn't a temporary gap CraftDriver plans to close — Apple
-does not currently document a supported WebDriver BiDi endpoint for Safari or
-Safari Technology Preview, so there's no BiDi transport to opt into. CraftDriver
-rejects `enableBiDi: true` for Safari with a clear `UNSUPPORTED` error before
-launch rather than silently downgrading, and every BiDi-only method (network,
-logs, tracing, contexts, permissions/geolocation/emulation, full-page
-screenshots, event-driven dialogs) fails the same way when called on a Safari
-session. See the [Safari guide](./safari.md) for what remains available on
-Classic.
+Apple does not currently document a supported WebDriver BiDi endpoint for
+Safari or Safari Technology Preview. A local Safari launch therefore rejects
+`enableBiDi: true` and BiDi-only methods fail with `UNSUPPORTED`. Remote
+Safari defaults to Classic too; an explicit remote opt-in is forwarded because
+the remote endpoint owns negotiation, and it is usable only if that endpoint
+returns a working `webSocketUrl`. See the [Safari guide](./safari.md) for the
+local Classic feature set.
 
 ## Why It Matters
 
