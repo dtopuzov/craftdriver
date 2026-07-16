@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/dtopuzov/craftdriver/compare/v1.5.0...v1.6.0) (2026-07-16)
+
+
+### Features
+
+* add remote WebDriver support (Selenium Grid, BrowserStack) ([3941250](https://github.com/dtopuzov/craftdriver/commit/3941250fbae8fcbcc64b51ec7fa25a3cc2c2b3f0))
+
 # [1.5.0](https://github.com/dtopuzov/craftdriver/compare/v1.4.0...v1.5.0) (2026-07-14)
 
 
