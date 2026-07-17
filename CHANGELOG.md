@@ -35,6 +35,7 @@
 ### Features
 
 * **tracing:** export Vibium Player compatible zips from the library and MCP server
+* **visual:** add `browser.expectScreenshot()` — a retrying screenshot assertion against a committed PNG baseline, with per-channel RGB tolerance, max different-pixel count/percentage, optional anti-alias ignoring, and a typed `VisualMismatchError` carrying the final actual + diff PNG buffers (also exposes the low-level `compareScreenshots()` buffer comparator). Baselines are managed for you: a missing baseline is captured until it settles (or the timeout elapses), written, and passes (`result.baseline === 'created'`); an intentional change is accepted by re-running with `CRAFTDRIVER_UPDATE_VISUAL_BASELINES=true`, which overwrites a differing baseline instead of failing (`'updated'`). Writes are atomic and a present-but-corrupt baseline is never overwritten; behaviour is identical locally and in CI, with every create/update reported to stderr. New runtime dependency: pinned `pngjs@7.0.0` (pure JS, no native addon/WASM/transitive runtime deps)
 
 # [1.2.0](https://github.com/dtopuzov/craftdriver/compare/v1.1.1...v1.2.0) (2026-07-10)
 

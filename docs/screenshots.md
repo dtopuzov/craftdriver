@@ -17,6 +17,10 @@ craftdriver exposes a single options-bag `screenshot()` method on both
 
 `fullPage` and `selector` are mutually exclusive.
 
+> To **compare** a screenshot against a committed baseline (with retries and
+> pixel tolerances) rather than just capture one, see
+> [Visual testing](./visual-testing.md) and `browser.expectScreenshot()`.
+
 ```typescript
 // Viewport only (default), buffer
 const buffer = await browser.screenshot();
@@ -78,14 +82,19 @@ afterEach(async (context) => {
 
 ### Visual comparison baseline
 
-```typescript
-await browser.navigateTo('https://example.com');
-await browser.screenshot({ path: 'baseline/homepage.png' });
+For visual regression testing you don't manage baseline and candidate PNGs by
+hand or reach for a separate image-diff library. `browser.expectScreenshot()`
+captures, compares against a committed baseline, retries until it settles, and
+throws a typed diff on a real change — creating the baseline on the first run:
 
-// Later, capture the candidate and diff with an image library:
-await browser.navigateTo('https://example.com');
-await browser.screenshot({ path: 'current/homepage.png' });
+```typescript
+await browser.expectScreenshot('baselines/homepage.png', {
+  screenshot: { fullPage: true },
+});
 ```
+
+See [Visual testing](./visual-testing.md) for baselines, thresholds, ignoring
+anti-aliasing, updating baselines, and making CI deterministic.
 
 ### Component screenshots
 

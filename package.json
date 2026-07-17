@@ -88,6 +88,7 @@
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@types/node": "^20.0.0",
+    "@types/pngjs": "6.0.5",
     "@types/ws": "^8.18.1",
     "@types/yazl": "^3.3.1",
     "@typescript-eslint/parser": "^8.1.0",
@@ -102,6 +103,7 @@
   },
   "dependencies": {
     "axe-core": "^4.12.1",
+    "pngjs": "7.0.0",
     "ws": "^8.21.0",
     "yazl": "^3.3.1"
   },

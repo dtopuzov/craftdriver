@@ -32,6 +32,15 @@ export const ASSERTION_POLL_INTERVAL_MS = 25;
 export const DRIVER_READINESS_POLL_INTERVAL_MS = 25;
 
 /**
+ * Delay between failed `browser.expectScreenshot()` attempts. Longer than the
+ * DOM-oriented poll intervals above because each attempt captures and compares a
+ * full PNG (a WebDriver round trip plus a decode), so a tighter cadence would
+ * just burn CPU re-screenshotting a page that is still settling. Callers can
+ * override per-assertion via `{ interval }` (floor 10 ms).
+ */
+export const VISUAL_RETRY_INTERVAL_MS = 50;
+
+/**
  * Poll interval for state that changes at process/OS speed rather than DOM
  * speed: Classic `document.readyState`, the Classic `waitForPage`
  * window-handle fallback, and download-file polling. Kept at the same 25ms

@@ -151,6 +151,7 @@ export default defineConfig({
           { text: 'Mobile Emulation', link: '/mobile-emulation' },
           { text: 'Emulation', link: '/emulation' },
           { text: 'Screenshots', link: '/screenshots' },
+          { text: 'Visual Testing', link: '/visual-testing' },
           { text: 'Tracing', link: '/tracing' },
           { text: 'Accessibility', link: '/accessibility' },
           { text: 'Virtual Clock', link: '/clock' },

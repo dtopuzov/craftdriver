@@ -63,6 +63,13 @@ const SYMBOL_DOC = {
   SessionState: 'docs/session-management.md',
   SessionStateManager: 'docs/session-management.md',
   StorageStateOptions: 'docs/session-management.md',
+  compareScreenshots: 'docs/visual-testing.md',
+  VisualMismatchError: 'docs/visual-testing.md',
+  ScreenshotCompareOptions: 'docs/visual-testing.md',
+  ExpectScreenshotOptions: 'docs/visual-testing.md',
+  VisualScreenshotOptions: 'docs/visual-testing.md',
+  VisualComparisonResult: 'docs/visual-testing.md',
+  ScreenshotMatchResult: 'docs/visual-testing.md',
 };
 const BIDI_FILE_DOC = {
   logs: 'docs/browser-logs.md',
@@ -166,6 +173,19 @@ const CATEGORIES = [
       'ElectronMainLog',
       'ElectronMainLogHandler',
       'ElectronMainLogLevel',
+    ],
+  },
+  {
+    title: 'Visual Testing',
+    description: 'Assert screenshots against baselines with pixel/percentage tolerances and optional anti-alias handling.',
+    symbols: [
+      'compareScreenshots',
+      'VisualMismatchError',
+      'ScreenshotCompareOptions',
+      'ExpectScreenshotOptions',
+      'VisualScreenshotOptions',
+      'VisualComparisonResult',
+      'ScreenshotMatchResult',
     ],
   },
   {

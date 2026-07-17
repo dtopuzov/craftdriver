@@ -58,6 +58,8 @@ import { CraftdriverError, ErrorCode } from './errors.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
+import { runExpectScreenshot, shouldUpdateVisualBaselines } from './visual/index.js';
+import type { ExpectScreenshotOptions, ScreenshotMatchResult } from './visual/index.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -2862,6 +2864,65 @@ export class Browser {
     }
     if (opts?.path) await fs.writeFile(opts.path, buf);
     return buf;
+  }
+
+  /**
+   * Assert that a screenshot matches a baseline PNG on disk, auto-retrying
+   * until it matches or `timeout` elapses. Returns the match result on success;
+   * throws `VisualMismatchError` (code `VISUAL_MISMATCH`) carrying the final
+   * actual and diff PNG buffers on failure.
+   *
+   * Baselines are managed for you, WebdriverIO-style:
+   * - **Missing** (`expectedPath` doesn't exist): the screenshot is captured
+   *   until it settles, written as the new baseline, and the assertion passes
+   *   (`result.baseline === 'created'`). This is always on — no flag required.
+   * - **Matches**: passes (`result.baseline === 'matched'`).
+   * - **Differs**: throws `VisualMismatchError` — unless
+   *   `CRAFTDRIVER_UPDATE_VISUAL_BASELINES=true`, in which case the baseline is
+   *   overwritten with the new screenshot and the assertion passes
+   *   (`result.baseline === 'updated'`). Creates and updates are reported to
+   *   stderr; behaviour is identical locally and in CI.
+   *
+   * A baseline that is present but unreadable/corrupt stays a hard error even
+   * under update mode — it is never overwritten. Comparison supports per-channel
+   * RGB tolerance plus max different-pixel count and percentage; anti-aliasing
+   * can optionally be ignored. `screenshot.fullPage` requires BiDi and is
+   * mutually exclusive with `screenshot.selector`.
+   *
+   * @example
+   * // First run creates 'baselines/home.png'; later runs assert against it.
+   * await browser.expectScreenshot('baselines/home.png', {
+   *   screenshot: { fullPage: true },
+   *   maxDiffPixels: 100,
+   * });
+   */
+  async expectScreenshot(
+    expectedPath: string,
+    options: ExpectScreenshotOptions = {}
+  ): Promise<ScreenshotMatchResult> {
+    // Parsed before the first capture so a malformed value fails fast.
+    const update = shouldUpdateVisualBaselines(process.env.CRAFTDRIVER_UPDATE_VISUAL_BASELINES);
+    const scope = options.screenshot;
+    const capture = (remainingMs: number): Promise<Buffer> => {
+      if (scope && 'selector' in scope && scope.selector !== undefined) {
+        // Bound the element-visibility wait by the remaining assertion time so
+        // one capture can't ignore the outer deadline. The wait still evaluates
+        // visibility at least once even at 0 ms (see WebDriverWait.until), so a
+        // present element is captured without extending the deadline.
+        return this.screenshot({ selector: scope.selector, timeout: remainingMs });
+      }
+      if (scope && 'fullPage' in scope && scope.fullPage === true) {
+        return this.screenshot({ fullPage: true });
+      }
+      return this.screenshot();
+    };
+    return runExpectScreenshot({
+      expectedPath,
+      options,
+      defaultTimeout: this.defaults.timeout,
+      capture,
+      update,
+    });
   }
 
   expect(selector: string | By) {
