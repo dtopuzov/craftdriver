@@ -28,6 +28,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+* **wait:** evaluate wait conditions once even when the timeout is zero
+
 ### Features
 
 * **tracing:** export Vibium Player compatible zips from the library and MCP server
