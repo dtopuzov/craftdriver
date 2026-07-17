@@ -41,7 +41,11 @@ export class WebDriverWait {
   async until<T>(condition: Condition<T>, message?: string): Promise<T> {
     const deadline = Date.now() + this.timeoutMs;
     let lastErr: unknown;
-    while (Date.now() < deadline) {
+    // Check-first: the condition is always evaluated at least once, even with a
+    // zero (or already-elapsed) timeout. A `while (Date.now() < deadline)` loop
+    // would run zero iterations at timeout 0 and report an already-satisfiable
+    // condition as a spurious timeout.
+    for (;;) {
       try {
         const result = await condition(this.driver);
         // Resolve on truthy or non-null/undefined result
@@ -51,6 +55,7 @@ export class WebDriverWait {
       } catch (e) {
         lastErr = e;
       }
+      if (Date.now() >= deadline) break;
       await new Promise((r) => setTimeout(r, this.intervalMs));
     }
     const errMsg = message ?? this.timeoutMsg ?? `Wait timed out after ${this.timeoutMs}ms`;
