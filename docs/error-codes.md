@@ -54,6 +54,7 @@ try {
 | `ELECTRON_MAIN_UNAVAILABLE` | `browser.electron.executeMain(...)` couldn't reach the app's main process. | Launch with `electron: { mainProcess: true }`; ensure the app build keeps the `EnableNodeCliInspectArguments` fuse enabled (default). `hint` names the fix. |
 | `ELECTRON_MAIN_THREW` | The `executeMain(...)` callback threw inside the Electron main process. | The main-process exception text is in the message; treat like a failed assertion about main-process state. |
 | `ELECTRON_DEEPLINK_FAILED` | `browser.electron.triggerDeeplink(url)` could not open the custom-protocol URL. | An unsupported platform, a missing `appBinaryPath` on Windows, or the OS `open`/`gio`/`rundll32` launcher failed (`error.detail.command`, `error.cause`). An invalid or `http(s)`/`file` URL throws `INVALID_ARGUMENT` instead. |
+| `VISUAL_MISMATCH` | `browser.expectScreenshot()` never matched the baseline within its timeout. | Thrown as `VisualMismatchError` (a `CraftdriverError` subclass). Read `error.actual` and `error.diff` (PNG `Buffer`s) to see the regression; `error.detail` carries JSON-safe path/dimensions/`diffPixels`/`diffPercentage`/`attempts`. If the change is intentional, re-run with `CRAFTDRIVER_UPDATE_VISUAL_BASELINES=true` to overwrite the baseline. See [visual-testing.md](./visual-testing.md). |
 
 ## Stability
 

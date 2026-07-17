@@ -124,6 +124,20 @@ Launch packaged Electron applications, drive their renderer, and opt in to main-
 | `ElectronMainLogHandler` | type | — | [electron](electron.md) |
 | `ElectronMainLogLevel` | type | Normalized level for a main-process log entry. | [electron](electron.md) |
 
+## Visual Testing
+
+Assert screenshots against baselines with pixel/percentage tolerances and optional anti-alias handling.
+
+| Symbol | Kind | Summary | Docs |
+|---|---|---|---|
+| `compareScreenshots` | function | Compare two compressed PNG buffers without disk access, browser capture, retries, or throwing on a normal mismatch. Applies the same byte/pixel input limits as the retrying assertion. | [visual-testing](visual-testing.md) |
+| `VisualMismatchError` | class | Thrown by `browser.expectScreenshot()` when no screenshot matched the baseline before the timeout. Carries the final actual and diff PNG buffers plus the comparison summary; `code` is `VISUAL_MISMATCH`. | [visual-testing](visual-testing.md) |
+| `ScreenshotCompareOptions` | type | Policies applied to a single buffer-to-buffer comparison. | [visual-testing](visual-testing.md) |
+| `ExpectScreenshotOptions` | type | Options for the retrying `browser.expectScreenshot()` assertion. | [visual-testing](visual-testing.md) |
+| `VisualScreenshotOptions` | type | Mutually exclusive capture scope forwarded to `browser.screenshot()`. `fullPage` and `selector` cannot be combined (enforced by the union here and re-checked at runtime for JavaScript callers). | [visual-testing](visual-testing.md) |
+| `VisualComparisonResult` | type | Result of one buffer-to-buffer comparison. | [visual-testing](visual-testing.md) |
+| `ScreenshotMatchResult` | type | Result of a successful `browser.expectScreenshot()` assertion. | [visual-testing](visual-testing.md) |
+
 ## Accessibility
 
 Run axe-core accessibility checks and inspect violation details.
@@ -170,4 +184,4 @@ Exports that are public but not yet assigned to a feature group.
 | `RemoteAuth` | type | — | — |
 | `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
 
-Total exports: **86**.
+Total exports: **93**.

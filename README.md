@@ -22,10 +22,11 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - 📡 **Network control** - mock, block, intercept, and wait for browser requests and responses.
 - 🔐 **Reusable sessions** - save cookies and localStorage, then launch already signed in.
 - ⏱️ **Virtual clock** - freeze or fast-forward `Date`, timers, and time-sensitive UI.
-- ♿ **Accessibility audits** - run axe-core checks on pages, elements, and locators.
+- ♿ **Accessibility audits** - find WCAG 2.2 and Section 508 violations with built-in axe-core checks.
+- 🖼️ **Visual testing** - catch visual regressions against baselines, without fighting anti-aliasing flakiness.
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
-- ⚛️ **Electron apps** - drive packaged Electron desktop app renderers, matched to the app's bundled Chromium.
 - ☁️ **Remote WebDriver** - use the Browser API with a self-hosted Selenium Grid or a cloud provider like [BrowserStack](https://www.browserstack.com/).
+- ⚛️ **Electron apps** - drive packaged Electron desktop apps and mock native OS dialogs (open/save, message boxes).
 - 🤖 **Agent-friendly** - CLI, MCP, and assistant rules when coding agents need the browser.
 
 ## Choose Your Path
@@ -111,6 +112,7 @@ await browser.a11y.check();
 | Network mocking      | Mock, block, intercept, and wait for browser requests and responses                | [Network mocking](https://dtopuzov.github.io/craftdriver/network)                                                                          |
 | Console and errors   | Capture console output and fail tests on JavaScript errors                         | [Console logs](https://dtopuzov.github.io/craftdriver/browser-logs)                                                                        |
 | Screenshots          | Page and element screenshots for tests and debugging                               | [Screenshots](https://dtopuzov.github.io/craftdriver/screenshots)                                                                          |
+| Visual testing       | Compare screenshots to baselines with tolerances, retries, and diff artifacts      | [Visual testing](https://dtopuzov.github.io/craftdriver/visual-testing)                                                                    |
 | Mobile and emulation | Device presets, viewport, locale, timezone, offline, reduced motion                | [Mobile emulation](https://dtopuzov.github.io/craftdriver/mobile-emulation), [Emulation](https://dtopuzov.github.io/craftdriver/emulation) |
 | Browser contexts     | Isolated profiles for multi-user and multi-session testing                         | [Browser contexts](https://dtopuzov.github.io/craftdriver/browser-context)                                                                 |
 | Tracing              | Crash-resilient NDJSON plus Vibium Player compatible trace zips                    | [Tracing](https://dtopuzov.github.io/craftdriver/tracing)                                                                                  |

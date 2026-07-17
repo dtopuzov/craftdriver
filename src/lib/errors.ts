@@ -66,6 +66,13 @@ export const ErrorCode = {
    * an unsupported platform, or the OS `open`/`gio`/`rundll32` launcher failed.
    */
   ELECTRON_DEEPLINK_FAILED: 'ELECTRON_DEEPLINK_FAILED',
+  /**
+   * `browser.expectScreenshot(...)` never matched the baseline within its
+   * timeout. Carried by {@link CraftdriverError} subclass `VisualMismatchError`,
+   * which additionally exposes the final actual and diff PNG buffers; `detail`
+   * holds the JSON-safe path/dimensions/counts/percentage/attempts diagnostics.
+   */
+  VISUAL_MISMATCH: 'VISUAL_MISMATCH',
 } as const;
 
 export type ErrorCodeName = keyof typeof ErrorCode;

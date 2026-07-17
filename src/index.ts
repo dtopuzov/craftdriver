@@ -99,6 +99,17 @@ export {
   type ClockInstallOptions,
 } from './lib/clock.js';
 
+// Visual screenshot assertions (expectScreenshot / compareScreenshots)
+export {
+  compareScreenshots,
+  VisualMismatchError,
+  type ScreenshotCompareOptions,
+  type ExpectScreenshotOptions,
+  type VisualScreenshotOptions,
+  type VisualComparisonResult,
+  type ScreenshotMatchResult,
+} from './lib/visual/index.js';
+
 // Accessibility audits (axe-core wrapper — axe-core ships with craftdriver)
 export {
   A11y,
