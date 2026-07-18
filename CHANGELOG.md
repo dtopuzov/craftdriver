@@ -1,3 +1,15 @@
+# [1.7.0](https://github.com/dtopuzov/craftdriver/compare/v1.6.0...v1.7.0) (2026-07-18)
+
+
+### Bug Fixes
+
+* evaluate wait conditions at zero timeout ([68ec2f9](https://github.com/dtopuzov/craftdriver/commit/68ec2f95148b93ba81f29ecc9ba293eef2265f44))
+
+
+### Features
+
+* add visual testing ([fd6ce7d](https://github.com/dtopuzov/craftdriver/commit/fd6ce7db8fde26c5ffa80bead9514479547c2a62))
+
 # [1.6.0](https://github.com/dtopuzov/craftdriver/compare/v1.5.0...v1.6.0) (2026-07-16)
 
 
