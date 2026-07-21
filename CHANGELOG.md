@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/dtopuzov/craftdriver/compare/v1.7.0...v1.8.0) (2026-07-21)
+
+
+### Features
+
+* **agent:** add AI tooling and reliable auth-state reuse ([2a0f079](https://github.com/dtopuzov/craftdriver/commit/2a0f079b327ffd1545fa0f1919e06045e89422dc))
+
 ## Unreleased
 
 ### Features
