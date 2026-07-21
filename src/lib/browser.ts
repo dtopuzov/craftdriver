@@ -811,9 +811,15 @@ export class Browser {
         await browser.initBiDi(wsUrl);
       }
 
-      // Load session state if provided
+      // Load session state if provided. On a BiDi session, route through the
+      // default context so cookies AND localStorage are restored via the
+      // one-time hydrator; Classic can restore cookies only (via loadState).
       if (options.storageState) {
-        await browser.loadState(options.storageState);
+        if (browser.bidiSession?.isConnected()) {
+          await browser.defaultContext.loadStorageState(options.storageState);
+        } else {
+          await browser.loadState(options.storageState);
+        }
       }
     } catch (err) {
       // The driver session (and, for Electron, the app) already exists — don't

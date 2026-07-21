@@ -20,6 +20,7 @@
 
 import fs from 'node:fs/promises';
 import { writeSecureFile } from './secureFile.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 import type { Driver } from './driver.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { Page } from './page.js';
@@ -110,12 +111,6 @@ export class BrowserContext {
   private _hooks?: BrowserContextHooks;
   /** Per-context config (baseURL, extraHTTPHeaders). Read by Page for URL resolution. */
   private _config: BrowserContextConfig;
-  /**
-   * Preload-script id installed by {@link loadStorageState} to write
-   * localStorage entries on first navigation to each captured origin.
-   * Tracked so a subsequent call replaces (rather than stacks) the script.
-   */
-  private _localStoragePreloadId?: string;
   /** Preload-script ids registered via {@link addInitScript}. */
   private _initScriptIds = new Set<string>();
   /**
@@ -202,7 +197,6 @@ export class BrowserContext {
   _hasInitScriptsForNavigation(): boolean {
     return (
       this._initScriptIds.size > 0 ||
-      this._localStoragePreloadId !== undefined ||
       this._hooks?.hasBrowserInitScripts?.() === true
     );
   }
@@ -451,13 +445,11 @@ export class BrowserContext {
    * Apply a previously-captured snapshot to this context.
    *
    * - Cookies are written immediately.
-   * - localStorage entries are installed via a preload script that runs
-   *   on first navigation to each origin, before any page script. This
-   *   matches the way Playwright restores localStorage and survives full
-   *   reloads.
-   *
-   * Calling `loadStorageState` again replaces the previous preload
-   * script; it does not stack.
+   * - localStorage is seeded once per captured origin through a private,
+   *   intercepted same-origin document (BiDi has no "set localStorage for
+   *   origin" command). Because it runs once — not as a per-navigation
+   *   preload — the application owns the values afterward, so its own writes
+   *   survive a reload.
    *
    * @param source A `SessionState` object, or a path to a JSON file
    *   produced by {@link saveStorageState}.
@@ -484,16 +476,8 @@ export class BrowserContext {
       await this.addCookies(sanitized);
     }
 
-    // Replace any previously-installed localStorage preload.
-    if (this._localStoragePreloadId) {
-      await this.conn
-        .send('script.removePreloadScript', { script: this._localStoragePreloadId })
-        .catch(() => { /* already gone */ });
-      this._localStoragePreloadId = undefined;
-    }
-
     if (state.localStorage && Object.keys(state.localStorage).length > 0) {
-      this._localStoragePreloadId = await this.installLocalStoragePreload(state.localStorage);
+      await this._hydrateLocalStorage(state.localStorage);
     }
   }
 
@@ -519,12 +503,6 @@ export class BrowserContext {
       await this.conn.send('script.removePreloadScript', { script: id }).catch(() => { });
     }
     this._initScriptIds.clear();
-    if (this._localStoragePreloadId) {
-      await this.conn
-        .send('script.removePreloadScript', { script: this._localStoragePreloadId })
-        .catch(() => { });
-      this._localStoragePreloadId = undefined;
-    }
     if (this._hooks && this._routes.size > 0) {
       const net = this._hooks.getNetwork();
       for (const entry of this._routes.values()) {
@@ -960,32 +938,101 @@ export class BrowserContext {
   }
 
   /**
-   * Install a preload script (scoped to this user context) that, on first
-   * navigation to each captured origin, writes the localStorage entries
-   * before any page script runs.
+   * Seed localStorage for each captured origin exactly once.
+   *
+   * BiDi has no command to set localStorage for an arbitrary origin, so we
+   * visit each origin in a throwaway top-level context whose navigation is
+   * fulfilled locally (never reaching the network), write the entries, and
+   * close it. Unlike a preload script this runs once — the application owns the
+   * values afterward, so its own writes survive a reload.
+   *
+   * The private context is created at the connection level (not via `newPage`),
+   * so it never enters `_pageIds`, the `'page'` event, routes, or active-page
+   * selection. The intercept is scoped to it, and navigation is forced onto
+   * BiDi — a Classic-initiated navigation would stall against a BiDi intercept.
    */
-  private async installLocalStoragePreload(
-    localStorage: Record<string, Record<string, string>>
-  ): Promise<string> {
-    // Serialize the origin → entries map into the function body. Safe because
-    // we control the JSON shape (strings only).
-    const payload = JSON.stringify(localStorage);
-    const fnSrc = `() => {
-      try {
-        const data = ${payload};
-        const entries = data[location.origin];
-        if (!entries) return;
-        for (const k in entries) {
-          try { window.localStorage.setItem(k, entries[k]); } catch (e) { /* quota / opaque origin */ }
-        }
-      } catch (e) { /* never break user pages */ }
-    }`;
+  private async _hydrateLocalStorage(
+    byOrigin: Record<string, Record<string, string>>
+  ): Promise<void> {
+    const origins = Object.keys(byOrigin).filter(
+      (o) => byOrigin[o] && Object.keys(byOrigin[o]).length > 0
+    );
+    if (origins.length === 0) return;
 
-    const result = await this.conn.send<{ script: string }>('script.addPreloadScript', {
-      functionDeclaration: fnSrc,
-      userContexts: [this._id],
+    const net = this._hooks?.getNetwork();
+    if (!net) {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'restoring localStorage requires a BiDi session with network interception'
+      );
+    }
+
+    const created = await this.conn.send<{ context: string }>('browsingContext.create', {
+      type: 'tab',
+      userContext: this._id,
     });
-    return result.script;
+    const privId = created.context;
+    const priv = new Page(this.driver, privId, this.getDefaultTimeout, this.conn, this);
+
+    let interceptId: string | undefined;
+    try {
+      // Fulfil this private context's top-level navigations with a minimal
+      // document, locally — the request never reaches the network. The pattern
+      // is specific (a bare `**/*` does not register a working intercept): only
+      // this context's deterministic hydrate URL is fulfilled, and the intercept
+      // is scoped to `privId`, so no user page is ever touched.
+      interceptId = await net.intercept(
+        '**/__craftdriver_hydrate__*',
+        () => ({
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+          body: '<!doctype html><html><head></head><body></body></html>',
+        }),
+        ['beforeRequestSent'],
+        [privId]
+      );
+
+      for (const origin of origins) {
+        // The path is fixed and irrelevant — the intercept fulfils it locally.
+        // `domcontentloaded` forces the BiDi navigate path so the intercept
+        // applies (a default-context Classic `load` navigation would stall).
+        await priv.navigateTo(`${origin}/__craftdriver_hydrate__`, {
+          waitUntil: 'domcontentloaded',
+        });
+        // Confirm the realm is on the requested origin (an HSTS upgrade or other
+        // rewrite could land elsewhere), then write the entries in one call. The
+        // values travel as structured string arguments — never interpolated into
+        // the source; the source is a string, so the DOM globals it names are the
+        // browser's, not Node's.
+        const res = await this.conn.send<{ type: string; result?: { value?: unknown } }>(
+          'script.callFunction',
+          {
+            functionDeclaration:
+              'function (expected, json) {' +
+              ' if (location.origin !== expected) return "MISMATCH:" + location.origin;' +
+              ' var e = JSON.parse(json);' +
+              ' for (var k in e) localStorage.setItem(k, e[k]);' +
+              ' return "OK"; }',
+            target: { context: privId },
+            arguments: [
+              { type: 'string', value: origin },
+              { type: 'string', value: JSON.stringify(byOrigin[origin]) },
+            ],
+            awaitPromise: false,
+          }
+        );
+        const value = res.type === 'success' ? res.result?.value : undefined;
+        if (value !== 'OK') {
+          throw new CraftdriverError(
+            ErrorCode.STATE_INVALID,
+            `could not hydrate localStorage for origin ${origin} (${String(value)})`
+          );
+        }
+      }
+    } finally {
+      if (interceptId) await net.removeIntercept(interceptId).catch(() => {});
+      await this.conn.send('browsingContext.close', { context: privId }).catch(() => {});
+    }
   }
 
   /**
