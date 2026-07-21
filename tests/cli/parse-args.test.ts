@@ -154,6 +154,10 @@ describe('CLI command mapping', () => {
     expect(parsed.args).toMatchObject(args);
   });
 
+  it('maps the private daemon child-process entry point without exposing it in help', () => {
+    expect(parse('daemon __run__').cmd).toBe('daemon:__run__');
+  });
+
   it.each([
     ['logs', { action: 'list' }],
     ['logs list', { action: 'list' }],

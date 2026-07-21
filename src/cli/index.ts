@@ -132,7 +132,7 @@ export async function main(argv: string[]): Promise<number> {
   if (parsed.cmd === 'daemon:start') return daemonStart(parsed.flags);
   if (parsed.cmd === 'daemon:stop') return daemonStop(parsed);
   if (parsed.cmd === 'daemon:status') return daemonStatus(parsed, session);
-  if (parsed.cmd === 'daemon:run') return daemonRun(parsed.flags); // internal: actual daemon process
+  if (parsed.cmd === 'daemon:__run__') return daemonRun(parsed.flags); // internal child process
 
   // ------------------------------------------------------------------
   // Ephemeral mode — no daemon involved.
@@ -659,7 +659,3 @@ async function readAllStdin(): Promise<string> {
     process.stdin.on('end', () => resolve(buf));
   });
 }
-
-// Handle the internal "daemon __run__" invocation used by autoStartDaemon.
-// Map sub-token "__run__" → "run" so parseArgv produces `daemon:run`.
-if (process.argv[3] === '__run__') process.argv[3] = 'run';

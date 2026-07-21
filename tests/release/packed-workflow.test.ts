@@ -221,15 +221,10 @@ describe('packed CLI and skill', () => {
       expect(statSync(file).mode & 0o777).toBe(0o600);
     }
 
-    // Restoring onto a blank page would silently drop origin-scoped storage,
-    // so the CLI refuses it and names the origin.
+    // BiDi restores cookies + localStorage before the first real navigation.
     run(['quit']);
-    const refused = run(['state', 'load', 'release'], { allowFailure: true });
-    expect(refused).toMatch(/origin/i);
-
-    run(['go', `${EXAMPLES_BASE_URL}/login.html`]);
     run(['state', 'load', 'release']);
-    run(['reload']);
+    run(['go', `${EXAMPLES_BASE_URL}/login.html`]);
     expect(json(['text', '#welcome']).text as string).toContain('releaseuser');
   }, 300_000);
 
