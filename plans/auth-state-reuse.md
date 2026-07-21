@@ -27,20 +27,22 @@ Landed and verified on Chrome BiDi:
     intercept), and the private page must navigate over **BiDi** (a Classic
     navigation stalls against a BiDi intercept).
 
+Also landed (validation & hardening tranche): one shared validator runs before
+any mutation (unknown/legacy sections rejected, not ignored); the
+operation-specific sessionStorage policy above; a strict hydration intercept
+with zero network fall-through; localStorage-before-cookies apply order; failed
+`newContext` cleanup; and the `writeSecureFile` lstat fix. Verified on Chrome +
+Firefox, the recipe (both engines), and the CLI auth-state suite.
+
 Still pending in this MVP:
 
+- **Private-context invisibility hardening** (§3) — *next*. The hydrator is
+  invisible on the launch / `newContext` paths (no page tracking or `'page'`
+  listener is armed there yet). The quarantine-and-replay for `loadStorageState`
+  on an already-active context that has a `'page'` listener is not yet built.
 - **Classic active-origin fallback** (§5). Classic launch still routes through
   the old cookies-only `loadState`; make it reject non-empty state at launch and
   restore only the active origin, per the matrix.
-- **State validation & fail-loud** (§"State validation and compatibility").
-  Validate before mutation; reject unsupported sections instead of ignoring
-  them. The opt-in `sessionStorage` round-trip is a compatibility decision to
-  confirm before making it an error.
-- **Private-context invisibility hardening** (§3). The hydrator is already
-  invisible on the launch / `newContext` paths (no page tracking or `'page'`
-  listener is armed yet at that point). The quarantine-and-replay for
-  `loadStorageState` on an already-active context that has a `'page'` listener is
-  not yet implemented.
 - **Docs** (§6). Recipe / CLI / API updates once the above land.
 
 ## Product decision
