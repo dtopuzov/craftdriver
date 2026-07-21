@@ -18,7 +18,10 @@ Landed and verified on Chrome BiDi:
   `newContext({ storageState })` and BiDi `Browser.launch({ storageState })` now
   restore cookies **and** localStorage. Contract tests cover first-script
   visibility, mutation-survives-reload, multi-origin, and launch-time restore;
-  the full browser-context / storage / recipe suite (67 tests) is green.
+  the browser-context and storage suites are green. (Correction: the recipe
+  suite is **excluded from the default vitest run** and only executes under
+  `vitest.recipes.config.ts` — it was not actually exercised by that first
+  pass, and its stale launch-path assertion is fixed in the validation tranche.)
   - Two constraints proved in code and encoded as comments: the intercept must
     use a **specific** URL pattern (a bare `**/*` does not register a working
     intercept), and the private page must navigate over **BiDi** (a Classic
@@ -103,6 +106,29 @@ restoration path.
   not implied.
 
 A future clear-and-replace API is deferred.
+
+### sessionStorage policy (operation-specific, decided 2026-07-21)
+
+sessionStorage is tab-scoped, so a private hydration page cannot transfer it to
+the caller's future pages. The policy therefore depends on the operation, and
+unknown/unsupported sections are never silently ignored:
+
+- **Active-page APIs** — `browser.loadState()`, `browser.storage.setState()`,
+  and the CLI `state load` — **preserve** non-empty sessionStorage restoration
+  (an existing documented feature behind `--session-storage`). They require a
+  matching active HTTP(S) origin and a single applicable origin, and fail
+  **before mutation** on a mismatch or on multi-origin sessionStorage.
+- **Context/launch APIs** — `Browser.launch({ storageState })`,
+  `browser.newContext({ storageState })`, and `BrowserContext.loadStorageState()`
+  — **hard-error `UNSUPPORTED` before any cookie/localStorage mutation** when the
+  state contains non-empty sessionStorage, because their private hydration page
+  cannot carry tab-scoped sessionStorage to future pages.
+- An empty `sessionStorage: {}` is a **no-op**, never an error.
+- `browser.loadState()` on a BiDi session routes through the validated hydrator
+  when the state has no sessionStorage, and through the active-page path when it
+  does. Local launch, remote BiDi launch, and `newContext` share that one
+  validated hydrator. All library restore inputs accept a path **or** an
+  in-memory `SessionState` object.
 
 ## Browser and transport support policy
 

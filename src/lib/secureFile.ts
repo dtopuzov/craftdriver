@@ -44,8 +44,10 @@ export async function writeSecureFile(destPath: string, contents: string): Promi
     }
   } catch (err) {
     if (err instanceof CraftdriverError) throw err;
-    // ENOENT is the normal case (destination does not exist yet); anything else
-    // (e.g. EACCES on the path) surfaces when we try to write below.
+    // ENOENT is the normal case — the destination does not exist yet. Any other
+    // lstat failure (EACCES, ELOOP, a broken path component, …) is a real
+    // problem; propagate it rather than blindly proceeding to write.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 
   const tmp = join(dir, `.${basename(abs)}.${randomBytes(6).toString('hex')}.tmp`);

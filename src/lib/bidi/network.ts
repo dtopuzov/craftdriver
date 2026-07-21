@@ -52,6 +52,13 @@ export interface InterceptRule {
   patterns: UrlPattern[];
   phases: InterceptPhase[];
   handler?: RequestHandler;
+  /**
+   * Internal strict mode: on a handler or `provideResponse` failure, fail the
+   * request rather than continuing it to the real network. Used by trusted
+   * internal intercepts (e.g. storage hydration) that must own every request
+   * they match — a fall-through would leak the request to the origin server.
+   */
+  strict?: boolean;
 }
 
 export class NetworkInterceptor {
@@ -165,7 +172,8 @@ export class NetworkInterceptor {
     patterns: string | string[] | UrlPattern | UrlPattern[],
     handler: RequestHandler,
     phases: InterceptPhase[] = ['beforeRequestSent'],
-    contexts?: BrowsingContext[]
+    contexts?: BrowsingContext[],
+    opts?: { strict?: boolean }
   ): Promise<string> {
     await this.initialize();
 
@@ -185,6 +193,7 @@ export class NetworkInterceptor {
       patterns: urlPatterns,
       phases,
       handler,
+      strict: opts?.strict,
     });
 
     this.handlers.set(interceptId, handler);
@@ -564,18 +573,30 @@ export class NetworkInterceptor {
         context: event.context,
       };
 
+      const strict = this.intercepts.get(interceptId)?.strict === true;
       try {
         const result = await handler(interceptedRequest);
 
         if (result) {
           // Provide mock response
           await this.provideResponse(requestId, result);
+        } else if (strict) {
+          // A strict internal intercept must own every request it matches — a
+          // handler returning nothing is a bug, not a pass-through.
+          await this.failRequest(requestId);
         } else {
           // Continue with original request
           await this.continueRequest(requestId);
         }
         return;
       } catch (err) {
+        if (strict) {
+          // Never fall through to the real network for a strict internal
+          // intercept: fail the request so the caller sees the error rather
+          // than a surprise real response reaching the origin server.
+          await this.failRequest(requestId).catch(() => { });
+          return;
+        }
         console.error('Error in network intercept handler:', err);
         await this.continueRequest(requestId);
         return;

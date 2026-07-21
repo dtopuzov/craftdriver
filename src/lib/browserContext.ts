@@ -18,9 +18,13 @@
  *     started in (id = `'default'`).
  */
 
-import fs from 'node:fs/promises';
 import { writeSecureFile } from './secureFile.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import {
+  parseSessionState,
+  hasNonEmptySessionStorage,
+  nonEmptyOrigins,
+} from './sessionStateValidation.js';
 import type { Driver } from './driver.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { Page } from './page.js';
@@ -456,10 +460,25 @@ export class BrowserContext {
    */
   async loadStorageState(source: SessionState | string): Promise<void> {
     this.assertOpen();
-    const state: SessionState =
-      typeof source === 'string'
-        ? (JSON.parse(await fs.readFile(source, 'utf-8')) as SessionState)
-        : source;
+    const state = await parseSessionState(source);
+
+    // A context/launch restore cannot carry tab-scoped sessionStorage to the
+    // caller's future pages — reject before any mutation rather than silently
+    // dropping it. (browser.loadState() takes the active-page path for that.)
+    if (hasNonEmptySessionStorage(state)) {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'restoring sessionStorage is not supported for context/launch APIs (it is ' +
+          'tab-scoped); use browser.loadState() after navigating to the origin'
+      );
+    }
+
+    // localStorage first — its private hydration page is where a restore failure
+    // would surface; applying cookies last means a hydration failure never
+    // leaves cookies behind.
+    if (nonEmptyOrigins(state.localStorage).length > 0) {
+      await this._hydrateLocalStorage(state.localStorage as Record<string, Record<string, string>>);
+    }
 
     if (state.cookies?.length) {
       // Sanitize: a snapshot may contain cookies with sameSite:'none' and
@@ -474,10 +493,6 @@ export class BrowserContext {
         return c;
       });
       await this.addCookies(sanitized);
-    }
-
-    if (state.localStorage && Object.keys(state.localStorage).length > 0) {
-      await this._hydrateLocalStorage(state.localStorage);
     }
   }
 
@@ -989,7 +1004,8 @@ export class BrowserContext {
           body: '<!doctype html><html><head></head><body></body></html>',
         }),
         ['beforeRequestSent'],
-        [privId]
+        [privId],
+        { strict: true } // never let a hydration request reach the real network
       );
 
       for (const origin of origins) {

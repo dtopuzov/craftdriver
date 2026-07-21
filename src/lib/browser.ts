@@ -55,6 +55,7 @@ import { Tracer, type TraceStartOptions, type TraceStopOptions } from './tracing
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import { parseSessionState, hasNonEmptySessionStorage } from './sessionStateValidation.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
@@ -267,8 +268,9 @@ interface SharedLaunchOptions {
    * protocol per command.
    */
   enableBiDi?: boolean;
-  /** Load session state from file on launch. */
-  storageState?: string;
+  /** Load session state on launch — a path to a saved JSON file, or an
+   *  in-memory `SessionState` object. */
+  storageState?: string | SessionState;
   /**
    * Directory where downloaded files are saved.
    * Defaults to a temporary directory unique to this session.
@@ -863,7 +865,11 @@ export class Browser {
       }
 
       if (options.storageState) {
-        await browser.loadState(options.storageState);
+        if (browser.bidiSession?.isConnected()) {
+          await browser.defaultContext.loadStorageState(options.storageState);
+        } else {
+          await browser.loadState(options.storageState);
+        }
       }
     } catch (err) {
       // POST /session already succeeded — a failure initializing the session
@@ -1050,8 +1056,17 @@ export class Browser {
   /**
    * Load session state from file
    */
-  async loadState(path: string): Promise<void> {
-    return this.storage.loadState(path);
+  async loadState(source: string | SessionState): Promise<void> {
+    const state = await parseSessionState(source);
+    // BiDi with no sessionStorage → the validated hydrator (multi-origin, no
+    // active page required). Otherwise (Classic, or sessionStorage present) take
+    // the active-page path, which restores a single origin matching the active
+    // page and can carry sessionStorage.
+    if (this.bidiSession?.isConnected() && !hasNonEmptySessionStorage(state)) {
+      await this.defaultContext.loadStorageState(state);
+    } else {
+      await this.storage.setState(state);
+    }
   }
 
   private async _runTracedAction<T>(
@@ -2494,14 +2509,21 @@ export class Browser {
       baseURL: opts?.baseURL,
       extraHTTPHeaders: opts?.extraHTTPHeaders,
     });
-    if (opts?.storageState !== undefined) {
-      await ctx.loadStorageState(opts.storageState);
+    try {
+      if (opts?.storageState !== undefined) {
+        await ctx.loadStorageState(opts.storageState);
+      }
+      // Apply identity & device emulation options. Each setter is `userContexts`-scoped,
+      // so future pages in this context inherit automatically.
+      if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
+      if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
+      if (opts?.geolocation !== undefined) await ctx.setGeolocation(opts.geolocation);
+    } catch (err) {
+      // Restore/emulation failed — tear the just-created context down so a
+      // rejected newContext() never leaves an orphaned user context behind.
+      await ctx.close().catch(() => {});
+      throw err;
     }
-    // Apply identity & device emulation options. Each setter is `userContexts`-scoped,
-    // so future pages in this context inherit automatically.
-    if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
-    if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
-    if (opts?.geolocation !== undefined) await ctx.setGeolocation(opts.geolocation);
     return ctx;
   }
 

@@ -41,11 +41,11 @@ describe('log in once, reuse the session', () => {
     await browser.quit();
   });
 
-  // Pins the "What storageState Restores" section of the MD. The launch option
-  // runs while the browser is still on about:blank, which has no origin, so
-  // origin-scoped storage has nowhere to land — measured, not assumed. Without
-  // this the doc could quietly drift back to promising both halves.
-  it('restores cookies but not localStorage on the launch path', async () => {
+  // Pins the "What storageState Restores" section of the MD. On a BiDi session
+  // the launch option restores cookies AND localStorage: the saved origins are
+  // hydrated once before the first navigation, so the login page's first script
+  // already sees them. (The recipe MD prose is reconciled in the docs pass.)
+  it('restores localStorage on the launch path (BiDi)', async () => {
     const browser = await Browser.launch({
       browserName: BROWSER_NAME,
       storageState: authState,
@@ -55,15 +55,9 @@ describe('log in once, reuse the session', () => {
     const stored = await browser.evaluate<Record<string, string>>(
       'const r = {}; for (let i=0;i<localStorage.length;i++){const k=localStorage.key(i); r[k]=localStorage.getItem(k);} return r;',
     );
-    // The login example writes lastUser + theme, and saveState captured them.
-    expect(Object.keys(stored)).toHaveLength(0);
-
-    // Navigate-then-load is the order that does restore them.
-    await browser.loadState(authState);
-    const afterExplicitLoad = await browser.evaluate<Record<string, string>>(
-      'return { lastUser: localStorage.getItem("lastUser") }',
-    );
-    expect(afterExplicitLoad.lastUser).toBe('alice');
+    // The login example writes lastUser + theme; saveState captured them and the
+    // launch-time hydrator restored them.
+    expect(stored.lastUser).toBe('alice');
 
     await browser.quit();
   });

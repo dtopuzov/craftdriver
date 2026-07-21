@@ -8,6 +8,7 @@ import type { BiDiConnection } from './connection.js';
 import type { Driver } from '../driver.js';
 import { CraftdriverError, ErrorCode } from '../errors.js';
 import { writeSecureFile } from '../secureFile.js';
+import { nonEmptyOrigins, isHttpOrigin } from '../sessionStateValidation.js';
 import type { ClassicCookie, ClassicCookieInput } from '../types.js';
 import type {
   BrowsingContext,
@@ -94,9 +95,16 @@ export class SessionStateManager {
   }
 
   /**
-   * Set session state (cookies + storage)
+   * Set session state (cookies + storage) onto the active page.
+   *
+   * This is the active-page restore path: origin-scoped storage can only be
+   * written to the page currently open. When the snapshot carries
+   * sessionStorage, the whole restore must target a single origin that matches
+   * the active http(s) page — validated before any mutation.
    */
   async setState(state: SessionState): Promise<void> {
+    await this._validateActivePageRestore(state);
+
     // Set cookies
     if (state.cookies?.length) {
       await this.setCookies(state.cookies);
@@ -110,6 +118,46 @@ export class SessionStateManager {
     // Set sessionStorage
     if (state.sessionStorage) {
       await this.setSessionStorage(state.sessionStorage);
+    }
+  }
+
+  /**
+   * Guard for the active-page restore: when a snapshot carries sessionStorage
+   * (tab-scoped, writable only to the current page), require exactly one
+   * applicable origin and that it matches the active http(s) origin. Throws
+   * before any mutation on a mismatch or a multi-origin snapshot.
+   */
+  private async _validateActivePageRestore(state: SessionState): Promise<void> {
+    const sessionOrigins = nonEmptyOrigins(state.sessionStorage);
+    if (sessionOrigins.length === 0) return; // no sessionStorage → no extra constraint
+    if (sessionOrigins.length > 1) {
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        'cannot restore multi-origin sessionStorage on the active page — restore one origin at a time'
+      );
+    }
+    const target = sessionOrigins[0];
+    const activeOrigin = await this.driver.executeScript<string>('return location.origin');
+    if (!isHttpOrigin(activeOrigin)) {
+      throw new CraftdriverError(
+        ErrorCode.STATE_INVALID,
+        `restoring sessionStorage requires an active http(s) page; navigate to ${target} first`
+      );
+    }
+    if (activeOrigin !== target) {
+      throw new CraftdriverError(
+        ErrorCode.STATE_INVALID,
+        `sessionStorage is for ${target} but the active page is ${activeOrigin}; navigate to ${target} first`
+      );
+    }
+    for (const origin of nonEmptyOrigins(state.localStorage)) {
+      if (origin !== target) {
+        throw new CraftdriverError(
+          ErrorCode.INVALID_ARGUMENT,
+          `snapshot mixes sessionStorage for ${target} with localStorage for ${origin}; ` +
+            'the active-page path restores a single origin'
+        );
+      }
     }
   }
 

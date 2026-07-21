@@ -59,4 +59,13 @@ describe('writeSecureFile', () => {
       expect(await fs.readFile(outside, 'utf-8')).toBe('original');
     }
   );
+
+  it('propagates a rename failure and leaves no temp file behind', async () => {
+    // The destination is an existing directory, so the atomic rename fails.
+    const dest = path.join(dir, 'occupied');
+    await fs.mkdir(dest);
+    await expect(writeSecureFile(dest, 'data')).rejects.toThrow();
+    const leftovers = (await fs.readdir(dir)).filter((f) => f.includes('.tmp'));
+    expect(leftovers).toEqual([]);
+  });
 });
