@@ -23,6 +23,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import type { SessionState } from '../lib/bidi/types.js';
+import { parseSessionState } from '../lib/sessionStateValidation.js';
 import {
   artifactRoot,
   resolveArtifactPath,
@@ -79,9 +80,8 @@ export const discardTempStateFile = discardTempFile;
  * inside cookie restoration.
  */
 export async function readStateFile(target: string, name: string): Promise<SessionState> {
-  let raw: string;
   try {
-    raw = await fs.readFile(target, 'utf-8');
+    await fs.access(target);
   } catch {
     throw new CraftdriverError(
       ErrorCode.STATE_INVALID,
@@ -93,33 +93,7 @@ export async function readStateFile(target: string, name: string): Promise<Sessi
     );
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new CraftdriverError(
-      ErrorCode.STATE_INVALID,
-      `state: ${JSON.stringify(name)} is not valid JSON`,
-      { hint: 'the file is corrupt or was edited by hand; save it again' },
-    );
-  }
-
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new CraftdriverError(
-      ErrorCode.STATE_INVALID,
-      `state: ${JSON.stringify(name)} is not a state object`,
-      { hint: 'expected an object with optional "cookies", "localStorage" and "sessionStorage"' },
-    );
-  }
-
-  const state = parsed as SessionState;
-  if (state.cookies !== undefined && !Array.isArray(state.cookies)) {
-    throw new CraftdriverError(
-      ErrorCode.STATE_INVALID,
-      `state: ${JSON.stringify(name)} has a non-array "cookies"`,
-    );
-  }
-  return state;
+  return parseSessionState(target, { operation: 'cli.state.load' });
 }
 
 /** Origins whose storage a state file carries. */

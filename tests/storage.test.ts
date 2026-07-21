@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
-import { Browser } from '../src';
+import { Browser, ErrorCode } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -310,5 +310,64 @@ describe('Classic-mode cookie endpoints (regression)', () => {
     // The old document.cookie expires-in-the-past trick cannot delete an
     // HttpOnly cookie; the native DELETE endpoint can.
     expect(await classic.storage.getCookies()).toHaveLength(0);
+  });
+
+  it('restores a single active origin strictly after navigation', async () => {
+    const origin = new URL(baseUrl).origin;
+    const host = new URL(baseUrl).hostname;
+    await classic.loadState({
+      cookies: [{ name: 'restored', value: 'yes', domain: host, path: '/' } as any],
+      localStorage: { [origin]: { auth: 'ready' } },
+    });
+    expect(await classic.evaluate(() => localStorage.getItem('auth'))).toBe('ready');
+    expect((await classic.storage.getCookies()).find((c) => c.name === 'restored')?.value).toBe('yes');
+  });
+
+  it('rejects Classic restore on about:blank before mutation', async () => {
+    await classic.navigateTo('about:blank');
+    await expect(classic.loadState({
+      localStorage: { [new URL(baseUrl).origin]: { auth: 'no' } },
+    })).rejects.toMatchObject({ code: ErrorCode.STATE_INVALID });
+  });
+
+  it('rejects mismatched Classic origins and cookies before any mutation', async () => {
+    const origin = new URL(baseUrl).origin;
+    const host = new URL(baseUrl).hostname;
+    await classic.evaluate(() => localStorage.removeItem('should_not_apply'));
+    await expect(classic.loadState({
+      localStorage: { [origin]: { should_not_apply: 'x' } },
+      cookies: [
+        { name: 'valid_but_must_not_apply', value: 'x', domain: host, path: '/' } as any,
+        { name: 'foreign', value: 'x', domain: 'foreign.example.test', path: '/' } as any,
+      ],
+    })).rejects.toMatchObject({ code: ErrorCode.STATE_INVALID });
+    const unapplied = await classic.evaluate<unknown>('return localStorage.getItem("should_not_apply")');
+    // Classic's null deserializer is driver-dependent (`null` vs `{value:null}`).
+    expect(unapplied === null || (unapplied as { value?: unknown })?.value === null).toBe(true);
+    expect((await classic.storage.getCookies()).some((c) => c.name === 'valid_but_must_not_apply')).toBe(false);
+  });
+
+  it('rejects non-empty storageState at Classic launch but accepts empty state', async () => {
+    await expect(Browser.launch({
+      browserName: BROWSER_NAME,
+      enableBiDi: false,
+      storageState: { localStorage: { [new URL(baseUrl).origin]: { auth: 'x' } } },
+    })).rejects.toMatchObject({
+      code: ErrorCode.UNSUPPORTED,
+      detail: {
+        feature: 'storageState',
+        operation: 'Browser.launch',
+        protocol: 'classic',
+        phase: 'capability',
+        partialApplied: false,
+      },
+    });
+
+    const empty = await Browser.launch({
+      browserName: BROWSER_NAME,
+      enableBiDi: false,
+      storageState: { cookies: [], localStorage: {}, sessionStorage: {} },
+    });
+    await empty.quit();
   });
 });

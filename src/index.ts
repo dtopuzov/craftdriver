@@ -53,6 +53,7 @@ export {
   type Cookie,
   type CookieInput,
   type SessionState,
+  type SessionStateCookie,
   type StorageStateOptions,
   type MockResponse,
   type InterceptedRequest,

@@ -162,10 +162,138 @@ describe('auth-state restore policy (BiDi)', () => {
       const err = await caught(
         browser.defaultContext.loadStorageState({ localStorage: { [s1.origin]: { token: 'x' } } })
       );
-      expect(err).toBeTruthy(); // hydration failed loudly
+      expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
+      expect((err as CraftdriverError).detail).toMatchObject({
+        feature: 'storageState',
+        protocol: 'bidi',
+        phase: 'localStorage',
+        partialApplied: false,
+      });
       expect(hydrateHits).toBe(before); // strict → failRequest → nothing reached the server
     } finally {
       net.provideResponse = original;
     }
+  });
+
+  it('serializes concurrent restores within one context', async () => {
+    const ctx = await browser.newContext();
+    // Instrument the private seam so the assertion covers ordering rather than
+    // relying on final-value timing, which could pass accidentally.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = ctx as any;
+    const original = internal._hydrateLocalStorage.bind(ctx);
+    let active = 0;
+    let maxActive = 0;
+    internal._hydrateLocalStorage = async (...args: unknown[]) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 40));
+      try {
+        return await original(...args);
+      } finally {
+        active -= 1;
+      }
+    };
+    try {
+      await Promise.all([
+        ctx.loadStorageState({ localStorage: { [s1.origin]: { token: 'one' } } }),
+        ctx.loadStorageState({ localStorage: { [s1.origin]: { token: 'two' } } }),
+      ]);
+      expect(maxActive).toBe(1);
+    } finally {
+      internal._hydrateLocalStorage = original;
+      await ctx.close();
+    }
+  });
+
+  it('allows different contexts to restore concurrently', async () => {
+    const one = await browser.newContext();
+    const two = await browser.newContext();
+    let active = 0;
+    let maxActive = 0;
+    const restorePatches: Array<{ target: any; original: (...args: unknown[]) => Promise<void> }> = [];
+    for (const ctx of [one, two]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const target = ctx as any;
+      const original = target._hydrateLocalStorage.bind(ctx);
+      restorePatches.push({ target, original });
+      target._hydrateLocalStorage = async (...args: unknown[]) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 40));
+        try {
+          return await original(...args);
+        } finally {
+          active -= 1;
+        }
+      };
+    }
+    try {
+      await Promise.all([
+        one.loadStorageState({ localStorage: { [s1.origin]: { token: 'one' } } }),
+        two.loadStorageState({ localStorage: { [s2.origin]: { token: 'two' } } }),
+      ]);
+      expect(maxActive).toBe(2);
+    } finally {
+      for (const { target, original } of restorePatches) target._hydrateLocalStorage = original;
+      await one.close();
+      await two.close();
+    }
+  });
+
+  it('reports a runtime cookie failure after localStorage as possibly partial', async () => {
+    const ctx = await browser.newContext();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = ctx as any;
+    const original = internal.addCookies.bind(ctx);
+    internal.addCookies = async () => { throw new Error('injected cookie failure'); };
+    try {
+      const err = await caught(ctx.loadStorageState({
+        localStorage: { [s1.origin]: { partial: 'yes' } },
+        cookies: [{ name: 'sid', value: 'x', domain: '127.0.0.1', path: '/' } as any],
+      }));
+      expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
+      expect((err as CraftdriverError).detail).toMatchObject({
+        feature: 'storageState',
+        protocol: 'bidi',
+        phase: 'cookies',
+        partialApplied: true,
+      });
+      const page = await ctx.newPage({ url: `${s1.origin}/app.html` });
+      expect(await page.evaluate(() => localStorage.getItem('partial'))).toBe('yes');
+    } finally {
+      internal.addCookies = original;
+      await ctx.close();
+    }
+  });
+
+  it('wraps an existing driver error in structured restore metadata', async () => {
+    const ctx = await browser.newContext();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internal = ctx as any;
+    const original = internal._hydrateLocalStorage.bind(ctx);
+    internal._hydrateLocalStorage = async () => {
+      throw new CraftdriverError(ErrorCode.DRIVER_ERROR, 'injected protocol failure');
+    };
+    try {
+      const err = await caught(ctx.loadStorageState({
+        localStorage: { [s1.origin]: { token: 'x' } },
+      }));
+      expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
+      expect((err as CraftdriverError).detail).toMatchObject({
+        feature: 'storageState',
+        protocol: 'bidi',
+        phase: 'localStorage',
+        partialApplied: false,
+      });
+    } finally {
+      internal._hydrateLocalStorage = original;
+      await ctx.close();
+    }
+  });
+
+  it('browser.storage.setState uses the shared validator', async () => {
+    const err = await caught(browser.storage.setState({ bogus: true } as never));
+    expect(CraftdriverError.is(err, ErrorCode.UNSUPPORTED)).toBe(true);
   });
 });

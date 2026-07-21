@@ -34,7 +34,6 @@ import {
   discardTempStateFile,
   readStateFile,
   summarizeState,
-  stateOrigins,
   listStateNames,
 } from './stateStore.js';
 import { AGENT_DEFAULT_TIMEOUT_MS, AGENT_DEFAULT_LIMIT } from './defaults.js';
@@ -1276,12 +1275,10 @@ export async function dispatch(
     // `stateStore` owns where a state file may live and who may read it; this
     // case owns *when* saving or restoring one is meaningful.
     //
-    // The restore rule is the load-bearing part. localStorage and
-    // sessionStorage are origin-scoped, and the underlying restore applies
-    // only the entries matching the page's current origin — everything else is
-    // dropped without an error. Restoring onto `about:blank` therefore looks
-    // like it worked while silently discarding every storage entry, so the
-    // mismatch is refused here instead.
+    // Restoration policy lives in the library so CLI, launch, and direct API
+    // calls cannot drift. BiDi can restore cookies + localStorage before the
+    // first public navigation; Classic and sessionStorage use the strict
+    // active-origin path and fail before mutation when the page is unsuitable.
     case 'state': {
       const action = optStr(args, 'action') ?? 'list';
 
@@ -1337,20 +1334,6 @@ export async function dispatch(
       }
 
       const state = await readStateFile(target, name as string);
-      const origins = stateOrigins(state);
-      if (origins.length > 0 && (origin === null || !origins.includes(origin))) {
-        throw new CraftdriverError(
-          ErrorCode.STATE_INVALID,
-          `state: ${JSON.stringify(name)} holds storage for ${origins.join(', ')}, ` +
-            `but the active page is at ${origin ?? 'no origin'}`,
-          {
-            detail: { origins, activeOrigin: origin },
-            hint: `navigate to ${origins[0]} first, then \`state load ${name}\` — ` +
-              'local storage can only be restored onto its own origin',
-          },
-        );
-      }
-
       await b.loadState(target);
       // Cookies and storage just changed underneath the page: anything the
       // agent holds a ref to was resolved against the pre-restore document.

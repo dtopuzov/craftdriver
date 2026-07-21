@@ -23,11 +23,16 @@ import { CraftdriverError, ErrorCode } from './errors.js';
 import {
   parseSessionState,
   hasNonEmptySessionStorage,
+  isStorageStateError,
   nonEmptyOrigins,
+  normalizeCookieForRestore,
+  storageStateDetail,
+  type StorageStateErrorContext,
 } from './sessionStateValidation.js';
 import type { Driver } from './driver.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { Page } from './page.js';
+import { AUTH_STATE_HYDRATE_PATH, publicPageInitScript } from './initScript.js';
 import type { NetworkInterceptor, RequestHandler } from './bidi/network.js';
 import type {
   BrowsingContextInfo,
@@ -153,6 +158,9 @@ export class BrowserContext {
    */
   private _internalCreateInFlight = 0;
   private _quarantinedCreated: Array<Record<string, unknown>> = [];
+  private _internalClassificationWaiters = new Set<() => void>();
+  /** Settled tail used to serialize state overlays within this user context. */
+  private _restoreTail: Promise<void> = Promise.resolve();
   /**
    * The in-flight promise from the most recent call to {@link _ensurePageTracking}.
    * Doubles as the "is tracking armed?" flag — truthy after the first call,
@@ -263,8 +271,13 @@ export class BrowserContext {
       'browsingContext.getTree',
       { maxDepth: 0 }
     );
+    // The create event can beat the command response that tells us which id is
+    // internal. Wait for that classification before exposing this tree.
+    await this._waitForInternalClassification();
     return (tree.contexts ?? [])
-      .filter((c) => c.userContext === this._id && !c.parent)
+      .filter(
+        (c) => c.userContext === this._id && !c.parent && !this._internalPageIds.has(c.context)
+      )
       .map((c) => new Page(this.driver, c.context, this.getDefaultTimeout, this.conn, this));
   }
 
@@ -287,7 +300,9 @@ export class BrowserContext {
     if (this._trackingPromise) await this._trackingPromise;
 
     return new Promise<Page>((resolve, reject) => {
+      let settled = false;
       const timer = setTimeout(() => {
+        settled = true;
         off();
         reject(new Error(`waitForPage() timed out after ${timeout}ms`));
       }, timeout);
@@ -295,18 +310,31 @@ export class BrowserContext {
       const off = this.conn.on('browsingContext.contextCreated', (params: Record<string, unknown>) => {
         if (params.parent) return; // nested frames
         if (params.userContext !== this._id) return;
-        clearTimeout(timer);
-        off();
-        resolve(new Page(
-          this.driver,
-          params.context as string,
-          this.getDefaultTimeout,
-          this.conn,
-          this
-        ));
+        const id = params.context as string;
+        void this._isInternalPageContext(id).then((internal) => {
+          if (internal || settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off();
+          resolve(new Page(
+            this.driver,
+            id,
+            this.getDefaultTimeout,
+            this.conn,
+            this
+          ));
+        }).catch((err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          off();
+          reject(err);
+        });
       });
 
       action().catch((err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         off();
         reject(err);
@@ -473,8 +501,14 @@ export class BrowserContext {
    *   produced by {@link saveStorageState}.
    */
   async loadStorageState(source: SessionState | string): Promise<void> {
+    return this._loadStorageState(source, 'BrowserContext.loadStorageState');
+  }
+
+  /** @internal Same public contract with an owning API name for structured errors. */
+  async _loadStorageState(source: SessionState | string, operation: string): Promise<void> {
     this.assertOpen();
-    const state = await parseSessionState(source);
+    const errorContext = this._storageStateErrorContext(operation);
+    const state = await parseSessionState(source, errorContext);
 
     // A context/launch restore cannot carry tab-scoped sessionStorage to the
     // caller's future pages — reject before any mutation rather than silently
@@ -483,31 +517,43 @@ export class BrowserContext {
       throw new CraftdriverError(
         ErrorCode.UNSUPPORTED,
         'restoring sessionStorage is not supported for context/launch APIs (it is ' +
-          'tab-scoped); use browser.loadState() after navigating to the origin'
+          'tab-scoped); use browser.loadState() after navigating to the origin',
+        {
+          detail: storageStateDetail(errorContext, 'validation', { section: 'sessionStorage' }),
+          hint: 'Navigate to the origin and call browser.loadState(), or omit sessionStorage.',
+        }
       );
     }
 
-    // localStorage first — its private hydration page is where a restore failure
-    // would surface; applying cookies last means a hydration failure never
-    // leaves cookies behind.
-    if (nonEmptyOrigins(state.localStorage).length > 0) {
-      await this._hydrateLocalStorage(state.localStorage as Record<string, Record<string, string>>);
-    }
+    await this._runSerializedRestore(async () => {
+      let partialApplied = false;
 
-    if (state.cookies?.length) {
-      // Sanitize: a snapshot may contain cookies with sameSite:'none' and
-      // secure:false because some engines report that combo for cookies
-      // originally set via document.cookie. BiDi rejects it. Drop the
-      // sameSite field on those so the engine picks its default.
-      const sanitized = state.cookies.map((c) => {
-        if (c.sameSite === 'none' && !c.secure) {
-          const { sameSite: _drop, ...rest } = c;
-          return rest as CookieInput;
+      // localStorage first — its private hydration page is where a restore failure
+      // would surface; applying cookies last means a hydration failure never
+      // leaves cookies behind.
+      if (nonEmptyOrigins(state.localStorage).length > 0) {
+        try {
+          partialApplied = await this._hydrateLocalStorage(
+            state.localStorage as Record<string, Record<string, string>>,
+            errorContext
+          );
+        } catch (err) {
+          if (isStorageStateError(err)) throw err;
+          throw this._restoreDriverError(err, errorContext, 'localStorage', partialApplied);
         }
-        return c;
-      });
-      await this.addCookies(sanitized);
-    }
+      }
+
+      if (state.cookies?.length) {
+        for (const captured of state.cookies) {
+          try {
+            await this.addCookies([normalizeCookieForRestore(captured)]);
+            partialApplied = true;
+          } catch (err) {
+            throw this._restoreDriverError(err, errorContext, 'cookies', partialApplied);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -545,6 +591,8 @@ export class BrowserContext {
     for (const off of this._trackingOffs) off();
     this._trackingOffs = [];
     this._trackingPromise = undefined;
+    this._internalPageIds.clear();
+    this._resolveInternalClassificationWaiters();
 
     await this.conn.send('browser.removeUserContext', { userContext: this._id });
     this._closed = true;
@@ -632,7 +680,7 @@ export class BrowserContext {
     const fnDecl =
       typeof script === 'function' ? script.toString() : `() => { ${script} }`;
     const result = await this.conn.send<{ script: string }>('script.addPreloadScript', {
-      functionDeclaration: fnDecl,
+      functionDeclaration: publicPageInitScript(fnDecl),
       userContexts: [this._id],
     });
     this._initScriptIds.add(result.script);
@@ -981,25 +1029,27 @@ export class BrowserContext {
    * BiDi — a Classic-initiated navigation would stall against a BiDi intercept.
    */
   private async _hydrateLocalStorage(
-    byOrigin: Record<string, Record<string, string>>
-  ): Promise<void> {
+    byOrigin: Record<string, Record<string, string>>,
+    errorContext: StorageStateErrorContext
+  ): Promise<boolean> {
     const origins = Object.keys(byOrigin).filter(
       (o) => byOrigin[o] && Object.keys(byOrigin[o]).length > 0
     );
-    if (origins.length === 0) return;
+    if (origins.length === 0) return false;
 
     const net = this._hooks?.getNetwork();
     if (!net) {
       throw new CraftdriverError(
         ErrorCode.UNSUPPORTED,
-        'restoring localStorage requires a BiDi session with network interception'
+        'restoring localStorage requires a BiDi session with network interception',
+        { detail: storageStateDetail(errorContext, 'setup', { section: 'localStorage' }) }
       );
     }
 
     // Reserve the internal-context slot before the create so page tracking hides
     // it even if its contextCreated event beats the create response.
     this._internalCreateInFlight++;
-    let privId!: string;
+    let privId: string | undefined;
     try {
       const created = await this.conn.send<{ context: string }>('browsingContext.create', {
         type: 'tab',
@@ -1007,13 +1057,18 @@ export class BrowserContext {
       });
       privId = created.context;
       this._internalPageIds.add(privId);
+    } catch (err) {
+      throw this._restoreDriverError(err, errorContext, 'localStorage', false);
     } finally {
       this._internalCreateInFlight--;
       this._drainQuarantine();
+      this._resolveInternalClassificationWaiters();
     }
+    if (!privId) return false;
     const priv = new Page(this.driver, privId, this.getDefaultTimeout, this.conn, this);
 
     let interceptId: string | undefined;
+    let partialApplied = false;
     try {
       // Fulfil this private context's top-level navigations with a minimal
       // document, locally — the request never reaches the network. The pattern
@@ -1021,7 +1076,7 @@ export class BrowserContext {
       // this context's deterministic hydrate URL is fulfilled, and the intercept
       // is scoped to `privId`, so no user page is ever touched.
       interceptId = await net.intercept(
-        '**/__craftdriver_hydrate__*',
+        `**${AUTH_STATE_HYDRATE_PATH}*`,
         () => ({
           status: 200,
           headers: { 'content-type': 'text/html' },
@@ -1036,7 +1091,7 @@ export class BrowserContext {
         // The path is fixed and irrelevant — the intercept fulfils it locally.
         // `domcontentloaded` forces the BiDi navigate path so the intercept
         // applies (a default-context Classic `load` navigation would stall).
-        await priv.navigateTo(`${origin}/__craftdriver_hydrate__`, {
+        await priv.navigateTo(`${origin}${AUTH_STATE_HYDRATE_PATH}`, {
           waitUntil: 'domcontentloaded',
         });
         // Confirm the realm is on the requested origin (an HSTS upgrade or other
@@ -1063,17 +1118,81 @@ export class BrowserContext {
         );
         const value = res.type === 'success' ? res.result?.value : undefined;
         if (value !== 'OK') {
-          throw new CraftdriverError(
+          const mismatch = new CraftdriverError(
             ErrorCode.STATE_INVALID,
-            `could not hydrate localStorage for origin ${origin} (${String(value)})`
+            `could not hydrate localStorage for origin ${origin}`,
+            { detail: storageStateDetail(errorContext, 'localStorage', { origin }) }
           );
+          if (!partialApplied) throw mismatch;
+          throw this._restoreDriverError(mismatch, errorContext, 'localStorage', true, { origin });
         }
+        partialApplied = true;
       }
+      return partialApplied;
+    } catch (err) {
+      if (isStorageStateError(err)) throw err;
+      throw this._restoreDriverError(err, errorContext, 'localStorage', partialApplied);
     } finally {
       if (interceptId) await net.removeIntercept(interceptId).catch(() => {});
       await this.conn.send('browsingContext.close', { context: privId }).catch(() => {});
-      this._internalPageIds.delete(privId);
     }
+  }
+
+  /** @internal Serialize restores without coupling independent user contexts. */
+  _runSerializedRestore<T>(task: () => Promise<T>): Promise<T> {
+    const run = this._restoreTail.then(task, task);
+    this._restoreTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /** @internal Synchronous filter for events emitted after an internal id is known. */
+  _isInternalPageId(id: string | null | undefined): boolean {
+    return typeof id === 'string' && this._internalPageIds.has(id);
+  }
+
+  /** @internal Wait through the create-response race, then classify an event id. */
+  async _isInternalPageContext(id: string): Promise<boolean> {
+    await this._waitForInternalClassification();
+    return this._internalPageIds.has(id);
+  }
+
+  private _waitForInternalClassification(): Promise<void> {
+    if (this._internalCreateInFlight === 0) return Promise.resolve();
+    return new Promise((resolve) => this._internalClassificationWaiters.add(resolve));
+  }
+
+  private _resolveInternalClassificationWaiters(): void {
+    if (this._internalCreateInFlight !== 0) return;
+    for (const resolve of this._internalClassificationWaiters) resolve();
+    this._internalClassificationWaiters.clear();
+  }
+
+  private _storageStateErrorContext(operation: string): StorageStateErrorContext {
+    return {
+      operation,
+      browserName: this._hooks?.getBrowserName?.() ?? 'unknown',
+      protocol: 'bidi',
+    };
+  }
+
+  private _restoreDriverError(
+    cause: unknown,
+    context: StorageStateErrorContext,
+    phase: string,
+    partialApplied: boolean,
+    extra?: Record<string, unknown>
+  ): CraftdriverError {
+    return new CraftdriverError(
+      ErrorCode.DRIVER_ERROR,
+      `storage state restore failed while applying ${phase}`,
+      {
+        cause,
+        detail: storageStateDetail(context, phase, { partialApplied, ...extra }),
+        hint: partialApplied
+          ? 'Restore into a fresh browser context when failure isolation is required.'
+          : undefined,
+      }
+    );
   }
 
   /**
@@ -1146,7 +1265,6 @@ export class BrowserContext {
       if (params.parent) return;
       const id = params.context as string;
       if (this._internalPageIds.has(id)) {
-        this._internalPageIds.delete(id);
         return; // internal hydration context — never tracked, nothing to tear down
       }
       this._pageIds.delete(id);
@@ -1176,8 +1294,13 @@ export class BrowserContext {
         'browsingContext.getTree',
         { maxDepth: 0 }
       );
+      await this._waitForInternalClassification();
       for (const c of tree.contexts ?? []) {
-        if (c.userContext === this._id && !c.parent) {
+        if (
+          c.userContext === this._id &&
+          !c.parent &&
+          !this._internalPageIds.has(c.context)
+        ) {
           this._pageIds.add(c.context);
         }
       }

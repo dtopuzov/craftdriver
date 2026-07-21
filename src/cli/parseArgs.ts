@@ -89,7 +89,7 @@ COMMON COMMANDS
   trace status
   state save <name> [--session-storage]
                                     save cookies + local storage for reuse
-  state load <name>                 restore it onto the matching origin
+  state load <name>                 restore saved login state (pre-navigation on BiDi)
   state list                        saved state names
   screenshot [-o file.png] [--full-page] [--selector S]
   eval <js>                         advanced; evaluate JS on active page

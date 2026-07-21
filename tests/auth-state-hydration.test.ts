@@ -121,4 +121,18 @@ describe('auth-state hydration (BiDi)', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('accepts an in-memory state object at launch with the same semantics', async () => {
+    const b = await Browser.launch({
+      browserName: BROWSER_NAME,
+      headless: true,
+      storageState: { localStorage: { [s1.origin]: { token: 'memoryseed' } } },
+    });
+    try {
+      await b.navigateTo(`${s1.origin}/app.html`);
+      expect(await b.evaluate(() => document.title)).toBe('FIRST:memoryseed');
+    } finally {
+      await b.quit();
+    }
+  });
 });

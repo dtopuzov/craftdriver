@@ -1,12 +1,9 @@
 /**
  * Saving and restoring authentication state through the agent surface.
  *
- * The headline case is the one the library gets wrong on its own: local
- * storage is origin-scoped, and restoring it onto a page that is not on that
- * origin drops every entry without an error. Measured against the login
- * example, `Browser.launch({ storageState })` restores cookies but returns an
- * empty localStorage, so a state file can look restored while half of it is
- * gone. The CLI refuses that combination rather than reproducing it.
+ * BiDi restores cookies and localStorage before the first public navigation.
+ * The same command deliberately keeps the active-origin prerequisite for
+ * Classic sessions and snapshots containing tab-scoped sessionStorage.
  */
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import fs from 'node:fs/promises';
@@ -89,24 +86,28 @@ describe('authentication / storage state', () => {
     }
   }, 120_000);
 
-  it('refuses to restore storage onto a page that is not on its origin', async () => {
+  it('restores cookies and localStorage before the first navigation on BiDi', async () => {
     const session = newSession();
     try {
-      // A fresh browser sits on about:blank, which is exactly where an agent
-      // would naively "load state, then navigate" — and exactly where the
-      // underlying restore silently drops every storage entry.
-      await expect(
-        session.run({ cmd: 'state', args: { action: 'load', name: 'alice' } }),
-      ).rejects.toMatchObject({ code: ErrorCode.STATE_INVALID });
+      const loaded = (await session.run({
+        cmd: 'state',
+        args: { action: 'load', name: 'alice' },
+      })) as StateResult;
+      expect(loaded.ok).toBe(true);
+      expect(loaded.origin).toBeNull();
 
-      try {
-        await session.run({ cmd: 'state', args: { action: 'load', name: 'alice' } });
-      } catch (err) {
-        const e = err as CraftdriverError;
-        expect(e.message).toMatch(/holds storage for/);
-        // The fix has to be actionable: name the origin to navigate to.
-        expect(e.hint).toContain(new URL(LOGIN_URL).origin);
-      }
+      await session.run({ cmd: 'go', args: { url: LOGIN_URL } });
+      const welcome = (await session.run({
+        cmd: 'text',
+        args: { selector: '#welcome' },
+      })) as { text: string };
+      expect(welcome.text).toContain('testuser');
+
+      const stored = (await session.run({
+        cmd: 'eval',
+        args: { js: 'return localStorage.getItem("lastUser") + "/" + localStorage.getItem("theme")' },
+      })) as { result: string };
+      expect(stored.result).toBe('testuser/dark');
     } finally {
       await session.close();
     }
@@ -179,6 +180,17 @@ describe('authentication / storage state', () => {
       })) as StateResult;
 
       expect(withIt.storageKeys).toBeGreaterThan(without.storageKeys);
+
+      // sessionStorage is tab-scoped, so loading that snapshot still requires
+      // an active page on the captured origin.
+      const blank = newSession();
+      try {
+        await expect(
+          blank.run({ cmd: 'state', args: { action: 'load', name: 'withsession' } }),
+        ).rejects.toMatchObject({ code: ErrorCode.STATE_INVALID });
+      } finally {
+        await blank.close();
+      }
     } finally {
       await session.close();
     }

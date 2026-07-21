@@ -189,8 +189,8 @@ export class BiDiSession {
   /**
    * Load session state from file
    */
-  async loadState(path: string): Promise<void> {
-    return this.storage.loadState(path);
+  async loadState(source: string | SessionState): Promise<void> {
+    return this.storage.loadState(source);
   }
 
   /**

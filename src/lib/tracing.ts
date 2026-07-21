@@ -83,6 +83,7 @@ export class Tracer {
     browser: Browser,
     conn: BiDiConnection,
     private browserName: string,
+    private isInternalContext: (context: string | null | undefined) => boolean = () => false,
   ) {
     this.browser = browser;
     this.conn = conn;
@@ -141,6 +142,8 @@ export class Tracer {
     if (consoleOn) {
       this.unsubs.push(this.conn.on('log.entryAdded', (params) => {
         const p = params as Record<string, unknown>;
+        const source = (p.source ?? {}) as Record<string, unknown>;
+        if (this.isInternalContext(source.context as string | undefined)) return;
         const text = String(p.text ?? '');
         if (p.type === 'console') {
           this.push({ type: 'console', level: String(p.level ?? 'info'), text });
@@ -154,6 +157,7 @@ export class Tracer {
     if (networkOn) {
       this.unsubs.push(this.conn.on('network.beforeRequestSent', (params) => {
         const p = params as Record<string, unknown>;
+        if (this.isInternalContext(p.context as string | undefined)) return;
         const req = (p.request ?? {}) as Record<string, unknown>;
         this.push({
           type: 'request',
@@ -165,6 +169,7 @@ export class Tracer {
 
       this.unsubs.push(this.conn.on('network.responseCompleted', (params) => {
         const p = params as Record<string, unknown>;
+        if (this.isInternalContext(p.context as string | undefined)) return;
         const req = (p.request ?? {}) as Record<string, unknown>;
         const res = (p.response ?? {}) as Record<string, unknown>;
         const ev: Record<string, unknown> = {
@@ -182,6 +187,7 @@ export class Tracer {
 
     this.unsubs.push(this.conn.on('browsingContext.navigationStarted', (params) => {
       const p = params as Record<string, unknown>;
+      if (this.isInternalContext(p.context as string | undefined)) return;
       this.push({
         type: 'navigation',
         url: String(p.url ?? ''),

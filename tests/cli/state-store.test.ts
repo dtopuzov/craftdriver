@@ -189,10 +189,10 @@ describe('reading state files', () => {
 
   it.each([
     ['invalid JSON', 'not json at all', /not valid JSON/],
-    ['a JSON array', '[]', /not a state object/],
-    ['a JSON scalar', '"hello"', /not a state object/],
-    ['null', 'null', /not a state object/],
-    ['non-array cookies', '{"cookies":{"a":1}}', /non-array "cookies"/],
+    ['a JSON array', '[]', /plain JSON object/],
+    ['a JSON scalar', '"hello"', /plain JSON object/],
+    ['null', 'null', /plain JSON object/],
+    ['non-array cookies', '{"cookies":{"a":1}}', /cookies must be an array/],
   ])('rejects %s', async (_label, contents, pattern) => {
     const target = await resolveStatePath('bad');
     await fs.writeFile(target, contents, 'utf-8');
@@ -203,7 +203,7 @@ describe('reading state files', () => {
     const target = await resolveStatePath('good');
     await fs.writeFile(
       target,
-      JSON.stringify({ cookies: [{ name: 'session', value: 'secret' }] }),
+      JSON.stringify({ cookies: [{ name: 'session', value: 'secret', domain: 'example.test' }] }),
       'utf-8',
     );
     const state = await readStateFile(target, 'good');

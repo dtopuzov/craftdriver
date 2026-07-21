@@ -70,6 +70,8 @@ export class NetworkInterceptor {
   private context?: BrowsingContext;
   private requestListeners: Array<(req: InterceptedRequest) => void> = [];
   private responseListeners: Array<(res: InterceptedResponse) => void> = [];
+  private isInternalContext: (context: BrowsingContext | null | undefined) => boolean = () => false;
+  private internalRequestIds = new Set<string>();
   /** Set of request IDs currently in-flight (sent but not yet completed/errored). */
   private inFlightRequests = new Set<string>();
   /** Callbacks to notify when inFlightRequests changes — used by waitForNetworkIdle. */
@@ -78,6 +80,13 @@ export class NetworkInterceptor {
   constructor(connection: BiDiConnection, context?: BrowsingContext) {
     this.connection = connection;
     this.context = context;
+  }
+
+  /** @internal Exclude library-owned contexts from public network observation. */
+  setInternalContextPredicate(
+    predicate: (context: BrowsingContext | null | undefined) => boolean
+  ): void {
+    this.isInternalContext = predicate;
   }
 
   /**
@@ -112,11 +121,12 @@ export class NetworkInterceptor {
     // Handle intercepted requests + track in-flight
     this.connection.on('network.beforeRequestSent', async (params) => {
       const event = params as unknown as NetworkBeforeRequestSentEvent;
-      // Track in-flight (before intercept handling, so count is always accurate)
-      this.inFlightRequests.add(event.request.request);
+      const internal = this.isInternalContext(event.context);
+      if (internal) this.internalRequestIds.add(event.request.request);
+      else this.inFlightRequests.add(event.request.request);
       await this.handleBeforeRequestSent(event);
       // Notify passive request listeners (waitForRequest)
-      if (this.requestListeners.length > 0) {
+      if (!internal && this.requestListeners.length > 0) {
         const req: InterceptedRequest = {
           id: event.request.request,
           url: event.request.url,
@@ -132,6 +142,7 @@ export class NetworkInterceptor {
     // Track completed responses + notify waitForResponse listeners
     this.connection.on('network.responseCompleted', (params) => {
       const event = params as unknown as NetworkResponseEvent;
+      if (this.internalRequestIds.delete(event.request.request)) return;
       this.inFlightRequests.delete(event.request.request);
       this._notifyIdleListeners();
       if (this.responseListeners.length > 0) {
@@ -157,6 +168,7 @@ export class NetworkInterceptor {
     this.connection.on('network.fetchError', (params) => {
       const reqId = (params as Record<string, Record<string, string>>)?.request?.request;
       if (reqId) {
+        if (this.internalRequestIds.delete(reqId)) return;
         this.inFlightRequests.delete(reqId);
         this._notifyIdleListeners();
       }
@@ -558,9 +570,16 @@ export class NetworkInterceptor {
     if (!event.isBlocked || !event.intercepts?.length) return;
 
     const requestId = event.request.request;
+    const internal = this.isInternalContext(event.context);
+    // Internal contexts are owned by strict library intercepts. Never invoke a
+    // user's browser-global mock/route for those requests, even when its URL
+    // pattern also matches the reserved hydration URL.
+    const interceptIds = internal
+      ? event.intercepts.filter((id) => this.intercepts.get(id)?.strict === true)
+      : event.intercepts;
 
     // Find matching handler
-    for (const interceptId of event.intercepts) {
+    for (const interceptId of interceptIds) {
       const handler = this.handlers.get(interceptId);
       if (!handler) continue;
 
@@ -603,8 +622,10 @@ export class NetworkInterceptor {
       }
     }
 
-    // No handler found, continue request
-    await this.continueRequest(requestId);
+    // A library-owned request without its strict owner must never escape to the
+    // real origin. Public requests retain the normal pass-through behavior.
+    if (internal) await this.failRequest(requestId);
+    else await this.continueRequest(requestId);
   }
 
   private normalizePatterns(patterns: string | string[] | UrlPattern | UrlPattern[]): UrlPattern[] {

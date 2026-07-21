@@ -1,14 +1,22 @@
 /**
  * Session State Manager
- * Playwright-style session persistence - save login state, cookies, localStorage
+ * CraftDriver session persistence - save login state, cookies, localStorage
  */
 
-import fs from 'fs/promises';
 import type { BiDiConnection } from './connection.js';
 import type { Driver } from '../driver.js';
 import { CraftdriverError, ErrorCode } from '../errors.js';
 import { writeSecureFile } from '../secureFile.js';
-import { nonEmptyOrigins, isHttpOrigin } from '../sessionStateValidation.js';
+import {
+  nonEmptyOrigins,
+  isHttpOrigin,
+  isSessionStateEmpty,
+  isStorageStateError,
+  normalizeCookieForRestore,
+  parseSessionState,
+  storageStateDetail,
+  type StorageStateErrorContext,
+} from '../sessionStateValidation.js';
 import type { ClassicCookie, ClassicCookieInput } from '../types.js';
 import type {
   BrowsingContext,
@@ -32,19 +40,33 @@ export interface StorageStateOptions {
   origins?: string[];
 }
 
+export interface SessionStateManagerOptions {
+  browserName?: string;
+  protocol?: 'bidi' | 'classic';
+  runSerializedRestore?: <T>(task: () => Promise<T>) => Promise<T>;
+}
+
 export class SessionStateManager {
   private connection: BiDiConnection | null;
   private driver: Driver;
   private context?: BrowsingContext;
+  private options: SessionStateManagerOptions;
+  private restoreTail: Promise<void> = Promise.resolve();
 
-  constructor(driver: Driver, connection: BiDiConnection | null, context?: BrowsingContext) {
+  constructor(
+    driver: Driver,
+    connection: BiDiConnection | null,
+    context?: BrowsingContext,
+    options: SessionStateManagerOptions = {}
+  ) {
     this.driver = driver;
     this.connection = connection;
     this.context = context;
+    this.options = options;
   }
 
   /**
-   * Save current session state to a file (Playwright-style)
+   * Save current session state to a file
    * Captures cookies and optionally localStorage/sessionStorage
    */
   async saveState(path: string, options: StorageStateOptions = {}): Promise<SessionState> {
@@ -56,10 +78,8 @@ export class SessionStateManager {
   /**
    * Load session state from a file
    */
-  async loadState(path: string): Promise<void> {
-    const data = await fs.readFile(path, 'utf-8');
-    const state = JSON.parse(data) as SessionState;
-    await this.setState(state);
+  async loadState(source: string | SessionState): Promise<void> {
+    await this.setState(source, 'browser.storage.loadState');
   }
 
   /**
@@ -102,23 +122,52 @@ export class SessionStateManager {
    * sessionStorage, the whole restore must target a single origin that matches
    * the active http(s) page — validated before any mutation.
    */
-  async setState(state: SessionState): Promise<void> {
-    await this._validateActivePageRestore(state);
+  async setState(
+    source: SessionState | string,
+    operation = 'browser.storage.setState'
+  ): Promise<void> {
+    const errorContext = this._errorContext(operation);
+    const state = await parseSessionState(source, errorContext);
+    if (isSessionStateEmpty(state)) return;
 
-    // Set cookies
-    if (state.cookies?.length) {
-      await this.setCookies(state.cookies);
-    }
+    await this._runSerializedRestore(async () => {
+      try {
+        await this._validateActivePageRestore(state, errorContext);
+      } catch (err) {
+        if (isStorageStateError(err)) throw err;
+        throw this._restoreDriverError(err, errorContext, 'preflight', false);
+      }
+      let partialApplied = false;
 
-    // Set localStorage
-    if (state.localStorage) {
-      await this.setLocalStorage(state.localStorage);
-    }
+      if (nonEmptyOrigins(state.localStorage).length > 0) {
+        try {
+          partialApplied = true; // a quota/security failure may follow earlier key writes
+          await this.setLocalStorage(state.localStorage!);
+        } catch (err) {
+          throw this._restoreDriverError(err, errorContext, 'localStorage', partialApplied);
+        }
+      }
 
-    // Set sessionStorage
-    if (state.sessionStorage) {
-      await this.setSessionStorage(state.sessionStorage);
-    }
+      if (nonEmptyOrigins(state.sessionStorage).length > 0) {
+        try {
+          partialApplied = true;
+          await this.setSessionStorage(state.sessionStorage!);
+        } catch (err) {
+          throw this._restoreDriverError(err, errorContext, 'sessionStorage', partialApplied);
+        }
+      }
+
+      if (state.cookies?.length) {
+        for (const captured of state.cookies) {
+          try {
+            await this._setCookieStrict(normalizeCookieForRestore(captured));
+            partialApplied = true;
+          } catch (err) {
+            throw this._restoreDriverError(err, errorContext, 'cookies', partialApplied);
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -127,35 +176,63 @@ export class SessionStateManager {
    * applicable origin and that it matches the active http(s) origin. Throws
    * before any mutation on a mismatch or a multi-origin snapshot.
    */
-  private async _validateActivePageRestore(state: SessionState): Promise<void> {
+  private async _validateActivePageRestore(
+    state: SessionState,
+    errorContext: StorageStateErrorContext
+  ): Promise<void> {
     const sessionOrigins = nonEmptyOrigins(state.sessionStorage);
-    if (sessionOrigins.length === 0) return; // no sessionStorage → no extra constraint
     if (sessionOrigins.length > 1) {
       throw new CraftdriverError(
         ErrorCode.INVALID_ARGUMENT,
-        'cannot restore multi-origin sessionStorage on the active page — restore one origin at a time'
+        'cannot restore multi-origin sessionStorage on the active page — restore one origin at a time',
+        { detail: storageStateDetail(errorContext, 'validation', { section: 'sessionStorage' }) }
       );
     }
-    const target = sessionOrigins[0];
     const activeOrigin = await this.driver.executeScript<string>('return location.origin');
     if (!isHttpOrigin(activeOrigin)) {
       throw new CraftdriverError(
         ErrorCode.STATE_INVALID,
-        `restoring sessionStorage requires an active http(s) page; navigate to ${target} first`
+        'active-page state restore requires an HTTP(S) page',
+        {
+          detail: storageStateDetail(errorContext, 'preflight', { activeOrigin }),
+          hint: 'Navigate to the snapshot origin first, then call browser.loadState().',
+        }
       );
     }
-    if (activeOrigin !== target) {
-      throw new CraftdriverError(
-        ErrorCode.STATE_INVALID,
-        `sessionStorage is for ${target} but the active page is ${activeOrigin}; navigate to ${target} first`
-      );
-    }
-    for (const origin of nonEmptyOrigins(state.localStorage)) {
-      if (origin !== target) {
+
+    const storageOrigins = [
+      ...new Set([
+        ...nonEmptyOrigins(state.localStorage),
+        ...sessionOrigins,
+      ]),
+    ];
+    for (const origin of storageOrigins) {
+      if (origin !== activeOrigin) {
         throw new CraftdriverError(
-          ErrorCode.INVALID_ARGUMENT,
-          `snapshot mixes sessionStorage for ${target} with localStorage for ${origin}; ` +
-            'the active-page path restores a single origin'
+          ErrorCode.STATE_INVALID,
+          `snapshot origin ${origin} does not match the active page origin ${activeOrigin}`,
+          {
+            detail: storageStateDetail(errorContext, 'preflight', { origin, activeOrigin }),
+            hint: 'Enable BiDi for multi-origin restore, or navigate to the sole origin first.',
+          }
+        );
+      }
+    }
+
+    const activeUrl = new URL(await this.driver.executeScript<string>('return location.href'));
+    for (const captured of state.cookies ?? []) {
+      const cookie = normalizeCookieForRestore(captured);
+      if (!this._cookieCanBeSetForUrl(cookie, activeUrl)) {
+        throw new CraftdriverError(
+          ErrorCode.STATE_INVALID,
+          `a snapshot cookie for domain ${cookie.domain} cannot be set from ${activeOrigin}`,
+          {
+            detail: storageStateDetail(errorContext, 'preflight', {
+              cookieDomain: cookie.domain,
+              activeOrigin,
+            }),
+            hint: 'Enable BiDi for out-of-band cookies, or load a snapshot scoped to this origin.',
+          }
         );
       }
     }
@@ -294,14 +371,8 @@ export class SessionStateManager {
   }
 
   private async setCookiesBiDi(cookies: Cookie[] | CookieInput[]): Promise<void> {
-    for (const cookie of cookies) {
-      // Note: sameSite: 'none' requires secure: true, so adjust if needed
-      let sameSite = cookie.sameSite;
-      let secure = cookie.secure;
-      if (sameSite === 'none' && !secure) {
-        // Invalid combo - either set secure to true or change sameSite
-        sameSite = 'lax'; // Default to lax for non-secure cookies
-      }
+    for (const captured of cookies) {
+      const cookie = normalizeCookieForRestore(captured);
 
       const partialCookie: RawPartialCookie = {
         name: cookie.name,
@@ -309,8 +380,8 @@ export class SessionStateManager {
         domain: cookie.domain,
         path: cookie.path,
         httpOnly: cookie.httpOnly,
-        secure: secure,
-        sameSite: sameSite,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite,
         expiry: cookie.expiry,
       };
 
@@ -327,7 +398,8 @@ export class SessionStateManager {
   }
 
   private async setCookiesClassic(cookies: Cookie[] | CookieInput[]): Promise<void> {
-    for (const cookie of cookies) {
+    for (const captured of cookies) {
+      const cookie = normalizeCookieForRestore(captured);
       const input: ClassicCookieInput = {
         name: cookie.name,
         value: this.normalizeCookieValue(cookie.value),
@@ -363,6 +435,73 @@ export class SessionStateManager {
     }
   }
 
+  private async _setCookieStrict(cookie: CookieInput): Promise<void> {
+    if (this.connection?.isConnected()) {
+      await this.setCookiesBiDi([cookie]);
+      return;
+    }
+    const input: ClassicCookieInput = {
+      name: cookie.name,
+      value: this.normalizeCookieValue(cookie.value),
+    };
+    if (cookie.domain) input.domain = cookie.domain;
+    if (cookie.path) input.path = cookie.path;
+    if (cookie.secure !== undefined) input.secure = cookie.secure;
+    if (cookie.httpOnly !== undefined) input.httpOnly = cookie.httpOnly;
+    if (cookie.expiry !== undefined) input.expiry = cookie.expiry;
+    const sameSite = this.toClassicSameSite(cookie.sameSite);
+    if (sameSite) input.sameSite = sameSite;
+    await this.driver.addCookie(input);
+  }
+
+  private _cookieCanBeSetForUrl(cookie: CookieInput, activeUrl: URL): boolean {
+    const host = activeUrl.hostname.toLowerCase();
+    const domain = cookie.domain.replace(/^\./, '').toLowerCase();
+    const hostIsIp = /^\d+(?:\.\d+){3}$/.test(host) || host.includes(':');
+    const domainMatches = host === domain || (!hostIsIp && host.endsWith(`.${domain}`));
+    if (!domainMatches) return false;
+    if (cookie.secure) {
+      const trustworthyLocal =
+        host === 'localhost' || host === '127.0.0.1' || host === '::1';
+      if (activeUrl.protocol !== 'https:' && !trustworthyLocal) return false;
+    }
+    return true;
+  }
+
+  private _errorContext(operation: string): StorageStateErrorContext {
+    return {
+      operation,
+      browserName: this.options.browserName ?? 'unknown',
+      protocol: this.options.protocol ?? (this.connection?.isConnected() ? 'bidi' : 'classic'),
+    };
+  }
+
+  private _runSerializedRestore<T>(task: () => Promise<T>): Promise<T> {
+    if (this.options.runSerializedRestore) return this.options.runSerializedRestore(task);
+    const run = this.restoreTail.then(task, task);
+    this.restoreTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private _restoreDriverError(
+    cause: unknown,
+    context: StorageStateErrorContext,
+    phase: string,
+    partialApplied: boolean
+  ): CraftdriverError {
+    return new CraftdriverError(
+      ErrorCode.DRIVER_ERROR,
+      `storage state restore failed while applying ${phase}`,
+      {
+        cause,
+        detail: storageStateDetail(context, phase, { partialApplied }),
+        hint: partialApplied
+          ? 'Use a fresh browser context when failure isolation is required.'
+          : undefined,
+      }
+    );
+  }
+
   /**
    * Convert this module's lowercase sameSite (`strict`/`lax`/`none`/`default`)
    * to the W3C Classic capitalized form. `default`/undefined is dropped so the
@@ -385,8 +524,15 @@ export class SessionStateManager {
 
   private normalizeCookie(cookie: RawNetworkCookie): Cookie {
     return {
-      ...cookie,
+      name: cookie.name,
       value: this.normalizeCookieValue(cookie.value),
+      domain: cookie.domain,
+      path: cookie.path,
+      size: cookie.size,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite,
+      expiry: cookie.expiry,
     };
   }
 
@@ -441,31 +587,26 @@ export class SessionStateManager {
   }
 
   private async setLocalStorage(storage: Record<string, Record<string, string>>): Promise<void> {
-    const currentOrigin = await this.driver.executeScript<string>('return location.origin');
-
     for (const [origin, data] of Object.entries(storage)) {
-      if (origin === currentOrigin) {
-        for (const [key, value] of Object.entries(data)) {
-          await this.driver.executeScript(
-            `localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)})`
-          );
-        }
-      }
-      // For other origins, we'd need to navigate there first - complex case
+      if (Object.keys(data).length === 0) continue;
+      await this.driver.executeScript(
+        `if (location.origin !== arguments[0]) throw new Error('active origin changed during restore');
+         const entries = arguments[1];
+         for (const key of Object.keys(entries)) localStorage.setItem(key, entries[key]);`,
+        [origin, data]
+      );
     }
   }
 
   private async setSessionStorage(storage: Record<string, Record<string, string>>): Promise<void> {
-    const currentOrigin = await this.driver.executeScript<string>('return location.origin');
-
     for (const [origin, data] of Object.entries(storage)) {
-      if (origin === currentOrigin) {
-        for (const [key, value] of Object.entries(data)) {
-          await this.driver.executeScript(
-            `sessionStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(value)})`
-          );
-        }
-      }
+      if (Object.keys(data).length === 0) continue;
+      await this.driver.executeScript(
+        `if (location.origin !== arguments[0]) throw new Error('active origin changed during restore');
+         const entries = arguments[1];
+         for (const key of Object.keys(entries)) sessionStorage.setItem(key, entries[key]);`,
+        [origin, data]
+      );
     }
   }
 

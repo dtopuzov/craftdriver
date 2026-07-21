@@ -8,7 +8,9 @@ import path from 'node:path';
 import {
   parseSessionState,
   hasNonEmptySessionStorage,
+  isSessionStateEmpty,
   nonEmptyOrigins,
+  normalizeCookieForRestore,
   isHttpOrigin,
 } from '../src/lib/sessionStateValidation';
 import { CraftdriverError, ErrorCode } from '../src';
@@ -36,6 +38,7 @@ describe('parseSessionState', () => {
   it('rejects a non-object state (INVALID_ARGUMENT)', async () => {
     await expectCode(parseSessionState(42 as never), ErrorCode.INVALID_ARGUMENT);
     await expectCode(parseSessionState([] as never), ErrorCode.INVALID_ARGUMENT);
+    await expectCode(parseSessionState(new Date() as never), ErrorCode.INVALID_ARGUMENT);
   });
 
   it('rejects an unknown top-level section (UNSUPPORTED)', async () => {
@@ -74,6 +77,60 @@ describe('parseSessionState', () => {
       ErrorCode.INVALID_ARGUMENT
     );
     await expectCode(parseSessionState({ cookies: 'nope' } as never), ErrorCode.INVALID_ARGUMENT);
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'n', value: 'v' }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'n', value: 'v', domain: 'x.test', path: 1 }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'n', value: 'v', domain: 'x.test', secure: 'yes' }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'n', value: 'v', domain: 'x.test', sameSite: 'invalid' }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'bad name', value: 'v', domain: 'x.test' }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+    await expectCode(
+      parseSessionState({ cookies: [{ name: 'n', value: 'v', domain: 'https://x.test' }] } as never),
+      ErrorCode.INVALID_ARGUMENT
+    );
+  });
+
+  it('adds storage-state metadata without exposing values', async () => {
+    let err: unknown;
+    try {
+      await parseSessionState(
+        { localStorage: { 'https://x.test': { password: 42 } } } as never,
+        { operation: 'test.restore', browserName: 'chrome', protocol: 'bidi' }
+      );
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(CraftdriverError);
+    expect((err as CraftdriverError).detail).toMatchObject({
+      feature: 'storageState',
+      operation: 'test.restore',
+      browserName: 'chrome',
+      protocol: 'bidi',
+      phase: 'validation',
+    });
+    expect(JSON.stringify(err)).not.toContain('password');
+  });
+
+  it('normalizes reloadable cookie edge cases consistently', () => {
+    expect(normalizeCookieForRestore({
+      name: 'sid', value: 'x', domain: 'x.test', sameSite: 'none', secure: false,
+    })).toEqual({ name: 'sid', value: 'x', domain: 'x.test', secure: false });
+    expect(normalizeCookieForRestore({
+      name: 'sid', value: 'x', domain: 'x.test', sameSite: 'default', secure: true,
+    })).toEqual({ name: 'sid', value: 'x', domain: 'x.test', secure: true });
   });
 
   it('reads and validates a state file, rejecting bad JSON and missing files', async () => {
@@ -105,5 +162,8 @@ describe('parseSessionState', () => {
     expect(isHttpOrigin('http://127.0.0.1:8080')).toBe(true);
     expect(isHttpOrigin('about:blank')).toBe(false);
     expect(isHttpOrigin('https://x.com/')).toBe(false);
+    expect(isSessionStateEmpty({})).toBe(true);
+    expect(isSessionStateEmpty({ cookies: [], localStorage: {}, sessionStorage: {} })).toBe(true);
+    expect(isSessionStateEmpty({ localStorage: { 'https://x.com': { k: 'v' } } })).toBe(false);
   });
 });
