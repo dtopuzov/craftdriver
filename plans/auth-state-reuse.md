@@ -34,12 +34,15 @@ with zero network fall-through; localStorage-before-cookies apply order; failed
 `newContext` cleanup; and the `writeSecureFile` lstat fix. Verified on Chrome +
 Firefox, the recipe (both engines), and the CLI auth-state suite.
 
+Also landed: **private-context invisibility hardening** (§3) — the hydration
+context is quarantined from page tracking (quarantine-and-replay of
+`contextCreated`, since the event can beat the create response), so even a
+`loadStorageState` on an already-active context with a `'page'` listener or a
+route never surfaces the private tab, adds it to `pages()`, or registers user
+routes on it. Verified on Chrome + Firefox.
+
 Still pending in this MVP:
 
-- **Private-context invisibility hardening** (§3) — *next*. The hydrator is
-  invisible on the launch / `newContext` paths (no page tracking or `'page'`
-  listener is armed there yet). The quarantine-and-replay for `loadStorageState`
-  on an already-active context that has a `'page'` listener is not yet built.
 - **Classic active-origin fallback** (§5). Classic launch still routes through
   the old cookies-only `loadState`; make it reject non-empty state at launch and
   restore only the active origin, per the matrix.
