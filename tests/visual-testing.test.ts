@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect, vi } from 'vitest';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -142,20 +142,37 @@ describe('expectScreenshot (browser)', () => {
       const el = document.querySelector('#s1') as HTMLElement;
       const prev = el.style.background;
       el.style.background = 'magenta';
-      // Revert after a short delay so an early screenshot mismatches, a later one matches.
-      setTimeout(() => {
-        el.style.background = prev;
-      }, 300);
       return prev;
     })) as string;
     expect(typeof original).toBe('string');
 
-    const result = await browser.expectScreenshot(baseline, {
-      screenshot: { selector: '#s1' },
-      timeout: 5000,
+    // Revert only after the assertion has captured the changed frame. A fixed
+    // timer made this test load-sensitive: when the first browser screenshot
+    // took longer than the timer, it legitimately matched on attempt one.
+    const screenshot = browser.screenshot.bind(browser);
+    let assertionCaptures = 0;
+    const screenshotSpy = vi.spyOn(browser, 'screenshot').mockImplementation(async (options) => {
+      const image = await screenshot(options);
+      assertionCaptures++;
+      if (assertionCaptures === 1) {
+        await browser.evaluate((background) => {
+          const el = document.querySelector('#s1') as HTMLElement;
+          el.style.background = background;
+        }, original);
+      }
+      return image;
     });
-    expect(result.matches).toBe(true);
-    expect(result.attempts).toBeGreaterThan(1);
+
+    try {
+      const result = await browser.expectScreenshot(baseline, {
+        screenshot: { selector: '#s1' },
+        timeout: 5000,
+      });
+      expect(result.matches).toBe(true);
+      expect(result.attempts).toBeGreaterThan(1);
+    } finally {
+      screenshotSpy.mockRestore();
+    }
   });
 
   it('full-page comparison propagates the existing BiDi requirement on a Classic-only session', async () => {

@@ -1,7 +1,7 @@
 // Runnable proof for docs/recipes/login-once-reuse-session.md
 // The MD "generate" block is the first test's body; the "reuse" block is the
 // second test's body (minus the temp-file plumbing).
-import { afterAll, beforeAll, describe, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,6 +37,27 @@ describe('log in once, reuse the session', () => {
 
     await browser.navigateTo(`${baseUrl}/login.html`);
     await browser.expect('#welcome').toContainText('Welcome back, alice!');
+
+    await browser.quit();
+  });
+
+  // Pins the "What storageState Restores" section of the MD. On a BiDi session
+  // the launch option restores cookies AND localStorage: the saved origins are
+  // hydrated once before the first navigation, so the login page's first script
+  // already sees them. (The recipe MD prose is reconciled in the docs pass.)
+  it('restores localStorage on the launch path (BiDi)', async () => {
+    const browser = await Browser.launch({
+      browserName: BROWSER_NAME,
+      storageState: authState,
+    });
+    await browser.navigateTo(`${baseUrl}/login.html`);
+
+    const stored = await browser.evaluate<Record<string, string>>(
+      'const r = {}; for (let i=0;i<localStorage.length;i++){const k=localStorage.key(i); r[k]=localStorage.getItem(k);} return r;',
+    );
+    // The login example writes lastUser + theme; saveState captured them and the
+    // launch-time hydrator restored them.
+    expect(stored.lastUser).toBe('alice');
 
     await browser.quit();
   });

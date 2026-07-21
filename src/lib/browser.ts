@@ -55,11 +55,18 @@ import { Tracer, type TraceStartOptions, type TraceStopOptions } from './tracing
 import { A11y } from './a11y.js';
 import { Clock } from './clock.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
+import {
+  parseSessionState,
+  hasNonEmptySessionStorage,
+  isSessionStateEmpty,
+  storageStateDetail,
+} from './sessionStateValidation.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
 import { runExpectScreenshot, shouldUpdateVisualBaselines } from './visual/index.js';
 import type { ExpectScreenshotOptions, ScreenshotMatchResult } from './visual/index.js';
+import { publicPageInitScript } from './initScript.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -267,8 +274,9 @@ interface SharedLaunchOptions {
    * protocol per command.
    */
   enableBiDi?: boolean;
-  /** Load session state from file on launch. */
-  storageState?: string;
+  /** Load session state on launch — a path to a saved JSON file, or an
+   *  in-memory `SessionState` object. */
+  storageState?: string | SessionState;
   /**
    * Directory where downloaded files are saved.
    * Defaults to a temporary directory unique to this session.
@@ -570,6 +578,7 @@ export class Browser {
   private _topLevelContextTracking?: Promise<void>;
   private _topLevelContextTrackingOffs: Array<() => void> = [];
   private _topLevelContextCacheVersion = 0;
+  private _destroyedTopLevelContextIds = new Set<string>();
   private _logs?: LogMonitor;
   private _tracer?: Tracer;
   private _storage?: SessionStateManager;
@@ -811,9 +820,22 @@ export class Browser {
         await browser.initBiDi(wsUrl);
       }
 
-      // Load session state if provided
-      if (options.storageState) {
-        await browser.loadState(options.storageState);
+      if (options.storageState !== undefined) {
+        const protocol = browser.bidiSession?.isConnected() ? 'bidi' : 'classic';
+        const errorContext = { operation: 'Browser.launch', browserName: name, protocol };
+        const state = await parseSessionState(options.storageState, errorContext);
+        if (browser.bidiSession?.isConnected()) {
+          await browser.defaultContext._loadStorageState(state, 'Browser.launch');
+        } else if (!isSessionStateEmpty(state)) {
+          throw new CraftdriverError(
+            ErrorCode.UNSUPPORTED,
+            'non-empty storageState cannot be restored at WebDriver Classic launch',
+            {
+              detail: storageStateDetail(errorContext, 'capability', { partialApplied: false }),
+              hint: 'Enable BiDi, or launch first, navigate to the sole origin, then call browser.loadState().',
+            }
+          );
+        }
       }
     } catch (err) {
       // The driver session (and, for Electron, the app) already exists — don't
@@ -856,8 +878,26 @@ export class Browser {
         await browser.initBiDi(wsUrl);
       }
 
-      if (options.storageState) {
-        await browser.loadState(options.storageState);
+      if (options.storageState !== undefined) {
+        const protocol = browser.bidiSession?.isConnected() ? 'bidi' : 'classic';
+        const errorContext = {
+          operation: 'Browser.launch',
+          browserName: target.browserName,
+          protocol,
+        };
+        const state = await parseSessionState(options.storageState, errorContext);
+        if (browser.bidiSession?.isConnected()) {
+          await browser.defaultContext._loadStorageState(state, 'Browser.launch');
+        } else if (!isSessionStateEmpty(state)) {
+          throw new CraftdriverError(
+            ErrorCode.UNSUPPORTED,
+            'non-empty storageState cannot be restored at WebDriver Classic launch',
+            {
+              detail: storageStateDetail(errorContext, 'capability', { partialApplied: false }),
+              hint: 'Enable BiDi, or launch first, navigate to the sole origin, then call browser.loadState().',
+            }
+          );
+        }
       }
     } catch (err) {
       // POST /session already succeeded — a failure initializing the session
@@ -890,6 +930,8 @@ export class Browser {
             this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
           },
         });
+        session.network.setInternalContextPredicate((context) => this._isInternalContextId(context));
+        session.logs.setInternalContextPredicate((context) => this._isInternalContextId(context));
         await this._ensureTopLevelContextTracking().catch(() => {});
         return; // success
       } catch (err) {
@@ -975,7 +1017,15 @@ export class Browser {
     if (!this._storage) {
       this._storage = new SessionStateManager(
         this.driver,
-        this.bidiSession?.isConnected() ? this.bidiSession.getConnection() : null
+        this.bidiSession?.isConnected() ? this.bidiSession.getConnection() : null,
+        undefined,
+        {
+          browserName: this._browserName,
+          protocol: this.bidiSession?.isConnected() ? 'bidi' : 'classic',
+          runSerializedRestore: this.bidiSession?.isConnected()
+            ? (task) => this.defaultContext._runSerializedRestore(task)
+            : undefined,
+        }
       );
     }
     return this._storage;
@@ -1044,8 +1094,22 @@ export class Browser {
   /**
    * Load session state from file
    */
-  async loadState(path: string): Promise<void> {
-    return this.storage.loadState(path);
+  async loadState(source: string | SessionState): Promise<void> {
+    const protocol = this.bidiSession?.isConnected() ? 'bidi' : 'classic';
+    const state = await parseSessionState(source, {
+      operation: 'browser.loadState',
+      browserName: this._browserName,
+      protocol,
+    });
+    // BiDi with no sessionStorage → the validated hydrator (multi-origin, no
+    // active page required). Otherwise (Classic, or sessionStorage present) take
+    // the active-page path, which restores a single origin matching the active
+    // page and can carry sessionStorage.
+    if (this.bidiSession?.isConnected() && !hasNonEmptySessionStorage(state)) {
+      await this.defaultContext._loadStorageState(state, 'browser.loadState');
+    } else {
+      await this.storage.setState(state, 'browser.loadState');
+    }
   }
 
   private async _runTracedAction<T>(
@@ -1588,6 +1652,7 @@ export class Browser {
     this._topLevelContextTrackingOffs = [];
     this._topLevelContextTracking = undefined;
     this._topLevelContextUserContexts.clear();
+    this._destroyedTopLevelContextIds.clear();
     this._topLevelContextCacheVersion++;
     // DELETE the WebDriver session — this tells the driver service to close the browser.
     await this.driver.quit().catch(() => {});
@@ -1638,7 +1703,12 @@ export class Browser {
       );
     }
     if (!this._tracer) {
-      this._tracer = new Tracer(this, this.bidiSession.getConnection(), this._engine);
+      this._tracer = new Tracer(
+        this,
+        this.bidiSession.getConnection(),
+        this._engine,
+        (context) => this._isInternalContextId(context)
+      );
     }
     await this._tracer.start(opts);
   }
@@ -1765,7 +1835,7 @@ export class Browser {
     const fnSrc = typeof fnOrSrc === 'function' ? fnOrSrc.toString() : `() => { ${fnOrSrc} }`;
 
     const result = await conn.send<{ script: string }>('script.addPreloadScript', {
-      functionDeclaration: fnSrc,
+      functionDeclaration: publicPageInitScript(fnSrc),
     });
 
     const scriptId = result.script;
@@ -2186,16 +2256,13 @@ export class Browser {
       const tree = await conn.send<{ contexts: BidiContextInfo[] }>('browsingContext.getTree', {
         maxDepth: 0,
       });
-      return (tree.contexts ?? []).map(
-        (ctx) =>
-          new Page(
-            this.driver,
-            ctx.context,
-            this.getDefaultTimeout,
-            conn,
-            this._wrapContext(ctx.userContext ?? 'default')
-          )
-      );
+      const pages: Page[] = [];
+      for (const ctx of tree.contexts ?? []) {
+        const owner = this._wrapContext(ctx.userContext ?? 'default');
+        if (await owner._isInternalPageContext(ctx.context)) continue;
+        pages.push(new Page(this.driver, ctx.context, this.getDefaultTimeout, conn, owner));
+      }
+      return pages;
     }
 
     // Classic fallback: use window handles
@@ -2279,7 +2346,9 @@ export class Browser {
       // `BiDiSession.connect()` (which must have run for `isConnected()` to be
       // true), so no per-call `subscribe()` round trip is needed here.
       return new Promise<Page>((resolve, reject) => {
+        let settled = false;
         const timer = setTimeout(() => {
+          settled = true;
           off();
           reject(new Error(`waitForPage() timed out after ${timeout}ms`));
         }, timeout);
@@ -2287,21 +2356,29 @@ export class Browser {
         const off = conn.on('browsingContext.contextCreated', (params: Record<string, unknown>) => {
           // Only top-level contexts have no parent
           if (!params.parent) {
-            clearTimeout(timer);
-            off();
-            resolve(
-              new Page(
-                this.driver,
-                params.context as string,
-                this.getDefaultTimeout,
-                conn,
-                this._wrapContext((params.userContext as string | undefined) ?? 'default')
-              )
+            const id = params.context as string;
+            const owner = this._wrapContext(
+              (params.userContext as string | undefined) ?? 'default'
             );
+            void owner._isInternalPageContext(id).then((internal) => {
+              if (internal || settled) return;
+              settled = true;
+              clearTimeout(timer);
+              off();
+              resolve(new Page(this.driver, id, this.getDefaultTimeout, conn, owner));
+            }).catch((err) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              off();
+              reject(err);
+            });
           }
         });
 
         action().catch((err) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           off();
           reject(err);
@@ -2452,6 +2529,14 @@ export class Browser {
     return ctx;
   }
 
+  private _isInternalContextId(context: string | null | undefined): boolean {
+    if (typeof context !== 'string') return false;
+    for (const ctx of this._contextsById.values()) {
+      if (ctx._isInternalPageId(context)) return true;
+    }
+    return false;
+  }
+
   async newContext(opts?: {
     storageState?: SessionState | string;
     baseURL?: string;
@@ -2488,14 +2573,21 @@ export class Browser {
       baseURL: opts?.baseURL,
       extraHTTPHeaders: opts?.extraHTTPHeaders,
     });
-    if (opts?.storageState !== undefined) {
-      await ctx.loadStorageState(opts.storageState);
+    try {
+      if (opts?.storageState !== undefined) {
+        await ctx._loadStorageState(opts.storageState, 'browser.newContext');
+      }
+      // Apply identity & device emulation options. Each setter is `userContexts`-scoped,
+      // so future pages in this context inherit automatically.
+      if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
+      if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
+      if (opts?.geolocation !== undefined) await ctx.setGeolocation(opts.geolocation);
+    } catch (err) {
+      // Restore/emulation failed — tear the just-created context down so a
+      // rejected newContext() never leaves an orphaned user context behind.
+      await ctx.close().catch(() => {});
+      throw err;
     }
-    // Apply identity & device emulation options. Each setter is `userContexts`-scoped,
-    // so future pages in this context inherit automatically.
-    if (opts?.locale !== undefined) await ctx.setLocale(opts.locale);
-    if (opts?.timezoneId !== undefined) await ctx.setTimezone(opts.timezoneId);
-    if (opts?.geolocation !== undefined) await ctx.setGeolocation(opts.geolocation);
     return ctx;
   }
 
@@ -2576,15 +2668,19 @@ export class Browser {
       if (params.parent) return;
       const id = params.context;
       if (typeof id !== 'string') return;
-      this._topLevelContextUserContexts.set(
-        id,
-        typeof params.userContext === 'string' ? params.userContext : ''
-      );
-      this._topLevelContextCacheVersion++;
+      const userContext = typeof params.userContext === 'string' ? params.userContext : 'default';
+      this._destroyedTopLevelContextIds.delete(id);
+      const owner = this._wrapContext(userContext);
+      void owner._isInternalPageContext(id).then((internal) => {
+        if (internal || this._destroyedTopLevelContextIds.has(id)) return;
+        this._topLevelContextUserContexts.set(id, userContext);
+        this._topLevelContextCacheVersion++;
+      }).catch(() => {});
     };
     const onDestroyed = (params: Record<string, unknown>) => {
       if (params.parent) return;
       if (typeof params.context === 'string') {
+        this._destroyedTopLevelContextIds.add(params.context);
         this._topLevelContextUserContexts.delete(params.context);
         this._topLevelContextCacheVersion++;
       }
@@ -2617,6 +2713,8 @@ export class Browser {
     }
     for (const ctx of tree.contexts ?? []) {
       if (!ctx.parent) {
+        const owner = this._wrapContext(ctx.userContext ?? 'default');
+        if (await owner._isInternalPageContext(ctx.context)) continue;
         this._topLevelContextUserContexts.set(ctx.context, ctx.userContext ?? 'default');
       }
     }
@@ -2625,7 +2723,7 @@ export class Browser {
 
   private _firstDefaultTopLevelContext(): string | undefined {
     for (const [id, userContext] of this._topLevelContextUserContexts) {
-      if (userContext === 'default') return id;
+      if (userContext === 'default' && !this._isInternalContextId(id)) return id;
     }
     return undefined;
   }
@@ -2655,14 +2753,22 @@ export class Browser {
       const handle = await this.driver.getCurrentWindowHandle().catch(() => '');
       await this._ensureTopLevelContextTracking();
 
-      if (handle && this._topLevelContextUserContexts.get(handle) === 'default') {
+      if (
+        handle &&
+        this._topLevelContextUserContexts.get(handle) === 'default' &&
+        !this._isInternalContextId(handle)
+      ) {
         return new Page(this.driver, handle, this.getDefaultTimeout, conn, this.defaultContext);
       }
 
       // Events should keep the cache warm, but a cheap top-level sync covers
       // missed startup events and direct protocol/browser changes.
       await this._refreshTopLevelContextCache(conn);
-      if (handle && this._topLevelContextUserContexts.get(handle) === 'default') {
+      if (
+        handle &&
+        this._topLevelContextUserContexts.get(handle) === 'default' &&
+        !this._isInternalContextId(handle)
+      ) {
         return new Page(this.driver, handle, this.getDefaultTimeout, conn, this.defaultContext);
       }
 

@@ -11,20 +11,64 @@
  *                       auto-start one if none is up.
  */
 import { spawn } from 'child_process';
+import { readFileSync, unlinkSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
-import { Browser } from '../lib/browser.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
-import { createBrowserHandle, dispatch } from './dispatcher.js';
+import { AgentSession, type AgentSessionRunner } from './agentSession.js';
 import { parseArgv, HELP_TEXT, type ParsedCommand, type GlobalFlags } from './parseArgs.js';
 import { DaemonClient } from './client.js';
 import { runDaemon, toWireError } from './daemon.js';
-import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH } from './defaults.js';
-import { runInit, SUPPORTED_FLAVORS, type Flavor } from './init.js';
+import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
+import { MAX_STDIN_BYTES } from './bounds.js';
+import { LEGACY_FLAVORS, runInit, SUPPORTED_FLAVORS, type Flavor } from './init.js';
 import { runMcpServer } from './mcp/server.js';
+import { validateSessionName } from './sessionRegistry.js';
 import type { LaunchOptions } from '../lib/browser.js';
 
-const VERSION = '0.1.0';
+/**
+ * Reported by `--version`, read from the installed package rather than a
+ * constant. The hardcoded value had drifted to 0.1.0 against a 1.7.0 package,
+ * so the CLI told every user the wrong version — the same defect the MCP
+ * server carried in `serverInfo.version`.
+ */
+const VERSION = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(
+      readFileSync(resolve(here, '..', '..', 'package.json'), 'utf8'),
+    ) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
+
+/**
+ * The daemon needs a Unix domain socket, which Windows does not provide —
+ * there, Node maps a listen path onto a named pipe under `\\.\pipe\`, so the
+ * socket path this CLI computes cannot be bound at all.
+ *
+ * Rather than surface the resulting ENOENT, the daemon is declared unsupported
+ * on Windows and the two socket-free modes are named instead. Both genuinely
+ * work there: `--ephemeral` owns one browser for the run, and `mcp` speaks
+ * over stdio.
+ */
+function daemonSupported(): boolean {
+  return process.platform !== 'win32';
+}
+
+function unsupportedDaemon(): number {
+  process.stderr.write(
+    'error: the craftdriver daemon is not supported on Windows\n' +
+    `code:  ${ErrorCode.UNSUPPORTED}\n` +
+    'hint:  use `craftdriver --ephemeral < script.txt` for a one-shot run, ' +
+    'or `craftdriver mcp` for an agent session; both avoid the socket\n',
+  );
+  // UNSUPPORTED is an operational/platform limitation, not malformed CLI
+  // syntax. Keep it aligned with the normal error-code-to-exit-code mapping.
+  return 1;
+}
 
 export async function main(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv);
@@ -45,15 +89,29 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(HELP_TEXT);
     return 0;
   }
-  if (parsed.cmd === '__unknown__') {
-    process.stderr.write(`error: unknown command "${parsed.args.cmd as string}"\nrun: craftdriver --help\n`);
+  const parseFailure = formatParseFailure(parsed);
+  if (parseFailure) {
+    process.stderr.write(parseFailure);
     return 2;
   }
+
+  // Validate the session name here, before anything opens a socket, spawns a
+  // daemon or touches the filesystem: a bad name must not be able to start a
+  // browser it will then be refused by.
+  let session: string;
+  try {
+    session = validateSessionName(parsed.flags.session);
+  } catch (e) {
+    writeErr(toWireError(e));
+    return 2;
+  }
+  const rc = checkSessionUsage(parsed);
+  if (rc !== 0) return rc;
+
   applyHeadless(parsed.flags);
 
   // ------------------------------------------------------------------
-  // `init <flavor>` — no browser, no daemon. Writes agent-guide files
-  // into the current project.
+  // `init codex` — no browser, no daemon. Installs the project skill.
   // ------------------------------------------------------------------
   if (parsed.cmd === 'init') return runInitCommand(parsed);
 
@@ -70,10 +128,11 @@ export async function main(argv: string[]): Promise<number> {
   // ------------------------------------------------------------------
   // Daemon control commands — handled in the foreground process.
   // ------------------------------------------------------------------
+  if (parsed.cmd.startsWith('daemon:') && !daemonSupported()) return unsupportedDaemon();
   if (parsed.cmd === 'daemon:start') return daemonStart(parsed.flags);
   if (parsed.cmd === 'daemon:stop') return daemonStop(parsed);
-  if (parsed.cmd === 'daemon:status') return daemonStatus(parsed);
-  if (parsed.cmd === 'daemon:run') return daemonRun(parsed.flags); // internal: actual daemon process
+  if (parsed.cmd === 'daemon:status') return daemonStatus(parsed, session);
+  if (parsed.cmd === 'daemon:__run__') return daemonRun(parsed.flags); // internal child process
 
   // ------------------------------------------------------------------
   // Ephemeral mode — no daemon involved.
@@ -83,6 +142,7 @@ export async function main(argv: string[]): Promise<number> {
   // ------------------------------------------------------------------
   // Single command via daemon. Auto-start if needed.
   // ------------------------------------------------------------------
+  if (!daemonSupported()) return unsupportedDaemon();
   if (!(await DaemonClient.isRunning())) {
     const ok = await autoStartDaemon(parsed.flags);
     if (!ok) {
@@ -91,7 +151,7 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
-  const client = new DaemonClient();
+  const client = new DaemonClient({ session });
   try {
     const resp = await client.send(parsed.cmd, parsed.args);
     return emitResponse(parsed, resp);
@@ -99,6 +159,71 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write('error: ' + ((e as Error).message ?? String(e)) + '\ncode:  DRIVER_ERROR\n');
     return 1;
   }
+}
+
+const SESSION_SUBCOMMANDS = new Set(['session:list', 'session:close']);
+
+/** Render parser pseudo-commands consistently in one-shot and stdin modes. */
+function formatParseFailure(parsed: ParsedCommand, line?: string): string | null {
+  const context = line ? ` in: ${line}` : '';
+  if (parsed.cmd === '__unknown__') {
+    return `error: unknown command "${parsed.args.cmd as string}"${context}\nrun: craftdriver --help\n`;
+  }
+  if (parsed.cmd === '__unknown_flag__') {
+    const flag = parsed.args.flag as string;
+    const suggestion = parsed.args.suggestion as string | undefined;
+    return (
+      `error: unknown flag "${flag}"${context}\n` +
+      (suggestion ? `did you mean: ${suggestion}\n` : '') +
+      'run: craftdriver --help\n'
+    );
+  }
+  if (parsed.cmd === '__usage_error__') {
+    const usage = parsed.args.usage as string | undefined;
+    return (
+      `error: ${parsed.args.message as string}${context}\n` +
+      (usage ? `usage: ${usage}\n` : '') +
+      'run: craftdriver --help\n'
+    );
+  }
+  return null;
+}
+
+/**
+ * Reject session usage the daemon cannot honour, before it is attempted.
+ *
+ * Ephemeral mode is one process, one browser, one session: it exits when the
+ * command does, so a name cannot address anything on the next invocation.
+ * Accepting `--session` there would promise continuity that does not exist,
+ * so it fails instead of quietly meaning nothing.
+ */
+function checkSessionUsage(parsed: ParsedCommand): number {
+  if (parsed.cmd.startsWith('session:') && !SESSION_SUBCOMMANDS.has(parsed.cmd)) {
+    process.stderr.write(
+      `error: unknown session subcommand "${parsed.cmd.slice('session:'.length)}"\n` +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  craftdriver session list | session close <name>\n',
+    );
+    return 2;
+  }
+  if (!parsed.flags.ephemeral) return 0;
+  if (parsed.flags.session !== undefined) {
+    process.stderr.write(
+      'error: --session cannot be combined with --ephemeral\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  an ephemeral run owns exactly one browser and exits with it; ' +
+        'use the daemon for named sessions\n',
+    );
+    return 2;
+  }
+  if (SESSION_SUBCOMMANDS.has(parsed.cmd)) {
+    process.stderr.write(
+      `error: "${parsed.cmd.replace(':', ' ')}" needs the daemon and is not available with --ephemeral\n` +
+        'code:  INVALID_ARGUMENT\n',
+    );
+    return 2;
+  }
+  return 0;
 }
 
 function applyHeadless(flags: GlobalFlags): void {
@@ -113,28 +238,78 @@ function applyHeadless(flags: GlobalFlags): void {
 // Ephemeral mode
 // ---------------------------------------------------------------------------
 async function runEphemeral(parsed: ParsedCommand): Promise<number> {
-  const handle = createBrowserHandle(() => Browser.launch(parsed.flags.launch));
+  // No automatic snapshots: this path renders only the command's own
+  // result, so capturing one would cost several extra round-trips per
+  // command — and stamp ref markers into the page — for output nothing
+  // reads. Explicit `snapshot` still records the baseline refs need.
+  const session = new AgentSession({
+    launchOptions: parsed.flags.launch,
+    autoSnapshot: false,
+    artifactName: 'ephemeral',
+  });
   let rc = 0;
   try {
     if (parsed.cmd === '__stdin__') {
-      const lines = await readAllStdin();
+      // Reading stdin can fail on the size cap. Report it the way every other
+      // CLI failure is reported rather than letting the rejection escape as an
+      // unhandled stack trace from the bin shim's top-level await.
+      let lines: string;
+      try {
+        lines = await readAllStdin();
+      } catch (e) {
+        writeErr(toWireError(e));
+        return 2;
+      }
       for (const raw of lines.split('\n')) {
         const line = raw.trim();
         if (!line || line.startsWith('#')) continue;
         const tokens = tokenize(line);
         const sub = parseArgv(tokens);
-        if (!sub || sub.cmd.startsWith('__')) continue;
-        const result = await safeDispatch(handle, sub);
-        rc = emitInProc(sub, result) || rc;
+        if (!sub) continue;
+        // A malformed line must not pass silently. Skipping every `__…`
+        // pseudo-command meant `click #pay --forse` did nothing at all and the
+        // script still exited 0 — the same silent-typo failure strict flag
+        // parsing exists to prevent, just moved onto this path.
+        const parseFailure = formatParseFailure(sub, line);
+        if (parseFailure) {
+          process.stderr.write(parseFailure);
+          rc = Math.max(rc, 2);
+          continue;
+        }
+        const ignoredLaunchFlag = ephemeralLineLaunchFlag(sub.flags);
+        if (ignoredLaunchFlag) {
+          process.stderr.write(
+            `error: ${ignoredLaunchFlag} cannot be set inside an ephemeral script in: ${line}\n` +
+              `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`,
+          );
+          rc = Math.max(rc, 2);
+          continue;
+        }
+        if (sub.cmd.startsWith('__')) continue;
+        const result = await safeDispatch(session, sub);
+        // Keep the worst status across the batch. `||` used to be safe when
+        // success was always 0, but `exists` now returns 1 on a miss and
+        // would overwrite a usage error (2) recorded earlier.
+        rc = Math.max(rc, emitInProc(sub, result));
       }
     } else {
-      const result = await safeDispatch(handle, parsed);
+      const result = await safeDispatch(session, parsed);
       rc = emitInProc(parsed, result);
     }
   } finally {
-    await handle.close();
+    await session.close();
   }
   return rc;
+}
+
+/** Launch/session choices apply to the script's one browser, not one line. */
+function ephemeralLineLaunchFlag(flags: GlobalFlags): string | null {
+  if (flags.session !== undefined) return '--session';
+  if (flags.ephemeral) return '--ephemeral';
+  if (flags.headless === true) return '--headless';
+  if (flags.headless === false) return '--headed';
+  if (flags.launch.browserName !== undefined) return '--browser';
+  return null;
 }
 
 interface DispatchOutcome {
@@ -144,15 +319,11 @@ interface DispatchOutcome {
 }
 
 async function safeDispatch(
-  handle: ReturnType<typeof createBrowserHandle>,
+  session: AgentSessionRunner,
   parsed: ParsedCommand,
 ): Promise<DispatchOutcome> {
   try {
-    const value = await dispatch(
-      { handle, launchOptions: parsed.flags.launch },
-      parsed.cmd,
-      parsed.args,
-    );
+    const value = await session.run({ cmd: parsed.cmd, args: parsed.args });
     return { ok: true, value };
   } catch (e) {
     return { ok: false, error: toWireError(e) };
@@ -162,10 +333,24 @@ async function safeDispatch(
 function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
   if (outcome.ok) {
     writeOk(parsed, outcome.value);
-    return 0;
+    return successExitCode(parsed, outcome.value);
   }
   writeErr(outcome.error!);
   return exitCodeFor(outcome.error!.code);
+}
+
+/**
+ * Exit code for a command that succeeded.
+ *
+ * `exists` is a probe: the call succeeds, but "nothing matched" has to
+ * reach the shell as a non-zero status because agents script around it.
+ * Shared by the ephemeral and daemon paths so one command cannot report
+ * two different contracts depending on how it was run.
+ */
+function successExitCode(parsed: ParsedCommand, result: unknown): number {
+  if (parsed.cmd !== 'exists') return 0;
+  const r = result as { exists?: boolean } | null;
+  return r && r.exists === false ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,26 +358,44 @@ function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
 // ---------------------------------------------------------------------------
 function runInitCommand(parsed: ParsedCommand): number {
   const flavor = String(parsed.args.flavor ?? '').toLowerCase();
-  const allowed = new Set<string>([...SUPPORTED_FLAVORS, 'all']);
+  const allowed = new Set<string>([...SUPPORTED_FLAVORS, ...LEGACY_FLAVORS]);
   if (!allowed.has(flavor)) {
-    const list = [...SUPPORTED_FLAVORS, 'all'].join(' | ');
     process.stderr.write(
-      `error: init requires a flavor (${list})\n` +
+      'error: init requires the codex flavor\n' +
       `code:  INVALID_ARGUMENT\n` +
-      `hint:  example: craftdriver init copilot\n`,
+      `hint:  run: craftdriver init codex\n`,
     );
     return 2;
   }
   const force = parsed.args.force === true;
   const dryRun = parsed.args['dry-run'] === true || parsed.args.dryRun === true;
-  const result = runInit({ flavor: flavor as Flavor, cwd: process.cwd(), force, dryRun });
-  const prefix = dryRun ? '[dry-run] ' : '';
-  for (const p of result.written) process.stdout.write(`${prefix}wrote ${p}\n`);
-  for (const p of result.skipped) {
-    process.stdout.write(`skipped ${p} (already exists; use --force to overwrite)\n`);
+  const mcp = parsed.args.mcp === true;
+  try {
+    const result = runInit({ flavor: flavor as Flavor, cwd: process.cwd(), force, dryRun, mcp });
+    process.stdout.write(`project root: ${result.projectRoot}\n`);
+    if (result.status === 'installed') process.stdout.write(`installed ${result.destination}\n`);
+    else if (result.status === 'updated') process.stdout.write(`updated ${result.destination}\n`);
+    else if (result.status === 'unchanged') process.stdout.write(`unchanged ${result.destination}\n`);
+    else if (result.status === 'would-install') {
+      process.stdout.write(`[dry-run] would install ${result.destination}\n`);
+    } else {
+      process.stdout.write(`[dry-run] would update ${result.destination}\n`);
+    }
+    if (result.mcpSnippet) {
+      process.stdout.write(
+        '\nAdd this project-pinned MCP configuration manually; no config file was read or changed:\n\n' +
+          result.mcpSnippet +
+          '\n',
+      );
+    }
+    return 0;
+  } catch (error) {
+    process.stderr.write(
+      `error: ${(error as Error).message ?? String(error)}\n` +
+        `code:  INVALID_ARGUMENT\n`,
+    );
+    return 2;
   }
-  if (result.written.length === 0 && result.skipped.length > 0) return 1;
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +419,16 @@ async function daemonStart(flags: GlobalFlags): Promise<number> {
 
 async function daemonStop(parsed: ParsedCommand): Promise<number> {
   if (!(await DaemonClient.isRunning())) {
+    // A PID file with no daemon behind it is stale by definition — the daemon
+    // writes both files and removes both on a graceful exit, so this is the
+    // residue of one that was killed or crashed. Leaving it means the next
+    // `daemon status` reports a PID that owns nothing, and "shutdown leaves no
+    // stale state" quietly stops being true.
+    try {
+      unlinkSync(DAEMON_PID_PATH);
+    } catch {
+      /* nothing to clean up */
+    }
     process.stdout.write('daemon not running\n');
     return 0;
   }
@@ -234,17 +447,22 @@ async function daemonStop(parsed: ParsedCommand): Promise<number> {
   return 0;
 }
 
-async function daemonStatus(parsed: ParsedCommand): Promise<number> {
+async function daemonStatus(parsed: ParsedCommand, session: string): Promise<number> {
   const running = await DaemonClient.isRunning();
   const pid = DaemonClient.getPid();
+  // The daemon serves one project. Reporting which one makes an unexpected
+  // "not running" self-explanatory when the command was run from elsewhere.
+  const project = projectRoot();
   if (!running) {
-    const result = { running: false, pid: null, socket: DAEMON_SOCKET_PATH };
+    const result = { running: false, pid: null, socket: DAEMON_SOCKET_PATH, project };
     writeOk(parsed, result);
     return 0;
   }
-  let info: Record<string, unknown> = { running: true, pid, socket: DAEMON_SOCKET_PATH };
+  let info: Record<string, unknown> = {
+    running: true, pid, socket: DAEMON_SOCKET_PATH, project, session,
+  };
   try {
-    const client = new DaemonClient();
+    const client = new DaemonClient({ session });
     const resp = await client.send('status');
     if (resp.ok) info = { ...info, ...(resp.result as Record<string, unknown>) };
   } catch { /* ignore */ }
@@ -313,13 +531,7 @@ function writeErr(err: { code: string; message: string; hint?: string; detail?: 
 function emitResponse(parsed: ParsedCommand, resp: { ok: true; result: unknown } | { ok: false; error: { code: string; message: string; hint?: string; detail?: Record<string, unknown> } }): number {
   if (resp.ok) {
     writeOk(parsed, resp.result);
-    // `exists` is a probe: exit 1 when nothing matched, even though
-    // the call itself succeeded. Agents script around the exit code.
-    if (parsed.cmd === 'exists') {
-      const r = resp.result as { exists?: boolean };
-      if (r && r.exists === false) return 1;
-    }
-    return 0;
+    return successExitCode(parsed, resp.result);
   }
   writeErr(resp.error);
   return exitCodeFor(resp.error.code);
@@ -355,6 +567,40 @@ function prettyResult(cmd: string, result: unknown): string {
       .map((p, i) => `[${i}] ${p.url ?? ''}  —  ${p.title ?? ''}`)
       .join('\n');
   }
+  if (cmd === 'locators' && Array.isArray(r.candidates)) {
+    const rows = (r.candidates as Array<Record<string, unknown>>).map((c) => {
+      const mark = c.status === 'unique' ? '✓' : c.status === 'ambiguous' ? '~' : '✗';
+      const count = c.status === 'unique' ? '' : `  (${c.matches} matches)`;
+      return `${mark} ${c.selector}${count}\n    ${c.code}`;
+    });
+    const head = r.best
+      ? `best: ${r.best as string}`
+      : `no unique locator — ${(r.note as string) ?? 'add a data-testid'}`;
+    return [head, ...rows].join('\n');
+  }
+  if (cmd === 'session:list' && Array.isArray(r.sessions)) {
+    const head = `${r.count} of ${r.limit} sessions open`;
+    const rows = (r.sessions as Array<Record<string, unknown>>)
+      .map((s) => `  ${s.name as string}  (since ${s.createdAt as string})`);
+    return rows.length === 0 ? head : [head, ...rows].join('\n');
+  }
+  if (cmd === 'state' && Array.isArray(r.states)) {
+    const names = r.states as string[];
+    const head = `state root: ${r.root as string}`;
+    return names.length === 0
+      ? `${head}\n(no saved state — create one with \`craftdriver state save <name>\`)`
+      : [head, ...names.map((n) => `  ${n}`)].join('\n');
+  }
+  if (cmd === 'state' && typeof r.action === 'string') {
+    // Counts and origins only — never the cookies or storage values.
+    const origins = (r.origins as string[]) ?? [];
+    const scope = origins.length > 0 ? ` for ${origins.join(', ')}` : '';
+    const note = r.note ? `\nnote: ${r.note as string}` : '';
+    return (
+      `${r.action as string} ${r.name as string}: ` +
+      `${r.cookies as number} cookies, ${r.storageKeys as number} storage keys${scope}${note}`
+    );
+  }
   if (cmd === 'snapshot' && Array.isArray(r.lines)) {
     const header = `page: ${(r.title as string) || '(untitled)'} — ${(r.url as string) || '(no url)'}`;
     const lines = r.lines as string[];
@@ -385,15 +631,31 @@ function tokenize(line: string): string[] {
   return out;
 }
 
+/**
+ * Read the whole ephemeral script from stdin, bounded.
+ *
+ * It is accumulated in memory before the first command runs, so an unbounded
+ * pipe could exhaust the process before it did any work. The cap is far above
+ * any real command script.
+ */
 async function readAllStdin(): Promise<string> {
-  return new Promise<string>((resolve) => {
+  return new Promise<string>((resolve, reject) => {
     let buf = '';
+    let bytes = 0;
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => { buf += c; });
+    process.stdin.on('data', (c) => {
+      bytes += Buffer.byteLength(c, 'utf8');
+      if (bytes > MAX_STDIN_BYTES) {
+        process.stdin.destroy();
+        reject(new CraftdriverError(
+          ErrorCode.INVALID_ARGUMENT,
+          `stdin exceeded ${MAX_STDIN_BYTES} bytes`,
+          { hint: 'split the script, or drive the daemon one command at a time' },
+        ));
+        return;
+      }
+      buf += c;
+    });
     process.stdin.on('end', () => resolve(buf));
   });
 }
-
-// Handle the internal "daemon __run__" invocation used by autoStartDaemon.
-// Map sub-token "__run__" → "run" so parseArgv produces `daemon:run`.
-if (process.argv[3] === '__run__') process.argv[3] = 'run';

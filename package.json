@@ -18,6 +18,8 @@
     "test:chrome": "BROWSER_NAME=chrome vitest run",
     "test:chromium": "BROWSER_NAME=chromium vitest run",
     "test:safari": "BROWSER_NAME=safari vitest run tests/safari.test.ts --maxWorkers=1",
+    "test:cli": "HEADLESS=true vitest run --config vitest.cli.config.ts",
+    "test:release": "vitest run --config vitest.release.config.ts",
     "test:recipes": "HEADLESS=true vitest run --config vitest.recipes.config.ts",
     "test:electron": "vitest run --config vitest.electron.config.ts",
     "test:browserstack": "vitest run --config vitest.browserstack.config.ts",

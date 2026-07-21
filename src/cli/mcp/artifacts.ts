@@ -24,26 +24,63 @@
  * reclaims them eventually. Override the root if you need a custom
  * cleanup policy.
  */
-import { mkdir, writeFile } from 'fs/promises';
+import { chmod, mkdir, rm, stat, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
+import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
 
 export interface ArtifactWriteResult {
   path: string;
   bytes: number;
 }
 
+/**
+ * Quota for one session's spill directory.
+ *
+ * The store is written to automatically, on every oversized result, for the
+ * whole life of a long-running session — and nothing deletes it. Without a
+ * quota a loop that snapshots a large page fills the disk silently, which is
+ * a worse failure than a refused spill: the caller falls back to an inline
+ * preview and the session keeps working.
+ */
+export const MAX_ARTIFACTS = 500;
+export const MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+
+/** Raised when a write would exceed the session's artifact quota. */
+export class ArtifactQuotaError extends CraftdriverError {
+  constructor(message: string) {
+    super(ErrorCode.STATE_INVALID, message, {
+      hint: 'start a fresh MCP session, or clean the configured artifact root',
+    });
+    this.name = 'ArtifactQuotaError';
+  }
+}
+
+export interface ArtifactStoreLimits {
+  /** Test/embedding override; production uses {@link MAX_ARTIFACTS}. */
+  maxArtifacts?: number;
+  /** Test/embedding override; production uses {@link MAX_TOTAL_BYTES}. */
+  maxTotalBytes?: number;
+}
+
 export class ArtifactStore {
   private dir: string;
   private ready: Promise<void> | null = null;
   private counter = 0;
+  private artifactCount = 0;
+  private totalBytes = 0;
+  private reservations = new Set<string>();
+  private readonly maxArtifacts: number;
+  private readonly maxTotalBytes: number;
 
-  constructor(rootOverride?: string) {
+  constructor(rootOverride?: string, limits: ArtifactStoreLimits = {}) {
     const root = rootOverride
       ?? process.env.CRAFTDRIVER_MCP_ARTIFACTS_DIR
       ?? tmpdir();
     const stamp = `${process.pid}-${Date.now().toString(36)}`;
     this.dir = resolve(root, `craftdriver-mcp-${stamp}`);
+    this.maxArtifacts = limits.maxArtifacts ?? MAX_ARTIFACTS;
+    this.maxTotalBytes = limits.maxTotalBytes ?? MAX_TOTAL_BYTES;
   }
 
   /** Absolute path to the artifact directory (may not exist yet). */
@@ -53,7 +90,7 @@ export class ArtifactStore {
 
   private async ensure(): Promise<void> {
     if (!this.ready) {
-      this.ready = mkdir(this.dir, { recursive: true }).then(() => undefined);
+      this.ready = mkdir(this.dir, { recursive: true, mode: 0o700 }).then(() => undefined);
     }
     await this.ready;
   }
@@ -64,13 +101,36 @@ export class ArtifactStore {
    * `screenshot.png` or `eval.json`.
    */
   async write(nameHint: string, data: Buffer | string): Promise<ArtifactWriteResult> {
-    await this.ensure();
+    const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
+    this.assertWithinQuota(buf.length);
     this.counter += 1;
+    this.artifactCount += 1;
+    this.totalBytes += buf.length;
     const seq = this.counter.toString().padStart(4, '0');
     const path = join(this.dir, `${seq}-${nameHint}`);
-    const buf = typeof data === 'string' ? Buffer.from(data, 'utf8') : data;
-    await writeFile(path, buf);
-    return { path, bytes: buf.length };
+    try {
+      await this.ensure();
+      await writeFile(path, buf, { mode: 0o600 });
+      return { path, bytes: buf.length };
+    } catch (error) {
+      this.artifactCount -= 1;
+      this.totalBytes -= buf.length;
+      await rm(path, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  private assertWithinQuota(incoming: number): void {
+    if (this.artifactCount >= this.maxArtifacts) {
+      throw new ArtifactQuotaError(
+        `artifact store is full (${this.maxArtifacts} files in ${this.dir})`,
+      );
+    }
+    if (this.totalBytes + incoming > this.maxTotalBytes) {
+      throw new ArtifactQuotaError(
+        `artifact store would exceed ${this.maxTotalBytes} bytes (${this.dir})`,
+      );
+    }
   }
 
   /**
@@ -79,10 +139,58 @@ export class ArtifactStore {
    * beyond `mkdir -p` of the directory.
    */
   async allocate(nameHint: string): Promise<string> {
-    await this.ensure();
+    // Reserve the count synchronously, before awaiting mkdir, so concurrent
+    // allocations cannot all observe the same free slot.
+    this.assertWithinQuota(0);
     this.counter += 1;
+    this.artifactCount += 1;
     const seq = this.counter.toString().padStart(4, '0');
-    return join(this.dir, `${seq}-${nameHint}`);
+    const path = join(this.dir, `${seq}-${nameHint}`);
+    this.reservations.add(path);
+    try {
+      await this.ensure();
+      return path;
+    } catch (error) {
+      this.reservations.delete(path);
+      this.artifactCount -= 1;
+      throw error;
+    }
+  }
+
+  /**
+   * Account for a file written to a path returned by {@link allocate}.
+   *
+   * Screenshots are written by the browser, so their size is known only after
+   * capture. If the actual file would cross the quota, remove that one file and
+   * fail the tool call rather than letting the supposedly bounded store grow.
+   */
+  async commitAllocated(path: string): Promise<ArtifactWriteResult> {
+    if (!this.reservations.has(path)) {
+      throw new Error(`artifact path was not allocated by this store: ${path}`);
+    }
+    try {
+      const info = await stat(path);
+      if (!info.isFile()) throw new Error(`allocated artifact is not a regular file: ${path}`);
+      if (this.totalBytes + info.size > this.maxTotalBytes) {
+        throw new ArtifactQuotaError(
+          `artifact store would exceed ${this.maxTotalBytes} bytes (${this.dir})`,
+        );
+      }
+      await chmod(path, 0o600);
+      this.totalBytes += info.size;
+      this.reservations.delete(path);
+      return { path, bytes: info.size };
+    } catch (error) {
+      await this.releaseAllocated(path);
+      throw error;
+    }
+  }
+
+  /** Release a failed allocation and remove any partial file. Idempotent. */
+  async releaseAllocated(path: string): Promise<void> {
+    if (!this.reservations.delete(path)) return;
+    this.artifactCount -= 1;
+    await rm(path, { force: true }).catch(() => {});
   }
 }
 

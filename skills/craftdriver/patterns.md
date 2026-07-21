@@ -1,7 +1,6 @@
-# craftdriver — patterns
+# CraftDriver — patterns
 
-Worked recipes. Each is ≤ ~200 tokens; load on demand from
-[SKILL.md](SKILL.md).
+Worked recipes, each kept compact. Load on demand from [SKILL.md](SKILL.md).
 
 ## 1. Login, save storage state for reuse
 
@@ -13,20 +12,27 @@ await browser.locator(By.labelText('Password')).fill(process.env.PW!);
 await browser.locator(By.role('button', { name: 'Sign in' })).click();
 await browser.locator(By.testId('dashboard')).expect().toBeVisible();
 
-// Persist for fast subsequent runs.
-const state = await browser.defaultContext.storageState();
-await fs.writeFile('.auth/state.json', JSON.stringify(state));
+// Persist atomically with owner-only permissions where supported.
+await browser.saveState('.auth/state.json');
 await browser.quit();
 ```
 
 ## 2. Re-use saved login
 
+On a BiDi session, launch restores cookies and every captured localStorage
+origin before the first real navigation. Application changes then survive
+reload because the state is seeded once, not replayed on every document.
+
 ```ts
-const state = JSON.parse(await fs.readFile('.auth/state.json', 'utf8'));
-const browser = await Browser.launch({ storageState: state });
+const browser = await Browser.launch({ storageState: '.auth/state.json' });
 await browser.navigateTo('https://app.example.com/dashboard');
 await browser.locator(By.testId('dashboard')).expect().toBeVisible();
 ```
+
+Classic WebDriver cannot seed arbitrary origins before navigation: launch
+rejects non-empty state. Launch first, navigate to the sole captured origin,
+then call `browser.loadState('.auth/state.json')`. Snapshots containing
+sessionStorage also require that active-origin flow, including on BiDi.
 
 ## 3. Wait for a network response after a click
 

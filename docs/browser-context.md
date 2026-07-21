@@ -120,9 +120,8 @@ Create a new isolated user context. Backed by BiDi
 `browser.createUserContext`. Throws in Classic mode.
 
 - `opts.storageState`: a `SessionState` object **or** a path to a JSON
-  file produced by `BrowserContext.saveStorageState()`. Cookies are
-  applied immediately; localStorage entries land on first navigation to
-  each captured origin via an internal preload script.
+  file produced by `BrowserContext.saveStorageState()`. Cookies and every
+  captured localStorage origin are restored before `newContext()` resolves.
 - `opts.baseURL`: a base URL applied to every relative `url` passed to
   `ctx.newPage()` or `page.navigateTo()` inside the context. Absolute
   URLs pass through unchanged. Lets your tests say `'/login'` instead
@@ -230,11 +229,17 @@ snapshot for inspection. See the auth-fixture example above.
 ### `BrowserContext.loadStorageState(source): Promise<void>`
 
 Apply a previously-captured snapshot. `source` is a `SessionState`
-object or a path to JSON produced by `saveStorageState`. Cookies are
-applied immediately; localStorage entries are installed via a preload
-script that runs on first navigation to each captured origin. Calling
-`loadStorageState` again replaces the previous preload — it does not
-stack.
+object or a path to JSON produced by `saveStorageState`. localStorage is
+seeded once per captured origin through a private, locally fulfilled document;
+cookies are then applied to the same user-context partition. The method resolves
+after hydration and cleanup, so the first real page script sees the state.
+Calling `loadStorageState` again applies another ordered overlay; application
+changes remain owned by the application and survive reload.
+
+Restores in one context are serialized. Different user contexts may restore in
+parallel. A runtime protocol failure on an existing context throws
+`DRIVER_ERROR` with `detail.phase` and `detail.partialApplied`; use a newly
+created context when failure isolation is required.
 
 ### `BrowserContext.close(): Promise<void>`
 
@@ -479,10 +484,11 @@ A default `browser.newContext()` (no options) is always cross-browser.
 
 A few things that aren't bugs but bite if you don't know them:
 
-- **`storageState` covers cookies + localStorage only.** Not
-  sessionStorage, not IndexedDB, not Cache Storage. Apps that put their
-  auth token in sessionStorage (some Auth0 / MSAL fallback configs) will
-  need a custom restore step.
+- **`storageState` covers cookies + localStorage only.** Not reusable
+  sessionStorage, IndexedDB, or Cache Storage. A non-empty sessionStorage
+  section is rejected by context/launch APIs rather than ignored. Use the
+  active-page `browser.loadState()` fallback for one matching sessionStorage
+  origin, or a custom login step.
 - **Browser-level vs context-level emulation race.** `browser.setGeolocation(...)`
   is a session-wide override; `ctx.setGeolocation(...)` is a per-context
   override. If both are set, the context-level one wins inside the

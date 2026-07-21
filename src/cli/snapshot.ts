@@ -1,45 +1,172 @@
 /**
- * Compact a11y snapshot generation + per-session diffing.
+ * Compact a11y snapshot generation, stable refs, and per-session diffing.
  *
- * Why this exists: the MCP spec (§6 of the AI-productivity plan) says
- * "a11y snapshot is the default, not a screenshot." Screenshots cost
- * 800–1500 image tokens; a flat list of visible interactive elements
- * (role + accessible name + selector hint) is ~50–500 text tokens and
- * far more useful for a text model writing the next selector.
+ * Why this exists: a11y snapshot is the default agent view, not a
+ * screenshot. Screenshots cost 800–1500 image tokens; a flat list of
+ * visible interactive elements (role + accessible name + selector hint)
+ * is ~50–500 text tokens and far more useful for a text model writing
+ * the next selector.
  *
- * Snapshot algorithm runs entirely in the page via `page.evaluate`:
- * pick interactive elements + headings + landmarks, compute an
- * accessible name, skip the invisible, cap at `MAX_NODES`. The
- * output is a single string with one node per line. Diffing is just
- * a flat line-by-line compare.
+ * ## Refs bind to identity, not to position
+ *
+ * Refs (`e1`, `e2`, …) used to be re-stamped in document order on every
+ * snapshot. That made them actively dangerous: insert one node near the
+ * top of the page and every ref below it silently slid onto a *different*
+ * element, so an agent's next click landed on something it had never
+ * inspected.
+ *
+ * Now the page owns a registry (`window.__craftdriverRefs`) mapping each
+ * ref to the actual element node:
+ *
+ *   - a surviving node keeps its ref across snapshots;
+ *   - a new node always gets a fresh, monotonically increasing ref;
+ *   - refs are never recycled within a document.
+ *
+ * The registry lives on `window`, so a navigation or reload starts a new
+ * document with a new `documentId` and an empty registry — which is what
+ * makes every pre-navigation ref detectably stale instead of silently
+ * rebound.
+ *
+ * The element marker attribute (`data-craftdriver-ref`) is kept so
+ * `ref=eN` still resolves through the ordinary CSS auto-waiting path, but
+ * the map — not the attribute — is the source of truth. An attribute that
+ * the map does not corroborate (authored into the HTML, or duplicated by
+ * `cloneNode`) never resolves.
  */
 import type { Browser } from '../lib/browser.js';
+import { PAGE_SEMANTICS_JS } from './pageSemantics.js';
 
 const MAX_NODES = 80;
 const MAX_NAME = 80;
+/**
+ * Upper bound on refs issued per document. Reaching it resets the registry
+ * under a fresh `documentId`, which invalidates every outstanding ref
+ * rather than letting numbers wrap onto live elements.
+ */
+const MAX_REFS = 2000;
 
 export interface SnapshotShape {
   url: string;
   title: string;
   /** One line per visible interactive node, prefixed with `eN: `. */
   lines: string[];
+  /**
+   * Identity of the document the refs belong to. Changes on navigation and
+   * reload, including reload of the same URL, and on registry reset.
+   */
+  documentId: string;
+  /** Session-monotonic snapshot counter, stamped by the session tracker. */
+  revision: number;
+  /** Refs present in this snapshot. */
+  refs: string[];
+  /** Next ref number the page would issue; seeds the session high-water mark. */
+  nextRef: number;
+}
+
+/** Why a ref no longer identifies exactly one live element. */
+export type RefStatus =
+  | 'ok'
+  | 'no-snapshot'
+  | 'no-registry'
+  | 'document-changed'
+  | 'unknown-ref'
+  | 'detached'
+  | 'ambiguous';
+
+export interface RefProbe {
+  status: RefStatus;
+  documentId: string | null;
+  count?: number;
 }
 
 /**
  * Build a fresh snapshot of the active page. Errors swallowed so a
  * partial post-action payload never breaks the protocol.
  */
-export async function takeSnapshot(browser: Browser): Promise<SnapshotShape | null> {
+export async function takeSnapshot(
+  browser: Browser,
+  minRef = 0,
+): Promise<SnapshotShape | null> {
   try {
     const page = await browser.activePage();
     const [url, title] = await Promise.all([
       page.url().catch(() => ''),
       page.title().catch(() => ''),
     ]);
-    const lines = await page.evaluate(JS_SNAPSHOT);
-    return { url, title, lines: Array.isArray(lines) ? (lines as string[]) : [] };
+    const raw = await page.evaluate(jsSnapshot(minRef));
+    if (!raw || typeof raw !== 'object') return null;
+    const shaped = raw as {
+      lines?: unknown; documentId?: unknown; refs?: unknown; nextRef?: unknown;
+    };
+    return {
+      url,
+      title,
+      lines: Array.isArray(shaped.lines) ? (shaped.lines as string[]) : [],
+      documentId: typeof shaped.documentId === 'string' ? shaped.documentId : '',
+      revision: 0,
+      refs: Array.isArray(shaped.refs) ? (shaped.refs as string[]) : [],
+      nextRef: typeof shaped.nextRef === 'number' ? shaped.nextRef : minRef + 1,
+    };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Return the text of an open JavaScript dialog, or null if none is open.
+ *
+ * Cheap (~2ms) and, unlike almost every other command, safe to call while
+ * a modal dialog is blocking the page. That matters: a modal blocks script
+ * execution, so an unguarded post-action snapshot sits there until the
+ * WebDriver script timeout — a measured 60 seconds — before failing.
+ */
+export async function peekDialog(browser: Browser): Promise<string | null> {
+  try {
+    return await browser.getDialogMessage();
+  } catch {
+    // The driver reports "no such alert" by throwing; that is the common case.
+    return null;
+  }
+}
+
+/**
+ * Ask the page whether `ref` still identifies exactly one live element.
+ *
+ * `expectedDocumentId` is the document the ref was issued against; a
+ * mismatch means the page navigated and every outstanding ref is stale.
+ */
+export async function probeRef(
+  browser: Browser,
+  ref: string,
+  expectedDocumentId: string | null,
+): Promise<RefProbe> {
+  if (!/^e\d+$/.test(ref)) return { status: 'unknown-ref', documentId: null };
+  try {
+    const page = await browser.activePage();
+    const js = jsProbeRef(ref, expectedDocumentId);
+    const raw = await page.evaluate(js);
+    if (!raw || typeof raw !== 'object') return { status: 'no-registry', documentId: null };
+    const shaped = raw as { status?: unknown; documentId?: unknown; count?: unknown };
+    return {
+      status: (typeof shaped.status === 'string' ? shaped.status : 'no-registry') as RefStatus,
+      documentId: typeof shaped.documentId === 'string' ? shaped.documentId : null,
+      ...(typeof shaped.count === 'number' ? { count: shaped.count } : {}),
+    };
+  } catch {
+    return { status: 'no-registry', documentId: null };
+  }
+}
+
+/** Human-readable reason attached to a STALE_REF failure. */
+export function describeRefStatus(status: RefStatus): string {
+  switch (status) {
+    case 'no-snapshot': return 'no snapshot has been taken in this session yet';
+    case 'no-registry': return 'the page has no ref registry (it navigated or was replaced)';
+    case 'document-changed': return 'the page navigated or reloaded after the ref was issued';
+    case 'unknown-ref': return 'the ref was never issued for the current document';
+    case 'detached': return 'the element was removed from the document';
+    case 'ambiguous': return 'the ref no longer identifies exactly one element';
+    default: return 'the ref is no longer valid';
   }
 }
 
@@ -51,10 +178,8 @@ export async function takeSnapshot(browser: Browser): Promise<SnapshotShape | nu
  * Diff format intentionally mirrors `diff -u` lines so agents
  * already familiar with unified diffs read it without instruction.
  *
- * Ref numbers (`e1`, `e2`, …) re-allocate on every snapshot so they
- * can't be used to drive the diff directly — we strip them before
- * the set-difference and re-attach them when rendering, so the diff
- * stays semantically stable across renumberings.
+ * Refs are stripped before the set-difference and re-attached when
+ * rendering, so a diff reports semantic change rather than renumbering.
  */
 export function renderDelta(
   prev: SnapshotShape | null,
@@ -67,15 +192,40 @@ export function renderDelta(
     if (next.lines.length === 0) return `${header}\n(no interactive elements detected)`;
     return `${header}\n${next.lines.join('\n')}`;
   }
-  if (prev.url !== next.url) {
-    // Page changed — full snapshot.
+  // A new document means the old lines describe a page that no longer
+  // exists; a diff against them would be noise. Same-URL reloads count.
+  if (prev.documentId !== next.documentId || prev.url !== next.url) {
     return `${header}\n${next.lines.join('\n')}`;
   }
   const strip = (l: string): string => l.replace(/^e\d+:\s*/, '');
-  const prevBodies = new Set(prev.lines.map(strip));
-  const nextBodies = new Set(next.lines.map(strip));
-  const removed = prev.lines.filter((l) => !nextBodies.has(strip(l))).map((l) => `- ${l}`);
-  const added = next.lines.filter((l) => !prevBodies.has(strip(l))).map((l) => `+ ${l}`);
+  // Count occurrences rather than testing membership: a page with three
+  // identical "Remove" buttons must still report a change when one of them
+  // goes, and a set-difference silently calls that "no changes".
+  const tally = (lines: string[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const line of lines) {
+      const body = strip(line);
+      counts.set(body, (counts.get(body) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const prevCounts = tally(prev.lines);
+  const nextCounts = tally(next.lines);
+  const take = (lines: string[], budget: Map<string, number>): string[] => {
+    const out: string[] = [];
+    const seen = new Map<string, number>();
+    for (const line of lines) {
+      const body = strip(line);
+      const used = seen.get(body) ?? 0;
+      // Report the surplus copies only — the first N matching lines are
+      // accounted for by the other side.
+      if (used >= (budget.get(body) ?? 0)) out.push(line);
+      seen.set(body, used + 1);
+    }
+    return out;
+  };
+  const removed = take(prev.lines, nextCounts).map((l) => `- ${l}`);
+  const added = take(next.lines, prevCounts).map((l) => `+ ${l}`);
   if (removed.length === 0 && added.length === 0) {
     return `${header}\n(no a11y changes)`;
   }
@@ -97,19 +247,144 @@ export function renderFull(next: SnapshotShape | null): string {
 }
 
 /**
+ * Owns the one snapshot baseline and ref-issuing document for a session.
+ *
+ * Both explicit `snapshot` and the automatic post-action snapshot record
+ * through here, so an explicit snapshot the agent has already been shown
+ * is never re-reported as a change caused by the next action.
+ */
+export class SnapshotTracker {
+  private baseline: SnapshotShape | null = null;
+  private revision = 0;
+  private highWater = 0;
+
+  /** The document outstanding refs were issued against, if any. */
+  get documentId(): string | null {
+    return this.baseline ? this.baseline.documentId : null;
+  }
+
+  get current(): SnapshotShape | null {
+    return this.baseline;
+  }
+
+  /**
+   * Highest ref number issued anywhere in this session.
+   *
+   * Seeding each new document above this is what stops a reload from
+   * reissuing `e2` to a different element: a ref the agent still holds
+   * would otherwise silently resolve against the new page.
+   */
+  get minRef(): number {
+    return this.highWater;
+  }
+
+  /** Stamp a session-monotonic revision and make this the new baseline. */
+  record(snap: SnapshotShape | null): SnapshotShape | null {
+    if (!snap) return null;
+    const stamped: SnapshotShape = { ...snap, revision: ++this.revision };
+    this.baseline = stamped;
+    this.highWater = Math.max(this.highWater, stamped.nextRef - 1);
+    return stamped;
+  }
+
+  /** Diff against the baseline and advance it in one step. */
+  advance(snap: SnapshotShape | null): string {
+    if (!snap) return '';
+    const delta = renderDelta(this.baseline, { ...snap, revision: this.revision + 1 });
+    this.record(snap);
+    return delta;
+  }
+
+  reset(): void {
+    this.baseline = null;
+  }
+}
+
+/**
+ * Ref-validation probe. `ref` is `^e\d+$`-validated before it gets here and
+ * both values are JSON-encoded into the source, so neither can break out.
+ */
+function jsProbeRef(ref: string, expectedDocumentId: string | null): string {
+  return `
+const reg = window.__craftdriverRefs;
+const ref = ${JSON.stringify(ref)};
+const expected = ${JSON.stringify(expectedDocumentId)};
+if (!reg || !reg.map) return { status: 'no-registry', documentId: null };
+if (expected !== null && reg.doc !== expected) {
+  return { status: 'document-changed', documentId: reg.doc };
+}
+const el = reg.map.get(ref);
+if (!el) return { status: 'unknown-ref', documentId: reg.doc };
+if (!document.contains(el)) return { status: 'detached', documentId: reg.doc };
+const marked = document.querySelectorAll('[data-craftdriver-ref="' + ref + '"]');
+if (marked.length !== 1 || marked[0] !== el) {
+  return { status: 'ambiguous', documentId: reg.doc, count: marked.length };
+}
+return { status: 'ok', documentId: reg.doc };
+`;
+}
+
+/**
  * JS executed in-page. Keep it self-contained — no closure capture.
  *
  * Strategy:
- * 1. Walk a curated set of selectors (interactive + structural).
- * 2. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
- * 3. For each, compute role + accessible name + a stable selector hint
- *    (prefer #id, then [data-testid], then [name], then tag+text).
- * 4. Cap output at MAX_NODES so the snapshot stays bounded regardless
+ * 1. Get or create the per-document ref registry.
+ * 2. Walk a curated set of selectors (interactive + structural).
+ * 3. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
+ * 4. Reuse each node's existing ref, or issue the next unused one.
+ * 5. Cap output at MAX_NODES so the snapshot stays bounded regardless
  *    of page complexity.
  */
-const JS_SNAPSHOT = `
+function jsSnapshot(minRef: number): string {
+  const floor = Number.isSafeInteger(minRef) && minRef >= 0 ? minRef : 0;
+  return `
 const MAX_NODES = ${MAX_NODES};
 const MAX_NAME = ${MAX_NAME};
+const MAX_REFS = ${MAX_REFS};
+const MIN_REF = ${floor};
+function newDocId(epoch) {
+  return 'd' + epoch + '-' + Math.random().toString(36).slice(2, 10);
+}
+function registry() {
+  let reg = window.__craftdriverRefs;
+  if (!reg || !reg.map) {
+    reg = { doc: newDocId(1), epoch: 1, next: 1, issued: 0, map: new Map() };
+    window.__craftdriverRefs = reg;
+  }
+  // Never reissue a number the session has already handed out. A fresh
+  // document starts its counter above the session high-water mark, so a
+  // ref captured before a navigation can never match a new element.
+  if (reg.next <= MIN_REF) reg.next = MIN_REF + 1;
+  // Bounded: at the cap, drop every marker and re-key the document so all
+  // outstanding refs fail as stale instead of wrapping onto live elements.
+  //
+  // The cap counts refs issued *by this registry*, not the counter value.
+  // Counting the counter would compare against the session-wide high-water
+  // mark, which passes the cap after enough navigations and would then
+  // re-key on every single snapshot — invalidating refs the instant they
+  // were handed out.
+  if (reg.issued >= MAX_REFS) {
+    const marked = document.querySelectorAll('[data-craftdriver-ref]');
+    for (let i = 0; i < marked.length; i++) marked[i].removeAttribute('data-craftdriver-ref');
+    reg.epoch += 1;
+    reg.doc = newDocId(reg.epoch);
+    reg.issued = 0;
+    reg.map = new Map();
+  }
+  return reg;
+}
+function refFor(reg, el) {
+  const existing = el.getAttribute('data-craftdriver-ref');
+  // Trust the attribute only when the registry agrees it names this node;
+  // that rejects authored markup and cloneNode duplicates.
+  if (existing && reg.map.get(existing) === el) return existing;
+  const ref = 'e' + reg.next;
+  reg.next += 1;
+  reg.issued += 1;
+  reg.map.set(ref, el);
+  el.setAttribute('data-craftdriver-ref', ref);
+  return ref;
+}
 function visible(el) {
   if (!el || !el.getClientRects) return false;
   if (el.hidden) return false;
@@ -121,81 +396,7 @@ function visible(el) {
   if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') return false;
   return true;
 }
-function firstRoleToken(el) {
-  const role = (el.getAttribute('role') || '').trim();
-  return role ? role.split(/\\s+/)[0] : null;
-}
-function hasSectioningAncestor(el) {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const t = p.tagName.toLowerCase();
-    if (t === 'article' || t === 'aside' || t === 'main' || t === 'nav' || t === 'section') {
-      return true;
-    }
-    const role = firstRoleToken(p);
-    if (
-      role === 'article' ||
-      role === 'complementary' ||
-      role === 'main' ||
-      role === 'navigation' ||
-      role === 'region'
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-function impliedRole(el) {
-  const t = el.tagName.toLowerCase();
-  const explicit = firstRoleToken(el);
-  if (explicit) return explicit;
-  if (t === 'a' && el.hasAttribute('href')) return 'link';
-  if (t === 'button') return 'button';
-  if (t === 'input') {
-    const it = (el.getAttribute('type') || 'text').toLowerCase();
-    if (it === 'submit' || it === 'button' || it === 'reset') return 'button';
-    if (it === 'checkbox') return 'checkbox';
-    if (it === 'radio') return 'radio';
-    return 'textbox';
-  }
-  if (t === 'textarea') return 'textbox';
-  if (t === 'select') {
-    const size = Number(el.getAttribute('size') || '0');
-    return el.multiple || size > 1 ? 'listbox' : 'combobox';
-  }
-  if (/^h[1-6]$/.test(t)) return 'heading';
-  if (t === 'nav') return 'navigation';
-  if (t === 'main') return 'main';
-  if (t === 'header') return hasSectioningAncestor(el) ? null : 'banner';
-  if (t === 'footer') return hasSectioningAncestor(el) ? null : 'contentinfo';
-  if (t === 'form') return 'form';
-  if (t === 'img') return 'img';
-  return t;
-}
-function accName(el) {
-  const aria = el.getAttribute('aria-label');
-  if (aria) return aria.trim();
-  const labelledby = el.getAttribute('aria-labelledby');
-  if (labelledby) {
-    const ref = document.getElementById(labelledby);
-    if (ref) return (ref.textContent || '').trim();
-  }
-  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
-    if (el.id) {
-      const lbl = document.querySelector('label[for=' + JSON.stringify(el.id) + ']');
-      if (lbl) return (lbl.textContent || '').trim();
-    }
-    const parentLabel = el.closest('label');
-    if (parentLabel) return (parentLabel.textContent || '').trim();
-    const placeholder = el.getAttribute('placeholder');
-    if (placeholder) return placeholder.trim();
-  }
-  if (el.tagName === 'IMG') {
-    const alt = el.getAttribute('alt');
-    if (alt) return alt.trim();
-  }
-  const text = (el.textContent || '').trim().replace(/\\s+/g, ' ');
-  return text;
-}
+${PAGE_SEMANTICS_JS}
 function locatorHint(el) {
   if (el.id) return '#' + el.id;
   const testid = el.getAttribute('data-testid') || el.getAttribute('data-test-id');
@@ -204,22 +405,25 @@ function locatorHint(el) {
   if (name) return el.tagName.toLowerCase() + '[name=' + JSON.stringify(name) + ']';
   return null;
 }
+const reg = registry();
 const sel = 'a,button,input,select,textarea,h1,h2,h3,h4,h5,h6,[role],nav,main,header,footer,form,img,label';
-// Wipe stale refs from a previous snapshot so numbering is deterministic.
-const stale = document.querySelectorAll('[data-craftdriver-ref]');
-for (let i = 0; i < stale.length; i++) stale[i].removeAttribute('data-craftdriver-ref');
 const out = [];
+const refs = [];
 const nodes = document.querySelectorAll(sel);
 for (let i = 0; i < nodes.length && out.length < MAX_NODES; i++) {
   const el = nodes[i];
   if (!visible(el)) continue;
-  const role = impliedRole(el);
-  if (!role) continue;
+  // A <header>/<footer> inside sectioning content is not a landmark, and
+  // listing it as a bare tag would be pure noise. Everything else keeps a
+  // line even without an ARIA role, so controls stay addressable by ref.
+  const tag = el.tagName.toLowerCase();
+  if (!ariaRole(el) && (tag === 'header' || tag === 'footer')) continue;
+  const role = displayRole(el);
   let name = accName(el);
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME - 1) + '…';
   const hint = locatorHint(el);
-  const ref = 'e' + (out.length + 1);
-  el.setAttribute('data-craftdriver-ref', ref);
+  const ref = refFor(reg, el);
+  refs.push(ref);
   let line = ref + ': ' + role;
   if (name) line += ' "' + name + '"';
   if (hint) line += ' ' + hint;
@@ -228,5 +432,6 @@ for (let i = 0; i < nodes.length && out.length < MAX_NODES; i++) {
   if (el.checked) line += ' (checked)';
   out.push(line);
 }
-return out;
+return { lines: out, refs: refs, documentId: reg.doc, nextRef: reg.next };
 `;
+}

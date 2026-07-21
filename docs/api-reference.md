@@ -183,5 +183,6 @@ Exports that are public but not yet assigned to a feature group.
 | `PageMatcher` | type | Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}. A string matches as a substring; a `RegExp` is tested. When both fields are given, both must match. | [browser-api](browser-api.md) |
 | `RemoteAuth` | type | — | — |
 | `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
+| `SessionStateCookie` | type | — | — |
 
-Total exports: **93**.
+Total exports: **94**.

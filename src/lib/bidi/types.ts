@@ -329,10 +329,16 @@ export interface SubscriptionRequest {
   contexts?: BrowsingContext[];
 }
 
-// Serialized session state for Playwright-style persistence
+// CraftDriver-native serialized session state
+export type SessionStateCookie = Omit<CookieInput, 'value'> & {
+  /** Native state files always store a decoded JSON string value. */
+  value: string;
+  /** Capture-only byte size reported by the browser; ignored during restore. */
+  size?: number;
+};
+
 export interface SessionState {
-  cookies?: Cookie[];
+  cookies?: SessionStateCookie[];
   localStorage?: Record<string, Record<string, string>>; // origin -> key/value
   sessionStorage?: Record<string, Record<string, string>>;
-  origins?: string[];
 }

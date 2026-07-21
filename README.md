@@ -27,7 +27,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
 - ☁️ **Remote WebDriver** - use the Browser API with a self-hosted Selenium Grid or a cloud provider like [BrowserStack](https://www.browserstack.com/).
 - ⚛️ **Electron apps** - drive packaged Electron desktop apps and mock native OS dialogs (open/save, message boxes).
-- 🤖 **Agent-friendly** - CLI, MCP, and assistant rules when coding agents need the browser.
+- 🤖 **Agent-friendly** - CLI, a project-local skill, and optional MCP when coding agents need the browser.
 
 ## Choose Your Path
 
@@ -60,12 +60,16 @@ No separate chromedriver or geckodriver setup for normal use. CraftDriver resolv
 
 ## AI Agent Bonus
 
-If your coding agent can use a shell or MCP, CraftDriver can give it a real browser too. Same selectors, same behavior, same error codes as the library API.
+If your coding agent can use a shell, CraftDriver can give it a real browser
+for exploring the app before it writes tests. Install the project-local skill;
+it never changes repository instruction files.
 
 ```bash
-npx craftdriver init agents
-claude mcp add craftdriver -- npx -y craftdriver mcp
+npx craftdriver init codex
 ```
+
+MCP is optional. `npx craftdriver init codex --mcp` prints a project-pinned
+manual configuration snippet without reading or changing Codex config.
 
 See the [AI agent guide](https://dtopuzov.github.io/craftdriver/agents) when you need the full setup.
 
@@ -95,6 +99,11 @@ await Browser.launch({
 // Built-in accessibility checks via axe-core
 await browser.a11y.check();
 ```
+
+Launch-time state restores cookies plus multi-origin localStorage on supported
+WebDriver BiDi sessions (Chrome/Chromium and Firefox). WebDriver Classic has an
+explicit single-active-origin fallback after navigation; see
+[Session management](https://dtopuzov.github.io/craftdriver/session-management#browser-and-transport-support).
 
 ## Feature Guide
 

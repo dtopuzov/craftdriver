@@ -1,3 +1,19 @@
+## Unreleased
+
+### Features
+
+* **agent CLI:** add a persistent browser exploration workflow with semantic snapshots, safe temporary refs, live-validated durable locators, manual QA actions, console/network evidence, mocks, traces, and reusable login state
+* **auth state:** restore cookies and multi-origin localStorage before the first navigation on BiDi launch and contexts, with path/object inputs and one-time hydration that preserves later application writes
+* **sessions:** isolate browsers, cookies, pages, refs, and artifacts in named sessions under a project-scoped daemon
+* **MCP:** add a validated stdio tool server with automatic post-action snapshot diffs, bounded responses, and quota-controlled file artifacts for token-efficient context
+* **skill:** add a safe project-local CraftDriver skill installer that teaches coding agents to explore first and turn runtime evidence into maintainable tests
+
+### Bug Fixes
+
+* **agent reliability:** fail closed on malformed CLI input, recover failed browser launches, reset browser-owned state on quit, and bound large results, errors, screenshots, and artifact storage
+* **auth state:** validate every restore before mutation, quarantine internal hydration pages from public APIs and telemetry, serialize per-context overlays, reject partial Classic launch restores, and make direct state saves atomic and owner-restricted
+* **pages:** preserve the active page when closing background tabs and cover page activation/closing in BiDi-enabled non-default contexts
+
 # [1.7.0](https://github.com/dtopuzov/craftdriver/compare/v1.6.0...v1.7.0) (2026-07-18)
 
 
@@ -37,17 +53,6 @@
 ### Features
 
 * make traces Playwright and Vibium compatible ([c6c0746](https://github.com/dtopuzov/craftdriver/commit/c6c0746dcecc671d1d6d6cd26badf6a8432a7f37))
-
-## Unreleased
-
-### Bug Fixes
-
-* **wait:** evaluate wait conditions once even when the timeout is zero
-
-### Features
-
-* **tracing:** export Vibium Player compatible zips from the library and MCP server
-* **visual:** add `browser.expectScreenshot()` — a retrying screenshot assertion against a committed PNG baseline, with per-channel RGB tolerance, max different-pixel count/percentage, optional anti-alias ignoring, and a typed `VisualMismatchError` carrying the final actual + diff PNG buffers (also exposes the low-level `compareScreenshots()` buffer comparator). Baselines are managed for you: a missing baseline is captured until it settles (or the timeout elapses), written, and passes (`result.baseline === 'created'`); an intentional change is accepted by re-running with `CRAFTDRIVER_UPDATE_VISUAL_BASELINES=true`, which overwrites a differing baseline instead of failing (`'updated'`). Writes are atomic and a present-but-corrupt baseline is never overwritten; behaviour is identical locally and in CI, with every create/update reported to stderr. New runtime dependency: pinned `pngjs@7.0.0` (pure JS, no native addon/WASM/transitive runtime deps)
 
 # [1.2.0](https://github.com/dtopuzov/craftdriver/compare/v1.1.1...v1.2.0) (2026-07-10)
 

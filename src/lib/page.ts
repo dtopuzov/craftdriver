@@ -72,6 +72,57 @@ export class Page {
     return this._owner;
   }
 
+  /**
+   * Make this page the browser's active target and leave it there.
+   *
+   * Most page methods switch to this window and switch back, so they never
+   * disturb `browser.activePage()`. This is the deliberate exception: it is
+   * how a caller driving several tabs says "everything after this goes
+   * here", including `browser.click(...)` and other browser-level helpers.
+   *
+   * @example
+   * const [, second] = await browser.pages();
+   * await second.activate();
+   * await browser.click('#confirm');   // acts on the second tab
+   */
+  async activate(): Promise<void> {
+    await this.driver.switchToWindow(this.contextId);
+  }
+
+  /**
+   * Close this page.
+   *
+   * W3C leaves no window focused after a close, so this switches to a
+   * remaining page when one exists — otherwise every following command
+   * would fail with "no such window" rather than a useful error.
+   */
+  async close(): Promise<void> {
+    // Remember where the caller was. Closing requires switching to the target,
+    // so without this a close would silently move focus: closing a background
+    // tab left the session on whichever window happened to come back first,
+    // not the one the caller was working in.
+    let previous: string | undefined;
+    try {
+      previous = await this.driver.getCurrentWindowHandle();
+    } catch {
+      /* nothing focused; the fallback below covers it */
+    }
+
+    await this.driver.switchToWindow(this.contextId);
+    const remaining = await this.driver.closeWindow();
+    if (remaining.length === 0) return;
+
+    // Prefer restoring the caller's window. It is absent from `remaining`
+    // exactly when the caller closed the page it was already on, in which case
+    // any survivor will do — W3C leaves nothing focused after a close, so
+    // every later command would otherwise fail with "no such window".
+    const target =
+      previous !== undefined && previous !== this.contextId && remaining.includes(previous)
+        ? previous
+        : remaining[0];
+    await this.driver.switchToWindow(target).catch(() => { /* raced with another close */ });
+  }
+
   /** Switch the Classic driver to this window for element operations. */
   private async _activate(): Promise<string | undefined> {
     let prev: string | undefined;

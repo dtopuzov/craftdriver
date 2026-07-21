@@ -29,7 +29,7 @@ const browser = await Browser.launch({
 |--------|------|---------|-------------|
 | `browserName` | `'chrome' \| 'chromium' \| 'firefox' \| 'safari'`; any non-empty `string` remotely | `'chrome'` | Local browser to launch or provider-facing remote browser name |
 | `enableBiDi` | `boolean` | browsers: `true`; Electron: `false` | Use WebDriver BiDi. Electron requires an explicit opt-in because negotiation resets its initial renderer to `about:blank`. |
-| `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
+| `storageState` | `string \| SessionState` | — | Native session-state path/object. Full cookies + multi-origin localStorage on supported BiDi; non-empty state is rejected at Classic launch. |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
 | `downloadsDir` | `string` | temp dir | Directory where downloaded files are saved |
 | `browserPath` | `string` | — | Custom browser binary to launch (Chrome/Chromium/Firefox) — see [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration) |
@@ -334,9 +334,20 @@ await popup.waitForLoadState('load');
 const heading = await popup.find('h1').text();
 console.log(heading);
 
-await popup.evaluate(() => {
-  window.close();
-});
+// Close it. Prefer this over `popup.evaluate(() => window.close())`, which
+// leaves no window focused — every later command then fails with
+// "no such window". `close()` switches to a surviving page for you.
+await popup.close();
+```
+
+Use `page.activate()` to make a page the target of browser-level helpers.
+Most page methods switch to their window and switch back, so they never
+disturb `browser.activePage()`; `activate()` is the deliberate exception:
+
+```ts
+const [, second] = await browser.pages();
+await second.activate();
+await browser.click('#confirm');   // acts on the second tab
 ```
 
 > **Note.** `browser.openPage()` requires BiDi (the default). In Classic
@@ -378,7 +389,16 @@ await browser.saveState('./session.json');
 
 // Load session from file
 await browser.loadState('./session.json');
+
+// Or use an in-memory SessionState object
+await browser.loadState(await browser.storage.getState());
 ```
+
+On Chrome/Chromium and Firefox BiDi, launch and `browser.loadState()` restore
+cookies plus multi-origin localStorage before the first real navigation. In
+Classic mode, launch rejects non-empty state; navigate to the sole origin, call
+`browser.loadState()`, then reload. See
+[Session Management](./session-management.md#browser-and-transport-support).
 
 ## Evaluate
 

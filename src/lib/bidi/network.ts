@@ -52,6 +52,13 @@ export interface InterceptRule {
   patterns: UrlPattern[];
   phases: InterceptPhase[];
   handler?: RequestHandler;
+  /**
+   * Internal strict mode: on a handler or `provideResponse` failure, fail the
+   * request rather than continuing it to the real network. Used by trusted
+   * internal intercepts (e.g. storage hydration) that must own every request
+   * they match — a fall-through would leak the request to the origin server.
+   */
+  strict?: boolean;
 }
 
 export class NetworkInterceptor {
@@ -63,6 +70,8 @@ export class NetworkInterceptor {
   private context?: BrowsingContext;
   private requestListeners: Array<(req: InterceptedRequest) => void> = [];
   private responseListeners: Array<(res: InterceptedResponse) => void> = [];
+  private isInternalContext: (context: BrowsingContext | null | undefined) => boolean = () => false;
+  private internalRequestIds = new Set<string>();
   /** Set of request IDs currently in-flight (sent but not yet completed/errored). */
   private inFlightRequests = new Set<string>();
   /** Callbacks to notify when inFlightRequests changes — used by waitForNetworkIdle. */
@@ -71,6 +80,13 @@ export class NetworkInterceptor {
   constructor(connection: BiDiConnection, context?: BrowsingContext) {
     this.connection = connection;
     this.context = context;
+  }
+
+  /** @internal Exclude library-owned contexts from public network observation. */
+  setInternalContextPredicate(
+    predicate: (context: BrowsingContext | null | undefined) => boolean
+  ): void {
+    this.isInternalContext = predicate;
   }
 
   /**
@@ -105,11 +121,12 @@ export class NetworkInterceptor {
     // Handle intercepted requests + track in-flight
     this.connection.on('network.beforeRequestSent', async (params) => {
       const event = params as unknown as NetworkBeforeRequestSentEvent;
-      // Track in-flight (before intercept handling, so count is always accurate)
-      this.inFlightRequests.add(event.request.request);
+      const internal = this.isInternalContext(event.context);
+      if (internal) this.internalRequestIds.add(event.request.request);
+      else this.inFlightRequests.add(event.request.request);
       await this.handleBeforeRequestSent(event);
       // Notify passive request listeners (waitForRequest)
-      if (this.requestListeners.length > 0) {
+      if (!internal && this.requestListeners.length > 0) {
         const req: InterceptedRequest = {
           id: event.request.request,
           url: event.request.url,
@@ -125,6 +142,7 @@ export class NetworkInterceptor {
     // Track completed responses + notify waitForResponse listeners
     this.connection.on('network.responseCompleted', (params) => {
       const event = params as unknown as NetworkResponseEvent;
+      if (this.internalRequestIds.delete(event.request.request)) return;
       this.inFlightRequests.delete(event.request.request);
       this._notifyIdleListeners();
       if (this.responseListeners.length > 0) {
@@ -150,6 +168,7 @@ export class NetworkInterceptor {
     this.connection.on('network.fetchError', (params) => {
       const reqId = (params as Record<string, Record<string, string>>)?.request?.request;
       if (reqId) {
+        if (this.internalRequestIds.delete(reqId)) return;
         this.inFlightRequests.delete(reqId);
         this._notifyIdleListeners();
       }
@@ -165,7 +184,8 @@ export class NetworkInterceptor {
     patterns: string | string[] | UrlPattern | UrlPattern[],
     handler: RequestHandler,
     phases: InterceptPhase[] = ['beforeRequestSent'],
-    contexts?: BrowsingContext[]
+    contexts?: BrowsingContext[],
+    opts?: { strict?: boolean }
   ): Promise<string> {
     await this.initialize();
 
@@ -185,6 +205,7 @@ export class NetworkInterceptor {
       patterns: urlPatterns,
       phases,
       handler,
+      strict: opts?.strict,
     });
 
     this.handlers.set(interceptId, handler);
@@ -549,9 +570,16 @@ export class NetworkInterceptor {
     if (!event.isBlocked || !event.intercepts?.length) return;
 
     const requestId = event.request.request;
+    const internal = this.isInternalContext(event.context);
+    // Internal contexts are owned by strict library intercepts. Never invoke a
+    // user's browser-global mock/route for those requests, even when its URL
+    // pattern also matches the reserved hydration URL.
+    const interceptIds = internal
+      ? event.intercepts.filter((id) => this.intercepts.get(id)?.strict === true)
+      : event.intercepts;
 
     // Find matching handler
-    for (const interceptId of event.intercepts) {
+    for (const interceptId of interceptIds) {
       const handler = this.handlers.get(interceptId);
       if (!handler) continue;
 
@@ -564,26 +592,40 @@ export class NetworkInterceptor {
         context: event.context,
       };
 
+      const strict = this.intercepts.get(interceptId)?.strict === true;
       try {
         const result = await handler(interceptedRequest);
 
         if (result) {
           // Provide mock response
           await this.provideResponse(requestId, result);
+        } else if (strict) {
+          // A strict internal intercept must own every request it matches — a
+          // handler returning nothing is a bug, not a pass-through.
+          await this.failRequest(requestId);
         } else {
           // Continue with original request
           await this.continueRequest(requestId);
         }
         return;
       } catch (err) {
+        if (strict) {
+          // Never fall through to the real network for a strict internal
+          // intercept: fail the request so the caller sees the error rather
+          // than a surprise real response reaching the origin server.
+          await this.failRequest(requestId).catch(() => { });
+          return;
+        }
         console.error('Error in network intercept handler:', err);
         await this.continueRequest(requestId);
         return;
       }
     }
 
-    // No handler found, continue request
-    await this.continueRequest(requestId);
+    // A library-owned request without its strict owner must never escape to the
+    // real origin. Public requests retain the normal pass-through behavior.
+    if (internal) await this.failRequest(requestId);
+    else await this.continueRequest(requestId);
   }
 
   private normalizePatterns(patterns: string | string[] | UrlPattern | UrlPattern[]): UrlPattern[] {

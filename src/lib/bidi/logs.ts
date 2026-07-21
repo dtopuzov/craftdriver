@@ -45,6 +45,7 @@ export class LogMonitor {
   private subscribed = false;
   private handlersWired = false;
   private context?: BrowsingContext;
+  private isInternalContext: (context: BrowsingContext | undefined) => boolean = () => false;
 
   private allHandlers = new Set<LogHandler>();
   private levelHandlers = new Map<LogLevel, Set<LogHandler>>();
@@ -57,6 +58,13 @@ export class LogMonitor {
   constructor(connection: BiDiConnection, context?: BrowsingContext) {
     this.connection = connection;
     this.context = context;
+  }
+
+  /** @internal Exclude library-owned contexts from public log observation. */
+  setInternalContextPredicate(
+    predicate: (context: BrowsingContext | undefined) => boolean
+  ): void {
+    this.isInternalContext = predicate;
   }
 
   /**
@@ -221,6 +229,7 @@ export class LogMonitor {
   }
 
   private handleLogEntry(entry: LogEntry): void {
+    if (this.isInternalContext(entry.source.context)) return;
     const message = this.convertLogEntry(entry);
 
     // Store log

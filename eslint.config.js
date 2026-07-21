@@ -18,10 +18,12 @@ export default [
       'tests/**',
       'vitest.config.ts',
       'vitest.browserstack.config.ts',
+      'vitest.cli.config.ts',
       'vitest.electron.config.ts',
       'vitest.grid.config.ts',
       'vitest.perf.config.ts',
       'vitest.recipes.config.ts',
+      'vitest.release.config.ts',
     ],
   },
   {

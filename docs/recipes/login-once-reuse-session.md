@@ -1,11 +1,11 @@
 # Log In Once And Reuse The Session
 
 Signing in through the UI in every test is slow, and for most tests logging in
-is not the thing being proven. Do it once, save the resulting cookies and
-localStorage, then launch later tests already authenticated with `storageState`.
-Both halves below run against the live
+is not the thing being proven. Do it once, save the resulting session, then
+launch later tests already authenticated with `storageState`. Both halves below
+run against the live
 [login example](https://dtopuzov.github.io/craftdriver/examples/login.html),
-which persists its session in a cookie.
+which persists auth in a cookie and user preferences in localStorage.
 
 ## Generate Auth State
 
@@ -37,6 +37,34 @@ const browser = await Browser.launch({ storageState: '.auth/alice.json' });
 await browser.navigateTo('https://dtopuzov.github.io/craftdriver/examples/login.html');
 await browser.expect('#welcome').toContainText('Welcome back, alice!');
 ```
+
+## What `storageState` Restores
+
+On supported WebDriver BiDi sessions, launch restores cookies **and every
+captured localStorage origin** before the first real navigation. CraftDriver
+uses a private, locally fulfilled same-origin document because BiDi has no
+out-of-band localStorage command. The state is written once, so application
+changes survive reload.
+
+`storageState` does not restore IndexedDB, Cache Storage, service workers, or
+reusable sessionStorage. Context and launch APIs reject non-empty
+sessionStorage rather than silently dropping it.
+
+WebDriver Classic cannot restore arbitrary-origin localStorage at launch, so a
+non-empty launch `storageState` is rejected. Its strict single-origin fallback
+is explicit:
+
+```ts
+const browser = await Browser.launch({ enableBiDi: false });
+
+await browser.navigateTo('https://example.test/app');  // reach the origin
+await browser.loadState('.auth/alice.json');           // now storage can land
+await browser.reload();                                // let the app read it
+```
+
+The fallback validates the complete snapshot before applying anything. A
+second origin or a cookie that cannot be set from the active page fails loudly.
+Chrome/Chromium and Firefox BiDi use the simpler launch form above.
 
 ## Notes
 

@@ -95,9 +95,9 @@ export class By {
    *
    * The accessible-name approximation (`opts.name`) checks common sources:
    * `aria-label`, single-id `aria-labelledby`, visible text, associated labels
-   * for form controls, `value` (native buttons/inputs), `alt` (images), and
-   * `title`. `name` defaults to an exact match; pass `{ exact: false }` for a
-   * substring match.
+   * for form controls, `value` (native buttons/inputs), `alt` (images),
+   * `placeholder` (form controls), and `title`. `name` defaults to an exact
+   * match; pass `{ exact: false }` for a substring match.
    *
    * Coverage is a documented approximation of the common roles, not the full
    * ARIA algorithm; unmapped roles still match an explicit `role=` attribute.
@@ -133,6 +133,7 @@ export class By {
         'normalize-space(.)',
         'normalize-space(@value)',
         'normalize-space(@alt)',
+        'normalize-space(@placeholder)',
         'normalize-space(@title)',
       ];
       const stringPred = candidates
@@ -242,6 +243,8 @@ const IMPLICIT_ROLE_XPATH: Record<string, string[]> = {
   checkbox: ["self::input[@type='checkbox']"],
   radio: ["self::input[@type='radio']"],
   searchbox: ["self::input[@type='search']"],
+  spinbutton: ["self::input[@type='number']"],
+  slider: ["self::input[@type='range']"],
   textbox: [
     'self::textarea',
     "self::input[not(@type) or @type='text' or @type='email' or @type='tel' or @type='url']",
@@ -256,6 +259,7 @@ const IMPLICIT_ROLE_XPATH: Record<string, string[]> = {
   columnheader: ['self::th'],
   navigation: ['self::nav'],
   main: ['self::main'],
+  form: ['self::form'],
   // header/footer are only banner/contentinfo when not nested in sectioning
   // content (article/aside/main/nav/section, or an element with the
   // equivalent explicit role) — per the HTML-AAM mapping.

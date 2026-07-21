@@ -168,7 +168,7 @@ describe('BrowserContext cookies & storageState', () => {
     );
   });
 
-  it('loadStorageState() replaces (does not stack) prior preload scripts', async () => {
+  it('loadStorageState() called twice — the later snapshot wins', async () => {
     await withContext(async (ctx) => {
       const origin = new URL(baseUrl).origin;
       await ctx.loadStorageState({
@@ -181,7 +181,7 @@ describe('BrowserContext cookies & storageState', () => {
       const page = await ctx.newPage({ url: `${baseUrl}/login.html` });
       await page.waitForLoadState('load');
       const mode = await page.evaluate<string | null>(`return localStorage.getItem('mode');`);
-      // Second call wins — first preload was removed.
+      // Second call wins — the later hydration overwrites the earlier value.
       expect(mode).toBe('second');
     });
   });

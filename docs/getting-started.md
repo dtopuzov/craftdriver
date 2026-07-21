@@ -86,9 +86,14 @@ Pick a browser with `browserName`:
 ```typescript
 const browser = await Browser.launch({
   browserName: 'firefox', // 'chrome' | 'chromium' | 'firefox' | 'safari'
-  storageState: './session.json', // optional: pre-load saved session state
+  // BiDi: restore cookies + multi-origin localStorage before first navigation.
+  storageState: './session.json', // path or in-memory SessionState
 });
 ```
+
+WebDriver Classic cannot restore non-empty state at launch. For its strict
+single-origin fallback, navigate first and call `browser.loadState()`; see
+[Session Management](./session-management.md#webdriver-classic).
 
 To switch browsers from an environment variable in your own tests, read it
 yourself and pass it to `browserName` — craftdriver doesn't read any browser

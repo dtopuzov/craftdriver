@@ -105,7 +105,10 @@ describe('CLI smoke', () => {
     const all = snap.lines.join('\n');
     // Verify the renderer emitted refs + roles for the known controls.
     expect(all).toMatch(/e\d+: textbox .*Username/);
-    expect(all).toMatch(/e\d+: textbox .*Password/);
+    // A password input has no corresponding ARIA role, so it is listed under
+    // its tag rather than being claimed as a textbox it cannot be resolved
+    // as. It still carries a ref and its accessible name.
+    expect(all).toMatch(/e\d+: input .*Password/);
     expect(all).toMatch(/e\d+: button .*Sign in/i);
   });
 
