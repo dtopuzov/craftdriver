@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import type { BiDiConnection } from './connection.js';
 import type { Driver } from '../driver.js';
 import { CraftdriverError, ErrorCode } from '../errors.js';
+import { writeSecureFile } from '../secureFile.js';
 import type { ClassicCookie, ClassicCookieInput } from '../types.js';
 import type {
   BrowsingContext,
@@ -47,7 +48,7 @@ export class SessionStateManager {
    */
   async saveState(path: string, options: StorageStateOptions = {}): Promise<SessionState> {
     const state = await this.getState(options);
-    await fs.writeFile(path, JSON.stringify(state, null, 2), 'utf-8');
+    await writeSecureFile(path, JSON.stringify(state, null, 2));
     return state;
   }
 

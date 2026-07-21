@@ -19,6 +19,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { writeSecureFile } from './secureFile.js';
 import type { Driver } from './driver.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { Page } from './page.js';
@@ -442,7 +443,7 @@ export class BrowserContext {
     opts?: ContextStorageStateOptions
   ): Promise<SessionState> {
     const state = await this.storageState(opts);
-    await fs.writeFile(path, JSON.stringify(state, null, 2), 'utf-8');
+    await writeSecureFile(path, JSON.stringify(state, null, 2));
     return state;
   }
 
