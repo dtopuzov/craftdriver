@@ -140,6 +140,20 @@ export class BrowserContext {
    */
   private _notifiedPageIds = new Set<string>();
   /**
+   * Ids of internal (hydration) top-level contexts that must stay invisible to
+   * page tracking — never surfaced as a `'page'`, added to `_pageIds`, or given
+   * user routes/headers. See {@link _hydrateLocalStorage}.
+   */
+  private _internalPageIds = new Set<string>();
+  /**
+   * `> 0` while an internal `browsingContext.create` is awaiting its id.
+   * Top-level `contextCreated` events that arrive in that window are quarantined
+   * (the event can beat the create response), then the internal one is dropped
+   * and the rest replayed in order once the id is known.
+   */
+  private _internalCreateInFlight = 0;
+  private _quarantinedCreated: Array<Record<string, unknown>> = [];
+  /**
    * The in-flight promise from the most recent call to {@link _ensurePageTracking}.
    * Doubles as the "is tracking armed?" flag — truthy after the first call,
    * cleared in {@link close}. Used to await readiness when `on('page')` is
@@ -982,11 +996,21 @@ export class BrowserContext {
       );
     }
 
-    const created = await this.conn.send<{ context: string }>('browsingContext.create', {
-      type: 'tab',
-      userContext: this._id,
-    });
-    const privId = created.context;
+    // Reserve the internal-context slot before the create so page tracking hides
+    // it even if its contextCreated event beats the create response.
+    this._internalCreateInFlight++;
+    let privId!: string;
+    try {
+      const created = await this.conn.send<{ context: string }>('browsingContext.create', {
+        type: 'tab',
+        userContext: this._id,
+      });
+      privId = created.context;
+      this._internalPageIds.add(privId);
+    } finally {
+      this._internalCreateInFlight--;
+      this._drainQuarantine();
+    }
     const priv = new Page(this.driver, privId, this.getDefaultTimeout, this.conn, this);
 
     let interceptId: string | undefined;
@@ -1048,6 +1072,7 @@ export class BrowserContext {
     } finally {
       if (interceptId) await net.removeIntercept(interceptId).catch(() => {});
       await this.conn.send('browsingContext.close', { context: privId }).catch(() => {});
+      this._internalPageIds.delete(privId);
     }
   }
 
@@ -1056,6 +1081,40 @@ export class BrowserContext {
    * seed `_pageIds` with currently-open pages in this context. Powers
    * both the `'page'` event and route membership filtering.
    */
+  /** Apply the normal new-page handling (tracking, headers, routes, the `'page'`
+   *  event) for a real top-level context. */
+  private _handleContextCreated(id: string): void {
+    this._pageIds.add(id);
+    // Headers must be applied before the first request from this page.
+    this._applyExtraHeadersTo([id]).catch(() => { });
+    // Register every existing route on the new page.
+    for (const sid of this._routes.keys()) {
+      this._registerRouteOnPage(sid, id).catch(() => { });
+    }
+    // Notify page listeners exactly once per page.
+    if (this._notifiedPageIds.has(id)) return;
+    this._notifiedPageIds.add(id);
+    if (this._pageListeners.size > 0) {
+      const page = new Page(this.driver, id, this.getDefaultTimeout, this.conn, this);
+      for (const fn of this._pageListeners) {
+        try { fn(page); } catch { /* listener errors must not break events */ }
+      }
+    }
+  }
+
+  /** Replay contextCreated events buffered during an internal create, once none
+   *  is in flight — dropping any that turned out to be internal. */
+  private _drainQuarantine(): void {
+    if (this._internalCreateInFlight > 0) return;
+    const buffered = this._quarantinedCreated;
+    this._quarantinedCreated = [];
+    for (const params of buffered) {
+      const id = params.context as string;
+      if (this._internalPageIds.has(id)) continue; // internal → stay hidden
+      this._handleContextCreated(id);
+    }
+  }
+
   private _ensurePageTracking(): Promise<void> {
     if (this._closed) return Promise.resolve();
     if (this._trackingPromise) return this._trackingPromise;
@@ -1072,26 +1131,24 @@ export class BrowserContext {
       if (params.parent) return; // nested frames
       if (params.userContext !== this._id) return;
       const id = params.context as string;
-      this._pageIds.add(id);
-      // Headers must be applied before the first request from this page.
-      this._applyExtraHeadersTo([id]).catch(() => { });
-      // Register every existing route on the new page.
-      for (const sid of this._routes.keys()) {
-        this._registerRouteOnPage(sid, id).catch(() => { });
+      // Internal hydration context — stays invisible to page tracking.
+      if (this._internalPageIds.has(id)) return;
+      // Its id may not be known yet (the event can beat the create response):
+      // quarantine every top-level create in this context while one is in
+      // flight, then drop the internal one and replay the rest.
+      if (this._internalCreateInFlight > 0) {
+        this._quarantinedCreated.push(params);
+        return;
       }
-      // Notify page listeners exactly once per page.
-      if (this._notifiedPageIds.has(id)) return;
-      this._notifiedPageIds.add(id);
-      if (this._pageListeners.size > 0) {
-        const page = new Page(this.driver, id, this.getDefaultTimeout, this.conn, this);
-        for (const fn of this._pageListeners) {
-          try { fn(page); } catch { /* listener errors must not break events */ }
-        }
-      }
+      this._handleContextCreated(id);
     };
     const onDestroyed = (params: Record<string, unknown>) => {
       if (params.parent) return;
       const id = params.context as string;
+      if (this._internalPageIds.has(id)) {
+        this._internalPageIds.delete(id);
+        return; // internal hydration context — never tracked, nothing to tear down
+      }
       this._pageIds.delete(id);
       this._notifiedPageIds.delete(id);
       // Tear down any per-page intercepts registered against this page.
