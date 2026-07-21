@@ -29,7 +29,7 @@ const browser = await Browser.launch({
 |--------|------|---------|-------------|
 | `browserName` | `'chrome' \| 'chromium' \| 'firefox' \| 'safari'`; any non-empty `string` remotely | `'chrome'` | Local browser to launch or provider-facing remote browser name |
 | `enableBiDi` | `boolean` | browsers: `true`; Electron: `false` | Use WebDriver BiDi. Electron requires an explicit opt-in because negotiation resets its initial renderer to `about:blank`. |
-| `storageState` | `string` | — | Path to a session-state JSON file to load on startup |
+| `storageState` | `string \| SessionState` | — | Native session-state path/object. Full cookies + multi-origin localStorage on supported BiDi; non-empty state is rejected at Classic launch. |
 | `mobileEmulation` | `MobileEmulation \| DeviceName` | — | Mobile device emulation settings (Chrome/Chromium only) |
 | `downloadsDir` | `string` | temp dir | Directory where downloaded files are saved |
 | `browserPath` | `string` | — | Custom browser binary to launch (Chrome/Chromium/Firefox) — see [Driver Configuration → Browser Binary Configuration](./driver-configuration.md#browser-binary-configuration) |
@@ -389,7 +389,16 @@ await browser.saveState('./session.json');
 
 // Load session from file
 await browser.loadState('./session.json');
+
+// Or use an in-memory SessionState object
+await browser.loadState(await browser.storage.getState());
 ```
+
+On Chrome/Chromium and Firefox BiDi, launch and `browser.loadState()` restore
+cookies plus multi-origin localStorage before the first real navigation. In
+Classic mode, launch rejects non-empty state; navigate to the sole origin, call
+`browser.loadState()`, then reload. See
+[Session Management](./session-management.md#browser-and-transport-support).
 
 ## Evaluate
 

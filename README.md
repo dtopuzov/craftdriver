@@ -100,6 +100,11 @@ await Browser.launch({
 await browser.a11y.check();
 ```
 
+Launch-time state restores cookies plus multi-origin localStorage on supported
+WebDriver BiDi sessions (Chrome/Chromium and Firefox). WebDriver Classic has an
+explicit single-active-origin fallback after navigation; see
+[Session management](https://dtopuzov.github.io/craftdriver/session-management#browser-and-transport-support).
+
 ## Feature Guide
 
 | Area                 | What you get                                                                       | Learn more                                                                                                                                 |

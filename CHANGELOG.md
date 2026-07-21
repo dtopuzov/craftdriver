@@ -3,6 +3,7 @@
 ### Features
 
 * **agent CLI:** add a persistent browser exploration workflow with semantic snapshots, safe temporary refs, live-validated durable locators, manual QA actions, console/network evidence, mocks, traces, and reusable login state
+* **auth state:** restore cookies and multi-origin localStorage before the first navigation on BiDi launch and contexts, with path/object inputs and one-time hydration that preserves later application writes
 * **sessions:** isolate browsers, cookies, pages, refs, and artifacts in named sessions under a project-scoped daemon
 * **MCP:** add a validated stdio tool server with automatic post-action snapshot diffs, bounded responses, and quota-controlled file artifacts for token-efficient context
 * **skill:** add a safe project-local CraftDriver skill installer that teaches coding agents to explore first and turn runtime evidence into maintainable tests
@@ -10,6 +11,7 @@
 ### Bug Fixes
 
 * **agent reliability:** fail closed on malformed CLI input, recover failed browser launches, reset browser-owned state on quit, and bound large results, errors, screenshots, and artifact storage
+* **auth state:** validate every restore before mutation, quarantine internal hydration pages from public APIs and telemetry, serialize per-context overlays, reject partial Classic launch restores, and make direct state saves atomic and owner-restricted
 * **pages:** preserve the active page when closing background tabs and cover page activation/closing in BiDi-enabled non-default contexts
 
 # [1.7.0](https://github.com/dtopuzov/craftdriver/compare/v1.6.0...v1.7.0) (2026-07-18)

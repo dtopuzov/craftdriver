@@ -106,7 +106,7 @@ craftdriver trace start [name] [--no-screenshots]
 craftdriver trace stop [--zip]         # then open the NDJSON or zip
 craftdriver trace status
 craftdriver state save <name> [--session-storage]
-craftdriver state load <name>          # navigate to the origin first
+craftdriver state load <name>          # load before navigation on BiDi
 craftdriver state list
 
 craftdriver daemon start|status|stop
@@ -419,23 +419,22 @@ npx craftdriver fill '#password' secret
 npx craftdriver click '#submit'
 npx craftdriver state save alice
 
-# later, in a fresh browser — navigate first, then load
-npx craftdriver go http://127.0.0.1:8080/login.html
+# later, in a fresh BiDi browser — load before the first real navigation
 npx craftdriver state load alice
-npx craftdriver reload
+npx craftdriver go http://127.0.0.1:8080/login.html
 ```
 
-**Navigate to the site before `state load`.** This is the one thing to get
-right, and the order above is not a style preference. Cookies are stored per
-domain, but `localStorage` and `sessionStorage` are stored per *origin* and can
-only be written by a page already on that origin. Loading state onto a blank
-tab would restore the cookies and silently drop every storage entry — so
-craftdriver refuses that combination and tells you which origin to visit,
-rather than handing you a half-restored session that fails later for reasons
-that look unrelated.
+On Chrome/Chromium and Firefox BiDi, `state load` restores cookies and all
+captured localStorage origins through the same library hydrator as
+`Browser.launch({ storageState })`; no navigate-before-load workaround is
+needed. If a page is already open and must react to the overlay, reload it.
 
-If cookies alone carry your login — they often do — you would get away with the
-wrong order. The check does not try to guess which case you are in.
+WebDriver Classic (including Safari) has a smaller contract: `go <url>` →
+`state load <name>` → `reload`. The active page must match the snapshot's sole
+storage origin and every cookie must be settable there. Broader state fails
+before mutation instead of being partially ignored. A snapshot saved with
+`--session-storage` also uses this active-page path because sessionStorage is
+tab-scoped, even when BiDi is available.
 
 Worth knowing:
 
@@ -466,10 +465,10 @@ Worth knowing:
   since most apps keep nothing durable there.
 
 The library equivalent is `browser.saveState(path)` and
-`Browser.launch({ storageState: path })`. Note that the launch option restores
-cookies only — it runs before any navigation, so origin-scoped storage has
-nowhere to land. Use it when a cookie carries the session; use the CLI's
-navigate-then-load order when it does not.
+`Browser.launch({ storageState: path })`. On supported BiDi sessions that launch
+form restores cookies plus multi-origin localStorage before the first real
+navigation. Non-empty state at Classic launch is rejected; use the explicit
+active-origin fallback above.
 
 ## Daemon details
 

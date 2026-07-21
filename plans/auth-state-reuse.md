@@ -4,9 +4,9 @@ This is the canonical implementation handoff. See
 `auth-state-reuse-analysis.md` for the investigation and comparison with the
 earlier proposals.
 
-## Progress (branch feat/ai-tools, 2026-07-21)
+## Progress (branch feat/ai-tools, completed 2026-07-21)
 
-Landed and verified on Chrome BiDi:
+Implemented:
 
 - **Secure state-file persistence.** `saveState` / `saveStorageState` write via a
   shared library writer (`src/lib/secureFile.ts`): parent dir created,
@@ -27,26 +27,55 @@ Landed and verified on Chrome BiDi:
     intercept), and the private page must navigate over **BiDi** (a Classic
     navigation stalls against a BiDi intercept).
 
-Also landed (validation & hardening tranche): one shared validator runs before
+Validation and hardening: one shared validator runs before
 any mutation (unknown/legacy sections rejected, not ignored); the
 operation-specific sessionStorage policy above; a strict hydration intercept
 with zero network fall-through; localStorage-before-cookies apply order; failed
 `newContext` cleanup; and the `writeSecureFile` lstat fix. Verified on Chrome +
 Firefox, the recipe (both engines), and the CLI auth-state suite.
 
-Also landed: **private-context invisibility hardening** (§3) — the hydration
+**Private-context invisibility hardening** (§3): the hydration
 context is quarantined from page tracking (quarantine-and-replay of
 `contextCreated`, since the event can beat the create response), so even a
 `loadStorageState` on an already-active context with a `'page'` listener or a
 route never surfaces the private tab, adds it to `pages()`, or registers user
-routes on it. Verified on Chrome + Firefox.
+routes on it. CraftDriver-managed init scripts, browser-global mocks, logs,
+network observers, waiters, active-page shortcuts, screenshots, and traces also
+exclude it. This invisibility contract covers CraftDriver's public surfaces;
+consumers that deliberately subscribe to the raw BiDi connection are outside
+that abstraction boundary.
 
-Still pending in this MVP:
+**Classic active-origin fallback** (§5): `browser.loadState()` now validates the
+whole snapshot, requires one matching active HTTP(S) origin, verifies every
+cookie before mutation, and then restores strictly. Classic launch rejects
+non-empty state with `UNSUPPORTED`; empty state is a no-op.
 
-- **Classic active-origin fallback** (§5). Classic launch still routes through
-  the old cookies-only `loadState`; make it reject non-empty state at launch and
-  restore only the active origin, per the matrix.
-- **Docs** (§6). Recipe / CLI / API updates once the above land.
+**Docs, CLI, and agent skills** (§6): the recipe uses
+`Browser.launch({ storageState })` again, the CLI loads before navigation on
+BiDi, Classic/sessionStorage retain the active-origin sequence, and the API,
+support matrix, error codes, changelog, cheatsheet, and skill references agree.
+
+Verified in this workspace:
+
+- Chrome BiDi: hydrator, path/object launch inputs, browser/context storage,
+  one-time and multi-origin behavior, invisibility, failure policy, recipe, and
+  CLI suites pass.
+- Firefox BiDi: the same suites pass. Multi-file Firefox runs use one Vitest
+  worker because this repository's shared geckodriver service accepts only one
+  session at a time.
+- Chrome Classic and Firefox Classic: strict active-origin and launch-rejection
+  tests pass.
+- Build, ESLint, generated API reference, VitePress docs build, secure-file
+  tests, CLI parsing/state-store tests, and the 20-case skill installation gate
+  pass.
+
+Chromium uses the same Chrome-family BiDi implementation, but the local
+Chromium binary still cannot be launched by the available chromedriver (the
+pre-existing capability mismatch recorded under Spike evidence). Safari is
+covered by the Classic contract but was not integration-run here. No optional
+CDP adapter was retained: the standards-based BiDi path already meets the MVP
+contract, and CDP would add a version-sensitive second implementation without
+unlocking a proven requirement.
 
 ## Product decision
 
@@ -364,13 +393,15 @@ Validate the entire input before choosing or running a mutation strategy:
   booleans, and finite expiry values
 - a localStorage origin map whose keys are canonical HTTP(S) origins
 - string localStorage keys and values
-- no `sessionStorage`, legacy `origins` field, or unknown future section
+- a valid sessionStorage origin map when present; its operation-specific restore
+  policy is applied only after the complete state validates
+- no legacy `origins` field or unknown future section
 
 Treat syntactically valid but unsupported sections as `UNSUPPORTED`, not as
 fields to ignore. Update the public `SessionState` type so it no longer promises
-that ignored fields are restorable. If capture retains an opt-in diagnostic
-`sessionStorage` snapshot, its docs must explicitly say that the resulting
-section is not reusable through `storageState`.
+that ignored fields are restorable. Opt-in `sessionStorage` snapshots are
+reusable only through the single-origin active-page APIs described above; they
+are rejected by context and launch `storageState` APIs.
 
 Centralize cookie normalization. A snapshot emitted by CraftDriver must be
 reloadable by the same supported browser. Add regression coverage for
@@ -523,13 +554,15 @@ library save paths.
 Run the focused Chromium BiDi suite:
 
 ```sh
-BROWSER_NAME=chrome HEADLESS=true npx vitest run tests/browser-context-storage.test.ts tests/storage.test.ts tests/recipes/login-once-reuse-session.test.ts
+BROWSER_NAME=chrome HEADLESS=true npx vitest run tests/auth-state-hydration.test.ts tests/auth-state-invisibility.test.ts tests/auth-state-restore-policy.test.ts tests/browser-context-storage.test.ts tests/storage.test.ts
+BROWSER_NAME=chrome HEADLESS=true npx vitest run --config vitest.recipes.config.ts tests/recipes/login-once-reuse-session.test.ts
 ```
 
 Run Firefox BiDi and the explicit Classic coverage:
 
 ```sh
-BROWSER_NAME=firefox HEADLESS=true npx vitest run tests/browser-context-storage.test.ts tests/storage.test.ts tests/recipes/login-once-reuse-session.test.ts
+BROWSER_NAME=firefox HEADLESS=true npx vitest run --maxWorkers=1 tests/auth-state-hydration.test.ts tests/auth-state-invisibility.test.ts tests/auth-state-restore-policy.test.ts tests/browser-context-storage.test.ts tests/storage.test.ts
+BROWSER_NAME=firefox HEADLESS=true npx vitest run --config vitest.recipes.config.ts tests/recipes/login-once-reuse-session.test.ts
 BROWSER_NAME=chrome HEADLESS=true npx vitest run tests/storage.test.ts -t "Classic"
 BROWSER_NAME=firefox HEADLESS=true npx vitest run tests/storage.test.ts -t "Classic"
 ```
@@ -559,7 +592,7 @@ Do not include these in the MVP:
 - capture from origins whose pages were closed before `storageState()`
 - Playwright JSON compatibility
 - IndexedDB capture or restore
-- reusable sessionStorage restore
+- context/launch-time sessionStorage hydration
 - persistent `userDataDir` profiles
 - cookie-expiry warnings
 - a validate-and-refresh/session orchestration primitive

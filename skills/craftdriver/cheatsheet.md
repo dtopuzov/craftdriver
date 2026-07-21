@@ -123,6 +123,21 @@ const pages = browser.pages();
 const fresh = await browser.waitForPage(() => browser.click('a[target=_blank]'));
 ```
 
+## Reusable login state
+
+```ts
+// Save after login (atomic file, mode 0600 where supported).
+await browser.saveState('.auth/alice.json');
+
+// BiDi: cookies + multi-origin localStorage are ready before navigation.
+const reused = await Browser.launch({ storageState: '.auth/alice.json' });
+await reused.navigateTo('https://app.example.com/dashboard');
+```
+
+Classic launch rejects non-empty state. Use `Browser.launch()`, navigate to the
+sole captured HTTP(S) origin, then `browser.loadState(...)`. State containing
+sessionStorage always uses that active-origin flow.
+
 ## Network (BiDi)
 
 ```ts

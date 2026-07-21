@@ -180,11 +180,16 @@ CLI flag that does not exist.
 `state load <name>` puts them back. Use it so you log in once instead of
 replaying the form for every exploration.
 
-**Navigate to the site before `state load`.** Local storage can only be
-restored onto a page already on its origin, so loading onto a blank tab would
-restore cookies and silently drop the rest. craftdriver rejects that and names
-the origin to visit first; the working order is `go <url>` → `state load` →
-`reload`.
+On Chrome/Chromium and Firefox BiDi, load before the first real navigation:
+`state load <name>` → `go <url>`. Cookies plus all captured localStorage origins
+are ready for the page's first script. If a page is already open, reload it
+after the overlay.
+
+Classic browsers (including Safari) require `go <url>` → `state load <name>` →
+`reload`, and only a single matching origin is supported. State saved with
+`--session-storage` also requires that active-page order because sessionStorage
+is tab-scoped. Unsupported combinations fail before mutation rather than
+silently restoring only cookies.
 
 State files are credentials — cookies included. They live under
 `.craftdriver/state/`, owner-only. Never print one, commit one, or paste its
