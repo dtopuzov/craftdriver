@@ -4,6 +4,42 @@ This is the canonical implementation handoff. See
 `auth-state-reuse-analysis.md` for the investigation and comparison with the
 earlier proposals.
 
+## Progress (branch feat/ai-tools, 2026-07-21)
+
+Landed and verified on Chrome BiDi:
+
+- **Secure state-file persistence.** `saveState` / `saveStorageState` write via a
+  shared library writer (`src/lib/secureFile.ts`): parent dir created,
+  destination symlink refused, same-directory `0600` temp file, atomic rename.
+  Unit-tested.
+- **One-time BiDi hydrator.** The per-navigation localStorage preload is retired;
+  each captured origin is seeded once via a private, network-intercepted
+  same-origin document, then the context owns the values. Both
+  `newContext({ storageState })` and BiDi `Browser.launch({ storageState })` now
+  restore cookies **and** localStorage. Contract tests cover first-script
+  visibility, mutation-survives-reload, multi-origin, and launch-time restore;
+  the full browser-context / storage / recipe suite (67 tests) is green.
+  - Two constraints proved in code and encoded as comments: the intercept must
+    use a **specific** URL pattern (a bare `**/*` does not register a working
+    intercept), and the private page must navigate over **BiDi** (a Classic
+    navigation stalls against a BiDi intercept).
+
+Still pending in this MVP:
+
+- **Classic active-origin fallback** (§5). Classic launch still routes through
+  the old cookies-only `loadState`; make it reject non-empty state at launch and
+  restore only the active origin, per the matrix.
+- **State validation & fail-loud** (§"State validation and compatibility").
+  Validate before mutation; reject unsupported sections instead of ignoring
+  them. The opt-in `sessionStorage` round-trip is a compatibility decision to
+  confirm before making it an error.
+- **Private-context invisibility hardening** (§3). The hydrator is already
+  invisible on the launch / `newContext` paths (no page tracking or `'page'`
+  listener is armed yet at that point). The quarantine-and-replay for
+  `loadStorageState` on an already-active context that has a `'page'` listener is
+  not yet implemented.
+- **Docs** (§6). Recipe / CLI / API updates once the above land.
+
 ## Product decision
 
 Deliver an excellent “login once, reuse in other tests” experience first on
