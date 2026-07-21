@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  Agent-surface fixture for the common action set and for durable locator
+  candidates. Deliberately mixes elements that offer good evidence (role +
+  name, label, test id) with ones that offer only generated attributes, so
+  tests can prove `locators` tells the truth in both cases.
+-->
+<html><head><title>Agent actions</title></head>
+<body>
+  <h1>Account settings</h1>
+
+  <label for="nickname">Nickname</label>
+  <input id="nickname" name="nickname" type="text" value="preset" />
+
+  <label for="newsletter">Newsletter</label>
+  <input id="newsletter" name="newsletter" type="checkbox" />
+
+  <label for="plan">Plan</label>
+  <select id="plan" name="plan">
+    <option value="free">Free</option>
+    <option value="pro">Pro</option>
+  </select>
+
+  <button id="save" data-testid="save-button" type="button">Save changes</button>
+  <button id="a1b2c3d4e5f6" type="button">Generated id</button>
+
+  <p id="dbl-count">0</p>
+  <button id="counter" type="button">Count me</button>
+
+  <div style="height: 1500px"></div>
+  <button id="far-below" type="button">Far below</button>
+
+  <p id="log"></p>
+  <script>
+    const log = document.getElementById('log');
+    let dbl = 0;
+    document.getElementById('counter').addEventListener('dblclick', () => {
+      dbl += 1;
+      document.getElementById('dbl-count').textContent = String(dbl);
+    });
+    document.getElementById('nickname').addEventListener('keydown', () => {
+      log.textContent = 'keydown seen';
+    });
+    document.getElementById('save').addEventListener('click', () => {
+      log.textContent = 'saved';
+    });
+  </script>
+</body></html>

@@ -679,6 +679,19 @@ export class Driver {
     await client.send({ method: 'POST', path: `/session/${this.sessionId}/window`, body: { handle } });
   }
 
+  /**
+   * Close the currently focused window and return the remaining handles.
+   *
+   * W3C leaves no window focused afterwards, so the caller must switch to
+   * one of the returned handles before issuing further commands.
+   */
+  async closeWindow(): Promise<string[]> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<string[]>({ method: 'DELETE', path: `/session/${this.sessionId}/window` });
+    const v = (res as CommandResponse<string[]>)?.value ?? (res as unknown as string[]);
+    return Array.isArray(v) ? v : [];
+  }
+
   /** Return the handle for the currently focused window. */
   async getCurrentWindowHandle(): Promise<string> {
     const client = new HttpClient(this.endpoint);

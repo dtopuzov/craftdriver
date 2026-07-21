@@ -334,9 +334,20 @@ await popup.waitForLoadState('load');
 const heading = await popup.find('h1').text();
 console.log(heading);
 
-await popup.evaluate(() => {
-  window.close();
-});
+// Close it. Prefer this over `popup.evaluate(() => window.close())`, which
+// leaves no window focused — every later command then fails with
+// "no such window". `close()` switches to a surviving page for you.
+await popup.close();
+```
+
+Use `page.activate()` to make a page the target of browser-level helpers.
+Most page methods switch to their window and switch back, so they never
+disturb `browser.activePage()`; `activate()` is the deliberate exception:
+
+```ts
+const [, second] = await browser.pages();
+await second.activate();
+await browser.click('#confirm');   // acts on the second tab
 ```
 
 > **Note.** `browser.openPage()` requires BiDi (the default). In Classic

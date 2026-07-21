@@ -51,6 +51,19 @@ jobs:
         env:
           HEADLESS: true
 
+      - name: Run CLI agent-surface tests (Chrome)
+        run: npm run test:cli
+        env:
+          HEADLESS: true
+
+      - name: Run packed release gate (Chrome)
+        # Packs the tarball, installs it into a throwaway consumer project, and
+        # drives the documented workflow end to end. This is the only job that
+        # exercises what a user actually receives rather than the source tree.
+        run: npm run test:release
+        env:
+          HEADLESS: true
+
       - name: Run recipe snippets (Chrome)
         run: npm run test:recipes
         env:

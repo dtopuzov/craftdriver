@@ -1,0 +1,4 @@
+interface:
+  display_name: "CraftDriver Browser Testing"
+  short_description: "Explore apps and author CraftDriver tests"
+  default_prompt: "Use $craftdriver to explore this app and write a durable browser test."

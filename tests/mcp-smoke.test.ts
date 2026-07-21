@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
+import { TOOLS } from '../src/cli/mcp/tools';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CLI_BIN = resolve(here, '..', 'bin', 'craftdriver.mjs');
@@ -49,10 +50,12 @@ class McpHarness {
   private pending = new Map<number, (resp: RpcResponse) => void>();
   private nextId = 1;
   private stderr = '';
+  /** Extra environment for the spawned server (e.g. an owned trace root). */
+  extraEnv?: Record<string, string>;
 
   async start(): Promise<void> {
     this.child = spawn('node', [CLI_BIN, 'mcp', '--browser', BROWSER_NAME], {
-      env: { ...process.env, HEADLESS: 'true' },
+      env: { ...process.env, HEADLESS: 'true', ...(this.extraEnv ?? {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     this.child.stdout.setEncoding('utf8');
@@ -117,6 +120,7 @@ describe('MCP smoke', () => {
   const traceRoot = mkdtempSync(join(tmpdir(), 'craftdriver-mcp-trace-'));
 
   beforeAll(async () => {
+    mcp.extraEnv = { CRAFTDRIVER_TRACE_DIR: traceRoot };
     await mcp.start();
   });
 
@@ -125,37 +129,55 @@ describe('MCP smoke', () => {
     rmSync(traceRoot, { recursive: true, force: true });
   });
 
-  it('tools/list returns the 15 documented tools', async () => {
+  it('tools/list advertises exactly the registered tools, with schemas', async () => {
     const resp = (await mcp.request('tools/list', {})) as RpcSuccess;
-    const tools = resp.result.tools as Array<{ name: string }>;
-    const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(
-      [
-        'browser_advanced_eval',
-        'browser_click',
-        'browser_exists',
-        'browser_fill',
-        'browser_find',
-        'browser_hover',
-        'browser_navigate',
-        'browser_pages',
-        'browser_press',
-        'browser_read',
-        'browser_screenshot',
-        'browser_snapshot',
-        'browser_status',
-        'browser_trace',
-        'browser_wait',
-      ].sort()
-    );
+    const tools = resp.result.tools as Array<{
+      name: string;
+      inputSchema: { type: string; additionalProperties: boolean };
+      annotations: { title: string; readOnlyHint: boolean };
+    }>;
+
+    // Pinned to the registry rather than a frozen list: the invariant is that
+    // every registered tool is advertised, not that there are N of them.
+    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
+
+    // Every advertised tool carries a schema that refuses extra fields and
+    // annotations a client can act on.
+    for (const tool of tools) {
+      expect(tool.inputSchema.type).toBe('object');
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+      expect(tool.annotations.title.length).toBeGreaterThan(0);
+    }
   });
 
-  it('records a Vibium-compatible session trace', async () => {
-    const outDir = join(traceRoot, 'raw');
-    const zipPath = join(traceRoot, 'mcp-session.zip');
+  it('rejects invalid arguments as -32602, before reaching the browser', async () => {
+    const unknownField = (await mcp.request('tools/call', {
+      name: 'browser_navigate',
+      arguments: { url: 'http://127.0.0.1:1/', bogus: 1 },
+    })) as { error?: { code: number; message: string } };
+    expect(unknownField.error?.code).toBe(-32602);
+    expect(unknownField.error?.message).toMatch(/unknown argument "bogus"/);
+
+    const missing = (await mcp.request('tools/call', {
+      name: 'browser_click',
+      arguments: {},
+    })) as { error?: { code: number } };
+    expect(missing.error?.code).toBe(-32602);
+
+    const unknownTool = (await mcp.request('tools/call', {
+      name: 'browser_nope',
+      arguments: {},
+    })) as { error?: { code: number } };
+    expect(unknownTool.error?.code).toBe(-32602);
+  });
+
+  it('records a trace into the owned root, not a caller-chosen path', async () => {
+    // The tool deliberately no longer accepts an out_dir: the previous
+    // MCP-only command took an unvalidated filesystem path straight off the
+    // wire. Output lands in the owned root and the response reports where.
     const start = (await mcp.request('tools/call', {
       name: 'browser_trace',
-      arguments: { action: 'start', out_dir: outDir, title: 'MCP login' },
+      arguments: { action: 'start', name: 'mcplogin' },
     })) as RpcSuccess;
     expect((start.result as { isError?: boolean }).isError ?? false).toBe(false);
 
@@ -165,11 +187,74 @@ describe('MCP smoke', () => {
     });
     const stop = (await mcp.request('tools/call', {
       name: 'browser_trace',
-      arguments: { action: 'stop', path: zipPath },
+      arguments: { action: 'stop', zip: true },
     })) as RpcSuccess;
-    expect((stop.result as { isError?: boolean }).isError ?? false).toBe(false);
+    const stopped = stop.result as { isError?: boolean; structuredContent?: { result?: { zip?: string } } };
+    expect(stopped.isError ?? false).toBe(false);
+
+    const zipPath = stopped.structuredContent?.result?.zip as string;
+    expect(zipPath.startsWith(traceRoot)).toBe(true);
     expect(existsSync(zipPath)).toBe(true);
     expect(readFileSync(zipPath).subarray(0, 2).toString('ascii')).toBe('PK');
+  });
+
+  it('exposes the landed CLI surface with the same semantics', async () => {
+    await mcp.request('tools/call', {
+      name: 'browser_navigate',
+      arguments: { url: loginUrl },
+    });
+
+    // browser_locators: the flagship of the write-a-test workflow. It must
+    // return a durable candidate and never a ref, exactly as the CLI does.
+    const locators = (await mcp.request('tools/call', {
+      name: 'browser_locators',
+      arguments: { selector: '#submit' },
+    })) as RpcSuccess;
+    const report = (locators.result as {
+      structuredContent: { result: { best?: string; candidates: Array<{ status: string }> } };
+    }).structuredContent.result;
+    expect(report.best).toBeTruthy();
+    expect(report.best).not.toMatch(/ref=/);
+    expect(report.candidates.some((c) => c.status === 'unique')).toBe(true);
+
+    // browser_logs: capture is running from launch, so a message emitted
+    // before the query is still answerable.
+    await mcp.request('tools/call', {
+      name: 'browser_advanced_eval',
+      arguments: { js: 'console.error("mcp-parity-marker"); return 1' },
+    });
+    const logs = (await mcp.request('tools/call', {
+      name: 'browser_logs',
+      arguments: { action: 'wait', contains: 'mcp-parity-marker', timeout_ms: 10000 },
+    })) as RpcSuccess;
+    expect((logs.result as { isError?: boolean }).isError ?? false).toBe(false);
+
+    // kind=error covers console.error, the query an agent actually types.
+    const errors = (await mcp.request('tools/call', {
+      name: 'browser_logs',
+      arguments: { action: 'list', kind: 'error' },
+    })) as RpcSuccess;
+    const page = (errors.result as {
+      structuredContent: { result: { entries: Array<{ kind: string }> } };
+    }).structuredContent.result;
+    expect(page.entries.length).toBeGreaterThan(0);
+
+    // browser_element: one tool, several real dispatcher commands behind it.
+    const focused = (await mcp.request('tools/call', {
+      name: 'browser_element',
+      arguments: { action: 'focus', selector: '#username' },
+    })) as RpcSuccess;
+    expect((focused.result as { isError?: boolean }).isError ?? false).toBe(false);
+
+    // browser_page: tabs, mirroring the CLI's action shape.
+    const pages = (await mcp.request('tools/call', {
+      name: 'browser_page',
+      arguments: { action: 'list' },
+    })) as RpcSuccess;
+    const listed = (pages.result as {
+      structuredContent: { result: { count: number } };
+    }).structuredContent.result;
+    expect(listed.count).toBeGreaterThan(0);
   });
 
   it('navigate + snapshot returns refs for known controls', async () => {
@@ -193,7 +278,8 @@ describe('MCP smoke', () => {
     expect(url).toContain('/login.html');
     const all = lines.join('\n');
     expect(all).toMatch(/e\d+: textbox .*Username/);
-    expect(all).toMatch(/e\d+: textbox .*Password/);
+    // No ARIA role for a password input; listed under its tag, still reffed.
+    expect(all).toMatch(/e\d+: input .*Password/);
     expect(all).toMatch(/e\d+: button .*Sign in/i);
   });
 

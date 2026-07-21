@@ -1,24 +1,37 @@
 # AI Agent Guide
 
-CraftDriver ships agent-facing tooling in the npm package. You can use the library directly, drive the browser from the shell, expose tools through MCP, or drop assistant rules into a project.
+CraftDriver's recommended agent surface is the CLI plus a project-local skill.
+The agent explores the running application, learns its DOM and accessibility
+structure, validates durable selectors, and then writes and runs ordinary
+CraftDriver tests. MCP is optional.
 
-## Which Surface Should I Use?
+## Install safely
 
-| Agent environment          | Best surface       | Why                                                                              |
-| -------------------------- | ------------------ | -------------------------------------------------------------------------------- |
-| Shell-capable coding agent | CLI                | Simple commands, persistent daemon, JSON output when piped.                      |
-| MCP-aware host             | MCP server         | Typed tools, compact accessibility snapshots, artifact spilling for screenshots. |
-| Code-writing assistant     | `craftdriver init` | Project rules teach selector preference, auto-waiting, and error-code handling.  |
-| Custom orchestrator        | Skill pack         | Small always-on `SKILL.md` with deeper references loaded on demand.              |
+From a project that already has a `package.json`:
 
-## CLI
+```bash
+npm install --save-dev craftdriver
+npx craftdriver init codex
+```
 
-The CLI is good for agents that can run shell commands.
+This installs `.agents/skills/craftdriver/` with an ownership manifest. It does
+not read or change `AGENTS.md`, `CLAUDE.md`, Copilot instructions, Cursor rules,
+`GEMINI.md`, or `.codex/config.toml`. It refuses user-edited, unowned, extra, or
+symlinked destination content instead of overwriting it.
+
+Preview without writes:
+
+```bash
+npx craftdriver init codex --dry-run
+```
+
+## Explore, then write the test
 
 ```bash
 npx craftdriver daemon start
 npx craftdriver go http://127.0.0.1:8080/login.html
 npx craftdriver snapshot
+npx craftdriver find 'label=Username' --all
 npx craftdriver fill 'label=Username' alice
 npx craftdriver fill 'label=Password' hunter2
 npx craftdriver click 'role=button[name=Sign in]'
@@ -26,67 +39,49 @@ npx craftdriver text '#result'
 npx craftdriver daemon stop
 ```
 
-State survives between calls while the daemon is running, so an agent can explore, act, inspect, and refine.
+The daemon keeps the page and cookies between commands. Snapshot refs are
+ephemeral exploration state in the current release: take a fresh snapshot
+immediately before one ref action, and never copy `ref=eN` into a test. Validate
+role/name, label, test ID, text, or stable CSS selectors against the live page,
+then use those durable locators in test source.
 
-Read the full [CLI reference](./cli.md).
+The daemon uses a Unix socket and is not available on Windows. Windows agents
+should use the optional MCP server for a persistent session, or run the whole
+flow as one `craftdriver --ephemeral` script.
 
-## MCP Server
+The installed `workflow.md` guides the full loop: inspect existing project test
+conventions, explore, validate selectors, write the smallest test, run the
+focused command, and debug from fresh browser evidence.
 
-MCP-aware hosts can use `craftdriver mcp`.
+Read the [CLI reference](./cli.md) for all current commands.
 
-```bash
-claude mcp add craftdriver -- npx -y craftdriver mcp
-```
+## Optional MCP
 
-```jsonc
-{
-  "mcpServers": {
-    "craftdriver": {
-      "command": "npx",
-      "args": ["-y", "craftdriver", "mcp"],
-    },
-  },
-}
-```
-
-Mutating tools return compact accessibility snapshot diffs, so the agent can see what changed without a separate read. Large artifacts such as screenshots are written to disk instead of inlined into model context.
-
-Read the full [MCP reference](./mcp.md).
-
-## Assistant Bootstrap Files
-
-Use `craftdriver init` inside a project that uses CraftDriver:
+CLI + Skill does not require MCP. For a host that prefers structured tool
+calls, print the local project-pinned configuration:
 
 ```bash
-npx craftdriver init agents
-npx craftdriver init copilot
-npx craftdriver init claude
-npx craftdriver init cursor
-npx craftdriver init gemini
-npx craftdriver init all
+npx craftdriver init codex --mcp
 ```
 
-The generated files tell assistants to:
+The command prints:
 
-- prefer semantic selectors before brittle CSS
-- rely on auto-waiting instead of sleeps
-- inspect stable `CraftdriverError.code` values
-- use the CLI or MCP server for live browser work
-- keep test code aligned with the public TypeScript API
-
-## Skill Pack
-
-The npm tarball includes a tiered skill pack under `skills/craftdriver/`:
-
-| File            | Purpose                                                                                |
-| --------------- | -------------------------------------------------------------------------------------- |
-| `SKILL.md`      | Always-on rules and routing, kept small for model context.                             |
-| `cheatsheet.md` | Fast command and API reference for tests.                                              |
-| `patterns.md`   | Worked recipes such as login, uploads, network waits, a11y, tracing, and virtual time. |
-| `cli.md`        | Agent-facing CLI reference.                                                            |
-
-Point compatible agents at:
-
-```text
-node_modules/craftdriver/skills/craftdriver/SKILL.md
+```toml
+[mcp_servers.craftdriver]
+command = "npx"
+args = ["--no-install", "craftdriver", "mcp"]
 ```
+
+Add it manually to the host configuration. CraftDriver never reads or writes
+that configuration. See the [MCP reference](./mcp.md) for the current optional
+tool surface and protocol bounds.
+
+## Installed skill files
+
+| File | Purpose |
+| --- | --- |
+| `SKILL.md` | Short browser-to-test rules and routing. |
+| `workflow.md` | Exploration, selector validation, test authoring, and debugging loop. |
+| `cli.md` | Current shell command reference for agent exploration. |
+| `cheatsheet.md` | Public TypeScript API reference for writing tests. |
+| `patterns.md` | Focused library recipes loaded on demand. |

@@ -1,0 +1,33 @@
+<!doctype html>
+<!--
+  Agent-surface fixture: a DOM reorder that shifts every element's document
+  position. Used to prove snapshot refs bind to element identity, not to
+  document order (a stale ref must fail, never act on a replacement node).
+-->
+<html><head><title>Shift repro</title></head>
+<body>
+  <h1>Checkout</h1>
+  <div id="banner"></div>
+  <form id="f">
+    <label for="coupon">Coupon</label>
+    <input id="coupon" name="coupon" type="text" />
+    <button id="apply" type="button">Apply coupon</button>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="text" />
+    <button id="pay" type="button">Pay now</button>
+    <button id="remove-pay" type="button">Remove pay button</button>
+  </form>
+  <script>
+    // Realistic: applying an invalid coupon renders an inline error with a
+    // help link ABOVE the rest of the form, shifting everything below it.
+    document.getElementById('apply').addEventListener('click', () => {
+      document.getElementById('banner').innerHTML =
+        '<a href="/help" id="help">Why was my coupon rejected?</a>';
+    });
+    // Removing the pay button lets a test prove a removed ref fails rather
+    // than silently resolving to whatever took its place.
+    document.getElementById('remove-pay').addEventListener('click', () => {
+      document.getElementById('pay').remove();
+    });
+  </script>
+</body></html>

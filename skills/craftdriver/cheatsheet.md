@@ -1,8 +1,7 @@
 # craftdriver — cheatsheet
 
-Compact reference for writing tests. Pair with
-[docs/api-reference.md](../../docs/api-reference.md) for the full export
-list.
+Compact reference for writing tests. The full installed API reference is
+`node_modules/craftdriver/docs/api-reference.md`.
 
 ## Launch & teardown
 
@@ -111,7 +110,7 @@ Codes: `NO_MATCH`, `TIMEOUT_WAITING_VISIBLE`, `TIMEOUT_WAITING_STATE`,
 `TIMEOUT_WAITING_DIALOG`, `TIMEOUT`, `EXPECT_MISMATCH`,
 `A11Y_VIOLATIONS`, `EVAL_THREW`, `EVAL_BAD_ARG`, `INVALID_ARGUMENT`,
 `UNSUPPORTED`, `STATE_INVALID`, `DRIVER_ERROR`. Full table:
-[docs/error-codes.md](../../docs/error-codes.md).
+`node_modules/craftdriver/docs/error-codes.md`.
 
 ## Pages and contexts
 

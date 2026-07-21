@@ -30,7 +30,7 @@ features:
   - title: Test time and quality
     details: Use virtual time, axe-core accessibility checks, traces, screenshots, console logs, and JS error capture.
   - title: Agent-friendly
-    details: CLI, MCP server, and assistant rules are there when you want coding agents to drive the browser too.
+    details: CLI, a safe project-local skill, and optional MCP are there when you want coding agents to drive the browser too.
 ---
 
 ## Quick Start

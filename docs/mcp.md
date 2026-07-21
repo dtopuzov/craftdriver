@@ -1,29 +1,31 @@
 # MCP server
 
-`craftdriver` ships a [Model Context Protocol](https://modelcontextprotocol.io)
-server so hosted / sandboxed AI agents (Claude Desktop, Claude Code,
-Cursor, Windsurf, Zed, Goose, Gemini CLI, …) can drive a real browser
-without managing a daemon, a socket, or filesystem access.
+`craftdriver` ships an optional [Model Context Protocol](https://modelcontextprotocol.io)
+STDIO adapter so MCP-aware coding agents can drive the same local session and
+dispatcher as the CLI.
 
-It is a **peer to the CLI**, not a wrapper. Both share the same
-dispatcher and error codes, but the MCP server returns a richer
-post-action payload (compact a11y snapshot, diffed from the previous
-turn) that text models can act on directly.
+CLI plus the installed CraftDriver skill is the recommended workflow. MCP is
+not required for exploration or test authoring.
 
 ```bash
 # Start once via your MCP client — examples below
-npx -y craftdriver mcp
+npx --no-install craftdriver mcp
 ```
 
 The server speaks JSON-RPC 2.0 on stdio. The browser launches lazily
 on the first tool call and shuts down when the client disconnects.
+Each newline-delimited input frame is limited to 1 MiB (1,048,576 UTF-8
+bytes); oversized frames return a parse error and are discarded.
 
-## Install snippets
+## Manual project-pinned setup
+
+Run `npx craftdriver init codex --mcp` to print the exact snippet. The installer
+does not read or change MCP configuration.
 
 ### Claude Code / Claude Desktop
 
 ```bash
-claude mcp add craftdriver -- npx -y craftdriver mcp
+claude mcp add craftdriver -- npx --no-install craftdriver mcp
 ```
 
 ### Cursor / Windsurf / Zed (`.cursor/mcp.json` and similar)
@@ -33,7 +35,7 @@ claude mcp add craftdriver -- npx -y craftdriver mcp
   "mcpServers": {
     "craftdriver": {
       "command": "npx",
-      "args": ["-y", "craftdriver", "mcp"]
+      "args": ["--no-install", "craftdriver", "mcp"]
     }
   }
 }
@@ -42,7 +44,7 @@ claude mcp add craftdriver -- npx -y craftdriver mcp
 ### Gemini CLI
 
 ```bash
-gemini mcp add craftdriver npx -y craftdriver mcp
+gemini mcp add craftdriver npx --no-install craftdriver mcp
 ```
 
 ### Goose
@@ -53,42 +55,90 @@ goose configure   # add craftdriver as a stdio server
 
 ## Tools
 
-Compact set — 15 tools, one line each. Long help lives in the schema
-description; clients render it in the model's context once per session.
+One line each; the long help lives in the schema description, which clients
+render into the model's context once per session. Every tool dispatches a
+command the CLI also has — there are no MCP-only browser semantics.
 
-| Tool                     | Purpose                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `browser_navigate`       | Go to a URL (waits for load).                                          |
-| `browser_click`          | Click an element. Auto-waits visible+enabled.                          |
-| `browser_fill`           | Fill an input/textarea/select.                                         |
-| `browser_press`          | Press a keyboard key (`Enter`, `Tab`, `Control+A`).                    |
-| `browser_hover`          | Hover over an element.                                                 |
-| `browser_find`           | Locate elements without acting (returns tag/text/visibility).          |
-| `browser_exists`         | **0-wait probe.** Returns `{exists, count}` in one BiDi roundtrip.     |
-| `browser_wait`           | Wait for selector state or load state.                                 |
-| `browser_read`           | Read `text` / `attr` / `value` / `is(visible|enabled|checked)`.        |
-| `browser_pages`          | List open pages (id, url, title).                                      |
-| `browser_snapshot`       | **Sanitized DOM summary with refs.** Use `ref=eN` as the selector for subsequent calls. |
-| `browser_screenshot`     | Capture PNG to a file (auto-allocated under the per-session artifact dir; never inlined). |
-| `browser_trace`          | Start/stop tracing and export a Vibium Player compatible zip.            |
-| `browser_status`         | Browser up? Which URL is active?                                       |
-| `browser_advanced_eval`  | Evaluate JS in the page. Last resort.                                  |
+| Tool                    | Purpose                                                                |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `browser_navigate`      | Go to a URL (waits for load).                                          |
+| `browser_click`         | Click an element; set `double` for a double-click.                     |
+| `browser_fill`          | Fill an input/textarea (clears first, real key events).                |
+| `browser_type`          | Type into whatever holds focus (no selector).                          |
+| `browser_element`       | `dblclick`/`focus`/`scroll`/`clear`/`check`/`uncheck`/`select`.        |
+| `browser_press`         | Press a key (`Enter`, `Tab`, `Control+A`).                             |
+| `browser_key`           | Low-level `press`/`down`/`up` for modifier combinations.               |
+| `browser_mouse`         | `move`/`click`/`down`/`up`/`wheel`, by element or coordinate.          |
+| `browser_hover`         | Hover over an element.                                                 |
+| `browser_upload`        | Set files on a file input (bounded; paths never echoed).               |
+| `browser_dialog`        | `inspect`/`accept`/`dismiss` a native dialog.                          |
+| `browser_find`          | Locate elements without acting (tag/text/visibility).                  |
+| `browser_exists`        | **0-wait probe.** Returns `{exists, count}` in one roundtrip.          |
+| `browser_wait`          | Wait for a selector state or a load state.                             |
+| `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.      |
+| `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.       |
+| `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref.    |
+| `browser_page`          | `list`/`open`/`select`/`close` tabs.                                   |
+| `browser_logs`          | Console + network history, with cursors. See below.                    |
+| `browser_mock`          | Serve a fixed response or block matching requests.                     |
+| `browser_state`         | Save/restore cookies and local storage (a login, once).                |
+| `browser_trace`         | Record a run to an owned directory; `zip` for a Vibium archive.        |
+| `browser_screenshot`    | Capture PNG to a file under the artifact dir; never inlined.           |
+| `browser_status`        | Browser up? Which URL is active?                                       |
+| `browser_advanced_eval` | Evaluate JS in the page. Last resort.                                  |
 
-Trace a complete agent-driven session with two calls:
+Each tool carries MCP `annotations` — `title`, `readOnlyHint`,
+`destructiveHint`, `idempotentHint`, `openWorldHint` — and they are accurate:
+a tool marked read-only never dispatches a command the dispatcher treats as
+page-mutating, which is asserted by test rather than by review.
+
+### Debugging with evidence
+
+`browser_logs` captures console and network from launch, so an error thrown
+during the first navigation is still answerable afterwards. Every result
+carries a `cursor`; pass it back as `since` for only what is new. `kind=error`
+covers both uncaught exceptions and `console.error`. Network rows are
+summaries — url, method, status, mime type — and never carry bodies, cookies,
+or headers.
 
 ```jsonc
-{ "name": "browser_trace", "arguments": {
-  "action": "start", "out_dir": "./traces/agent-raw", "title": "Agent flow"
-} }
-// ...browser_navigate / browser_fill / browser_click calls...
-{ "name": "browser_trace", "arguments": {
-  "action": "stop", "path": "./traces/agent-flow.zip"
+{ "name": "browser_logs", "arguments": { "action": "list", "kind": "error" } }
+{ "name": "browser_logs", "arguments": {
+  "action": "wait", "contains": "checkout ok", "timeout_ms": 10000
 } }
 ```
 
-The zip opens at [player.vibium.dev](https://player.vibium.dev/). The raw
-directory remains available if the MCP client disconnects before the stop
-call; in that case there is no finalized zip.
+### Tracing
+
+```jsonc
+{ "name": "browser_trace", "arguments": { "action": "start", "name": "agentflow" } }
+// ...browser_navigate / browser_fill / browser_click calls...
+{ "name": "browser_trace", "arguments": { "action": "stop", "zip": true } }
+```
+
+The response reports where the trace and archive landed; the zip opens at
+[player.vibium.dev](https://player.vibium.dev/). Output goes to an owned
+directory (`CRAFTDRIVER_TRACE_DIR`), and `name` is a bare name rather than a
+path — an earlier version accepted an arbitrary filesystem path straight off
+the wire. If the client disconnects before `stop`, the raw NDJSON is still
+valid, just without a finalized zip.
+
+## Argument validation
+
+Every tool declares its arguments once; that declaration produces both the
+advertised `inputSchema` and the runtime check, so a tool cannot promise a
+constraint it does not enforce. Invalid arguments are rejected as JSON-RPC
+`-32602` **before** anything reaches the browser:
+
+- an unknown field (rather than being silently ignored — a misspelled required
+  argument would otherwise look like a successful call that did something else);
+- a wrong type, a non-finite number, an out-of-range number, an invalid enum;
+- an oversized string or array.
+
+`-32602` also covers an unknown tool name. Ordinary browser failures — a
+missing element, a timeout — are **not** protocol errors; they come back as
+successful responses with `isError: true`, which is what keeps the two
+distinguishable.
 
 ## Selector syntax
 
@@ -128,11 +178,14 @@ Use `ref=eN` as the selector for the next call:
 { "name": "browser_click", "arguments": { "selector": "ref=e7" } }
 ```
 
-**Why this is a big deal for AI test generation**
+**Use refs only for immediate exploration**
 
-- **No selector hallucination.** The agent picks a number, not a
-  CSS/XPath/role expression. The element is already on the page —
-  there is nothing to guess wrong.
+- **A ref names one element for as long as it lives.** A surviving node keeps
+  its ref across snapshots, and refs are never reused — so a ref cannot drift
+  onto a different element. If it is removed, duplicated, or the page
+  navigates, the call fails `STALE_REF`; take a fresh snapshot then.
+- **Never copy refs into test code.** Convert live role/name, label, test ID,
+  text, or DOM evidence into a durable selector and validate it.
 - **Token efficient.** `ref=e7` is 5 characters; `role=button[name=Sign in]`
   is 26. Over a 50-step flow that adds up.
 - **Auto-waiting still works.** Internally `ref=eN` resolves to a CSS
@@ -141,11 +194,16 @@ Use `ref=eN` as the selector for the next call:
 
 **Invalidation rules**
 
-- Refs are re-allocated on **every** `browser_snapshot` call.
-- The post-action a11y diff after a mutating tool also re-runs the
-  snapshot, so refs renumber on every turn.
-- Navigating to a new URL invalidates all refs.
-- A stale ref just fails with `NO_MATCH` — take a fresh snapshot.
+- A ref binds to one element. An element that survives a DOM change keeps
+  its ref across snapshots; snapshots do **not** renumber it.
+- New elements get fresh numbers. Refs are never reused, including after a
+  navigation or reload.
+- A ref whose element was removed or duplicated, or that was issued before
+  the page navigated or reloaded, fails with `STALE_REF` — take a fresh
+  snapshot. It never resolves to a different element.
+- `error.detail.reason` distinguishes `detached`, `document-changed`,
+  `unknown-ref`, `ambiguous`, and `no-snapshot`.
+- Refs are exploration state and must never appear in committed tests.
 
 ## Post-action payload
 
@@ -197,10 +255,10 @@ button "Click me" #by-text
 
 Applies to:
 
-- **Screenshots** — always written to a file. If you pass `path`, that
-  path is used; otherwise an artifact path is auto-allocated. The
-  inline block carries the absolute path and byte count — **zero**
-  image tokens.
+- **Screenshots** — always written to a server-allocated file under the
+  per-session artifact directory. The inline block carries the absolute path
+  and byte count — **zero** image tokens. The tool accepts no destination
+  path, so it cannot write outside that directory.
 - **A11y snapshot diffs** — spill when the rendered diff exceeds the
   threshold (typically only the full first-call snapshot on big pages).
 - **Tool results** — `browser_read`, `browser_advanced_eval`, etc. spill
@@ -213,20 +271,29 @@ Configuration:
 | ---------------------------------- | ---------------- | ------------------------------------------------- |
 | `CRAFTDRIVER_MCP_ARTIFACTS_DIR`    | `os.tmpdir()`    | Root directory for the per-session artifact dir.  |
 | `CRAFTDRIVER_MCP_SPILL_BYTES`      | `2048` (~500 tk) | Inline content blocks larger than this spill.     |
+| `CRAFTDRIVER_MCP_MAX_RESPONSE_BYTES` | `32768`        | Maximum serialized result from one tool call.     |
 
 The per-session directory (`<root>/craftdriver-mcp-<pid>-<stamp>/`) is
 not deleted on shutdown — agents may still be reading past artifacts.
 Use `$CRAFTDRIVER_MCP_ARTIFACTS_DIR` to point at a dir with your own
-cleanup policy.
+cleanup policy. Each server process refuses more than 500 artifacts or 256 MiB
+in its session directory; browser-written screenshots are counted by their
+actual file size after capture.
 
-The `structuredContent` field is unaffected by spilling — small results
-still round-trip in full there for programmatic consumers.
+Small results still round-trip in full through `structuredContent`. When the
+complete result would exceed the response cap, it becomes explicit truncation
+metadata and a bounded preview rather than duplicating the full spilled value.
 
 ## Errors
 
-Errors are returned as `isError: true` content (per MCP spec), **not**
-as JSON-RPC errors. JSON-RPC errors are reserved for protocol-level
-failures (unknown method, malformed request).
+Browser and action failures are returned as `isError: true` content (per MCP
+spec), **not** as JSON-RPC errors. JSON-RPC errors are reserved for
+protocol-level failures: a malformed request (`-32700`/`-32600`), an unknown
+method (`-32601`), and an unknown tool or invalid arguments (`-32602`).
+
+The split matters: "the element was not there" is a fact about the page that an
+agent should reason about, while "you sent an argument that does not exist" is
+a mistake about the protocol that it should correct.
 
 ```jsonc
 {

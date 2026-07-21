@@ -1,0 +1,18 @@
+<!doctype html>
+<!--
+  Agent-surface fixture: the page mutates itself after load with no agent
+  action involved. Used to prove explicit and automatic snapshots share one
+  baseline — an explicit snapshot must not leave the next post-action diff
+  re-reporting changes the agent has already been shown.
+-->
+<html><head><title>Timer repro</title></head>
+<body>
+  <h1>Dashboard</h1>
+  <div id="slot"></div>
+  <button id="go">Go</button>
+  <script>
+    setTimeout(() => {
+      document.getElementById('slot').innerHTML = '<button id="late">Late arrival</button>';
+    }, 800);
+  </script>
+</body></html>

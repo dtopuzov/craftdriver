@@ -157,3 +157,7 @@ traces/
 
 # Downloaded Electron e2e fixture app (tests/electron/global-setup.ts)
 .electron-fixture/
+
+# Saved authentication/storage state written by `craftdriver state save`.
+# These hold live session cookies — never commit them.
+.craftdriver/

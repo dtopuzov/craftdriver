@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Craftdriver Debug Example</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; }
+    fieldset { border: 1px solid #ccc; border-radius: 6px; padding: 1rem 1.25rem; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    input { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    #status { margin-top: 1rem; padding: 0.75rem; border-radius: 6px; }
+    #status.error { background: #fdecea; color: #611a15; }
+    #status.ok { background: #edf7ed; color: #1e4620; }
+    .note { color: #555; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Checkout</h1>
+  <p class="note">
+    A deliberately opaque failure: the page reports only that something went
+    wrong. What actually failed is visible in the console and network journal,
+    not in the DOM.
+  </p>
+
+  <form id="checkout-form">
+    <fieldset>
+      <legend>Order details</legend>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" placeholder="you@example.test" />
+
+      <label for="card">Card number</label>
+      <input id="card" name="card" type="text" placeholder="4242 4242 4242 4242" />
+
+      <button id="place-order" type="submit">Place order</button>
+    </fieldset>
+  </form>
+
+  <div id="status" hidden></div>
+
+  <script>
+    // The endpoint does not exist on the static example server, so this always
+    // fails with the same status. Nothing here is timing- or order-dependent:
+    // the same click produces the same evidence every run.
+    const ENDPOINT = '/api/checkout';
+
+    const form = document.getElementById('checkout-form');
+    const status = document.getElementById('status');
+
+    function show(text, kind) {
+      status.hidden = false;
+      status.className = kind;
+      status.textContent = text;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      show('Placing order…', '');
+
+      try {
+        const response = await fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: document.getElementById('email').value }),
+        });
+
+        if (!response.ok) {
+          // The detail goes to the console, not to the page — which is exactly
+          // the situation `craftdriver logs` exists for.
+          console.error(
+            'checkout failed: HTTP ' + response.status + ' from ' + ENDPOINT
+          );
+          show('Something went wrong. Please try again.', 'error');
+          return;
+        }
+
+        const order = await response.json();
+        show('Order ' + order.orderId + ' confirmed', 'ok');
+      } catch (err) {
+        console.error('checkout request threw: ' + err.message);
+        show('Something went wrong. Please try again.', 'error');
+      }
+    });
+  </script>
+</body>
+</html>

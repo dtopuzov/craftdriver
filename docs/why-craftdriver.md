@@ -16,7 +16,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
 - ☁️ **Remote WebDriver** - use the Browser API with a self-hosted Selenium Grid or a cloud provider like [BrowserStack](https://www.browserstack.com/).
 - ⚛️ **Electron apps** - drive packaged Electron desktop apps and mock native OS dialogs (open/save, message boxes).
-- 🤖 **Agent-friendly** - CLI, MCP, and assistant rules when coding agents need the browser.
+- 🤖 **Agent-friendly** - CLI, a project-local skill, and optional MCP when coding agents need the browser.
 
 ## Good Fits
 

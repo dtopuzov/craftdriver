@@ -37,6 +37,14 @@ export const ErrorCode = {
   UNSUPPORTED: 'UNSUPPORTED',
   /** Method called in an invalid state (e.g. `clock.tick()` before `install()`). */
   STATE_INVALID: 'STATE_INVALID',
+  /**
+   * An agent-surface snapshot ref (`ref=eN`) no longer identifies exactly one
+   * live element — it was removed, duplicated, never issued, or issued against
+   * a document the page has since navigated away from. Take a fresh snapshot;
+   * craftdriver never guesses a replacement element. `detail.reason` carries
+   * the specific cause.
+   */
+  STALE_REF: 'STALE_REF',
   /** Driver-level / transport-level failure surfaced to the caller. */
   DRIVER_ERROR: 'DRIVER_ERROR',
   /**

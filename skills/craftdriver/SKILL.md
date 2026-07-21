@@ -1,89 +1,73 @@
-# craftdriver — SKILL
+---
+name: craftdriver
+description: Explore live web applications with the CraftDriver CLI, validate durable selectors, and write, run, and debug CraftDriver tests. Use when a coding agent needs to inspect a page, drive browser flows, choose locators, author browser automation, or diagnose a failing CraftDriver test.
+---
 
-Modern WebDriver library for Node.js — picks the fastest correct protocol
-(Classic or BiDi) per command. Playwright ergonomics, WebDriver
-standards-compliance, no AI in the hot path.
+# CraftDriver browser workflow
+
+Use CraftDriver's CLI to inspect and exercise the running application, then use
+the public TypeScript API to write and run durable tests. Chrome is the default
+agent workflow.
 
 ## Core loop
 
-```
-navigate → find → action → assert
-```
-
-Every action and every `expect(locator).to…()` **auto-waits** up to the
-default timeout (30 s in-library, 5 s on agent surfaces). Never add
-`sleep()` / `setTimeout()` — it's a footgun.
-
-## Selector preference order
-
-```
-By.testId  >  By.role({name})  >  By.labelText  >
-By.text({exact:true})  >  By.css  >  By.xpath
+```text
+start app → navigate → snapshot → inspect → act → validate selector
+          → write test → run focused test → debug from fresh evidence
 ```
 
-`testId` and `role` are stable across DOM refactors; CSS and XPath
-break the moment markup shifts.
+Actions and `expect(locator).to…()` auto-wait. Do not add sleeps or hand-written
+polling loops.
 
-## Five rules
+## Selector order
 
-1. Use `expect(locator).to…()` for assertions. Never hand-roll
-   `while (...) { ... sleep(100) }` retry loops — they auto-wait.
-2. Read errors by `code`, not by prose. Every public throw is a
-   `CraftdriverError` with a stable `code`. See
-   [docs/error-codes.md](../../docs/error-codes.md).
-3. `instanceof CraftdriverError` is true on every public throw;
-   `instanceof Error` is also true.
-4. BiDi features (`network`, `logs`, tracing, init scripts, true load
-   events) work out of the box — `enableBiDi` defaults to `true`. They only
-   break if you explicitly pass `enableBiDi: false`; the error code on the
-   wrong transport is `UNSUPPORTED`. Exception: `browserName: 'safari'`
-   defaults `enableBiDi` to `false` and rejects `true` — Safari is
-   Classic-only (macOS, headed, one session at a time). See
-   [docs/safari.md](../../docs/safari.md).
-5. Tests fetch from the example server. Start it in a separate
-   terminal: `npm run examples:start` before `npm test`.
+Prefer evidence from the live page in this order:
 
-## When you reach for more
-
-- **Writing tests, looking for a method** → read
-  [skills/craftdriver/cheatsheet.md](cheatsheet.md). Also see
-  [docs/api-reference.md](../../docs/api-reference.md) — every public
-  export, one row each.
-- **Login, upload, wait-for-network, etc.** → read
-  [skills/craftdriver/patterns.md](patterns.md).
-- **Driving the browser from a shell or agent loop** → read
-  [skills/craftdriver/cli.md](cli.md). Same Browser API, exposed as a
-  `craftdriver` binary with daemon + ephemeral modes.
-- **Driving from an MCP-aware AI host** (Claude Desktop / Code, Cursor,
-  Windsurf, Zed, Goose, Gemini CLI) → `craftdriver mcp` is a stdio
-  JSON-RPC server with 14 schema-typed tools. Mutating tools return a
-  compact a11y snapshot **diffed from the previous turn** — you see
-  what changed without a follow-up read. See
-  [docs/mcp.md](../../docs/mcp.md).
-- **An error code you don't recognise** → read
-  [docs/error-codes.md](../../docs/error-codes.md).
-
-## Probing rule
-
-When unsure a selector exists, check before acting. Today: call
-`await locator.count()` (zero-wait, returns the current match count).
-Acting on a hallucinated selector wastes the whole auto-wait budget.
-
-For the **CLI and MCP**, the cheapest way to drive a page is to take a
-snapshot first and use refs:
-
-```
-$ craftdriver snapshot
-e4: textbox "Username" #username
-e7: button "Sign in" #submit
-$ craftdriver fill ref=e4 alice
-$ craftdriver click ref=e7
+```text
+By.role({ name }) / By.labelText / By.testId
+→ exact visible text → stable CSS → XPath only as a last resort
 ```
 
-`ref=eN` resolves to a CSS attribute selector, auto-waits like any
-other selector, and re-allocates on every snapshot. No hallucination.
+Confirm a selector against the live page with `craftdriver exists` or
+`craftdriver find` before putting it in a test.
 
-## Imports
+## Snapshot refs are exploration-only
 
-Always `import { ... } from 'craftdriver'`. Never reach into
-`craftdriver/src/lib/...` — internals are unstable.
+CLI snapshots show `ref=eN`. A ref binds to one element for as long as that
+element lives, and is never reassigned to another one: if the element is removed
+or duplicated, or the page navigates or reloads, the command fails with
+`STALE_REF`. Take a fresh snapshot when that happens — CraftDriver will not
+guess a replacement.
+
+A ref still means nothing outside the current session, so never copy one into
+test source. Convert the element into a durable locator and let CraftDriver
+check it against the live page:
+
+```bash
+npx craftdriver locators ref=e7
+```
+
+Use a candidate reported `unique` (ordered by durability: role + accessible
+name, label, test ID, unique text, minimal CSS). If none is unique, add a
+`data-testid` to the application instead of committing a positional selector.
+
+## Test rules
+
+1. Inspect the repository's existing tests and package scripts before choosing
+   a test location or command.
+2. Import only from `craftdriver`, never from `craftdriver/src/...`.
+3. Use public locators and `expect(locator)` assertions.
+4. Read failures by stable `CraftdriverError.code`, then gather a fresh
+   snapshot and focused page evidence.
+5. Make ordinary reviewable source changes. Never hide a failure with runtime
+   locator repair.
+6. Always close the browser in `finally` or the repository's existing fixture.
+
+## Focused references
+
+- Explore and write a test: [workflow.md](workflow.md)
+- Shell commands: [cli.md](cli.md)
+- TypeScript API cheatsheet: [cheatsheet.md](cheatsheet.md)
+- Worked library recipes: [patterns.md](patterns.md)
+- Full installed package docs: `node_modules/craftdriver/docs/`
+- Optional MCP adapter: `node_modules/craftdriver/docs/mcp.md`

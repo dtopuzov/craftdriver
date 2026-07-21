@@ -14,6 +14,14 @@ export interface Request {
   id: number;
   cmd: string;
   args?: Record<string, unknown>;
+  /**
+   * Named session to route to. Omitted means `default`.
+   *
+   * Kept beside `cmd` rather than inside `args` because it addresses a
+   * session rather than parameterising a command: the daemon reads it to
+   * pick a queue, and the dispatcher never sees it.
+   */
+  session?: string;
 }
 
 export interface OkResponse {
