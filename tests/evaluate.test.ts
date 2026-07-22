@@ -92,6 +92,28 @@ describe('evaluate()', () => {
     }
   });
 
+  it('applies the transient realm retry to page.evaluate()', async () => {
+    if (!browser.isBiDiEnabled()) return;
+    const page = await browser.activePage();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conn = (browser as any).bidiSession.getConnection();
+    const original = conn.send.bind(conn);
+    let injected = 0;
+    conn.send = (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'script.callFunction' && injected === 0) {
+        injected++;
+        return Promise.reject(new Error('BiDi error [unknown error]: execution contexts cleared'));
+      }
+      return original(method, params);
+    };
+    try {
+      expect(await page.evaluate(() => document.title)).toBe('Evaluate Playground');
+      expect(injected).toBe(1);
+    } finally {
+      conn.send = original;
+    }
+  });
+
   it('does not retry a genuine in-script exception', async () => {
     await expect(
       browser.evaluate(() => {
