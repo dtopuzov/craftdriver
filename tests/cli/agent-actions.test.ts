@@ -177,11 +177,17 @@ describe('agent action set', () => {
 
   it('mouse wheel scrolls the page', async () => {
     await session.run({ cmd: 'mouse', args: { action: 'wheel', deltaY: 400 } });
-    const y = (await session.run({
-      cmd: 'eval',
-      args: { js: 'return window.scrollY' },
-    })) as { result: number };
-    expect(y.result).toBeGreaterThan(0);
+    // The actions command completing means the wheel input was dispatched;
+    // the browser may apply its default scrolling on a later rendering task.
+    await expect
+      .poll(async () => {
+        const y = (await session.run({
+          cmd: 'eval',
+          args: { js: 'return window.scrollY' },
+        })) as { result: number };
+        return y.result;
+      })
+      .toBeGreaterThan(0);
   });
 
   it('rejects an unknown sub-action instead of doing something surprising', async () => {
