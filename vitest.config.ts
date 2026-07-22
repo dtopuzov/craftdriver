@@ -8,7 +8,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 30000, // 30 seconds for browser tests
-    hookTimeout: 30000,
+    // Browser setup has its own bounded phases: Firefox driver readiness can
+    // take 15s, session creation 30s, and an initial navigation another 30s.
+    // Keep the harness outside those deadlines so loaded CI runners surface
+    // CraftDriver's specific error instead of a premature generic hook timeout.
+    hookTimeout: 90000,
     teardownTimeout: 30000,
     pool: 'forks',
     maxWorkers: maxWorkers,
