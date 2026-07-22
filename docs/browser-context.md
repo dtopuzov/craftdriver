@@ -80,13 +80,13 @@ await page.find('#submit').click();
 await page.expect('#welcome').toBeVisible();
 
 // Cookies + localStorage for every origin the context has visited.
-await ctx.saveStorageState('auth/alice.json');
+await ctx.saveStorageState('.auth/alice.json');
 await browser.quit();
 ```
 
 ```typescript
 // every other test:
-const ctx = await browser.newContext({ storageState: 'auth/alice.json' });
+const ctx = await browser.newContext({ storageState: '.auth/alice.json' });
 const page = await ctx.newPage({ url: 'https://app.example.com/dashboard' });
 // Already logged in — no form, no waiting.
 ```
@@ -135,7 +135,7 @@ Create a new isolated user context. Backed by BiDi
 const ctx = await browser.newContext({
   baseURL: 'https://staging.example.com',
   extraHTTPHeaders: { 'x-test-tenant': 'acme', 'x-staging-token': process.env.STAGING_TOKEN! },
-  storageState: 'auth/alice.json',
+  storageState: '.auth/alice.json',
 });
 const page = await ctx.newPage({ url: '/dashboard' }); // resolves against baseURL
 ```

@@ -62,7 +62,8 @@ A change is not done until **all** of these are true:
 - [ ] User-facing docs in `docs/` updated with a working snippet.
 - [ ] `npm run lint` passes with zero errors.
 - [ ] `npm test` passes with the examples server running.
-- [ ] An `Unreleased` line was added to `CHANGELOG.md`.
+- [ ] The commit uses a conventional type (`feat:`, `fix:`, etc.) so
+      semantic-release can generate the changelog entry.
 
 ## Design principles
 
@@ -122,4 +123,3 @@ Before saying a task is complete:
 4. List the exact files changed in the response.
 
 If any step fails, fix it. Don't mark the task complete on green CI alone.
-

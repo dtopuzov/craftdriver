@@ -4,6 +4,9 @@ Worked recipes, each kept compact. Load on demand from [SKILL.md](SKILL.md).
 
 ## 1. Login, save storage state for reuse
 
+Add `.auth/` to the consuming project's `.gitignore`; these files contain live
+session cookies even though CraftDriver writes them with restricted permissions.
+
 ```ts
 const browser = await Browser.launch();
 await browser.navigateTo('https://app.example.com/login');

@@ -145,8 +145,8 @@ export const SESSION_CREATE_BACKOFF_STEP_MS = 500;
  * a barrier the BiDi side respects — an immediately following `{ context }`
  * script call can land while BiDi is still swapping the old realm for the new
  * one. The error is pre-execution (the script never ran, no side effects), so a
- * short retry that re-resolves the context is safe. See
- * plans/TODO-bidi-first-navigation.md (Option A).
+ * short retry that re-resolves the context is safe. The injected-error
+ * regression case lives in `tests/evaluate.test.ts`.
  */
 export const EVAL_REALM_RETRY_ATTEMPTS = 3;
 export const EVAL_REALM_RETRY_DELAY_MS = 25;

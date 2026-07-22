@@ -13,14 +13,21 @@ the best available WebDriver transport for the browser you launched.
 not a promise of Playwright JSON compatibility and does not include IndexedDB,
 Cache Storage, service workers, or reusable sessionStorage.
 
+State files contain live session cookies. Keep them in a dedicated ignored
+directory:
+
+```text
+.auth/
+```
+
 ## Saving Session State
 
 ```typescript
 // Save all cookies and localStorage to a file
-await browser.saveState('./session.json');
+await browser.saveState('.auth/session.json');
 
 // Save with options
-await browser.saveState('./session.json', {
+await browser.saveState('.auth/session.json', {
   includeCookies: true, // default: true
   includeLocalStorage: true, // default: true
   includeSessionStorage: false, // default: false
@@ -55,7 +62,7 @@ The saved file contains:
 
 ```typescript
 // Load state into current browser
-await browser.loadState('./session.json');
+await browser.loadState('.auth/session.json');
 
 // Paths and in-memory state objects are equivalent
 await browser.loadState(await browser.storage.getState());
@@ -82,7 +89,7 @@ The most common pattern - launch a browser with existing session:
 ```typescript
 const browser = await Browser.launch({
   browserName: 'chrome',
-  storageState: './session.json',
+  storageState: '.auth/session.json',
 });
 
 // Navigate directly to authenticated page
@@ -117,7 +124,7 @@ fallback instead:
 ```typescript
 const browser = await Browser.launch({ enableBiDi: false });
 await browser.navigateTo('https://example.com');
-await browser.loadState('./session.json');
+await browser.loadState('.auth/session.json');
 await browser.reload(); // the app can now read the restored state
 ```
 
@@ -195,10 +202,10 @@ async function generateAuth() {
   await browser.expect('#dashboard').toBeVisible();
 
   // Save the authenticated state
-  await browser.saveState('./auth.json');
+  await browser.saveState('.auth/session.json');
 
   await browser.quit();
-  console.log('Auth state saved to auth.json');
+  console.log('Auth state saved to .auth/session.json');
 }
 
 generateAuth();
@@ -218,7 +225,7 @@ describe('Dashboard', () => {
     // Launch with saved auth - already logged in!
     browser = await Browser.launch({
       browserName: 'chrome',
-      storageState: './auth.json',
+      storageState: '.auth/session.json',
     });
   });
 
@@ -257,13 +264,13 @@ async function testLoginPersistence() {
   await browser.click('#submit');
   await browser.expect('#welcome').toBeVisible();
 
-  await browser.saveState('./session.json');
+  await browser.saveState('.auth/session.json');
   await browser.quit();
 
   // Second browser: Load state and verify logged in
   browser = await Browser.launch({
     browserName: 'chrome',
-    storageState: './session.json',
+    storageState: '.auth/session.json',
   });
 
   await browser.navigateTo('http://localhost:3000/login');

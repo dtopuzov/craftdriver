@@ -69,8 +69,7 @@ describe('evaluate()', () => {
   // A Classic-first navigate returns at readyState === 'complete', which is not
   // a barrier the BiDi side respects: an immediately following { context } call
   // can race the realm swap and throw "execution contexts cleared". evaluate()
-  // retries that pre-execution error (script never ran). See
-  // plans/TODO-bidi-first-navigation.md.
+  // retries that pre-execution error (the script never ran).
   it('retries past a transient "execution contexts cleared" error', async () => {
     if (!browser.isBiDiEnabled()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

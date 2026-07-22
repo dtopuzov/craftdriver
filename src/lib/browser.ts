@@ -2479,7 +2479,7 @@ export class Browser {
    *
    * @example
    * // Skip the login UI in every test by reusing a saved session.
-   * const ctx = await browser.newContext({ storageState: 'auth/alice.json' });
+   * const ctx = await browser.newContext({ storageState: '.auth/alice.json' });
    * const page = await ctx.newPage({ url: 'https://app.example.com/dashboard' });
    *
    * @example
