@@ -6,7 +6,9 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 import os from 'os';
 
-const maxWorkers = Math.max(1, Math.floor(os.cpus().length / 2));
+// Recipe files also launch independent browsers. Avoid competing browser and
+// driver processes on the shared CI runner; preserve local parallelism.
+const maxWorkers = process.env.CI ? 1 : Math.max(1, Math.floor(os.cpus().length / 2));
 
 export default defineConfig({
   test: {

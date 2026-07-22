@@ -14,7 +14,7 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
     "test": "HEADLESS=true vitest run",
-    "test:firefox": "BROWSER_NAME=firefox HEADLESS=true vitest run --maxWorkers=2",
+    "test:firefox": "BROWSER_NAME=firefox HEADLESS=true vitest run",
     "test:chrome": "BROWSER_NAME=chrome vitest run",
     "test:chromium": "BROWSER_NAME=chromium vitest run",
     "test:safari": "BROWSER_NAME=safari vitest run tests/safari.test.ts --maxWorkers=1",
