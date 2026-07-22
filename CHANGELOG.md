@@ -3,13 +3,7 @@
 
 ### Features
 
-* **agent:** add AI tooling and reliable auth-state reuse ([2a0f079](https://github.com/dtopuzov/craftdriver/commit/2a0f079b327ffd1545fa0f1919e06045e89422dc))
-
-## Unreleased
-
-### Features
-
-* **agent CLI:** add a persistent browser exploration workflow with semantic snapshots, safe temporary refs, live-validated durable locators, manual QA actions, console/network evidence, mocks, traces, and reusable login state
+* **agent CLI:** add a persistent browser exploration workflow with semantic snapshots, safe temporary refs, live-validated durable locators, manual QA actions, console/network evidence, mocks, traces, and reusable login state ([2a0f079](https://github.com/dtopuzov/craftdriver/commit/2a0f079b327ffd1545fa0f1919e06045e89422dc))
 * **auth state:** restore cookies and multi-origin localStorage before the first navigation on BiDi launch and contexts, with path/object inputs and one-time hydration that preserves later application writes
 * **sessions:** isolate browsers, cookies, pages, refs, and artifacts in named sessions under a project-scoped daemon
 * **MCP:** add a validated stdio tool server with automatic post-action snapshot diffs, bounded responses, and quota-controlled file artifacts for token-efficient context
@@ -220,7 +214,7 @@ Fixes: https://github.com/dtopuzov/craftdriver/issues/20
 
 # [0.1.0](https://github.com/dtopuzov/craftdriver/compare/v0.0.3...v0.1.0) (2026-02-08)
 
-## Unreleased
+### Changes
 
 - docs: refresh the README as a product front door, add a VitePress documentation site with GitHub Pages deployment, add proof pages/launch kit/social card, and add contribution files (issue forms, PR template, code of conduct).
 - **breaking** (pre-1.0): BiDi console/error log capture is lazy by default. Messages emitted before the first `browser.logs` / `onConsole` / `onError` / `waitForConsole` touch are no longer captured unless `Browser.launch({ captureLogs: true })` is used to arm logging at launch.

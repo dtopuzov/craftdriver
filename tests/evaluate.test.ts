@@ -69,8 +69,7 @@ describe('evaluate()', () => {
   // A Classic-first navigate returns at readyState === 'complete', which is not
   // a barrier the BiDi side respects: an immediately following { context } call
   // can race the realm swap and throw "execution contexts cleared". evaluate()
-  // retries that pre-execution error (script never ran). See
-  // plans/TODO-bidi-first-navigation.md.
+  // retries that pre-execution error (the script never ran).
   it('retries past a transient "execution contexts cleared" error', async () => {
     if (!browser.isBiDiEnabled()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,6 +87,28 @@ describe('evaluate()', () => {
       const title = await browser.evaluate(() => document.title);
       expect(injected).toBe(1); // the error was actually injected
       expect(title).toBe('Evaluate Playground'); // and evaluate() recovered
+    } finally {
+      conn.send = original;
+    }
+  });
+
+  it('applies the transient realm retry to page.evaluate()', async () => {
+    if (!browser.isBiDiEnabled()) return;
+    const page = await browser.activePage();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conn = (browser as any).bidiSession.getConnection();
+    const original = conn.send.bind(conn);
+    let injected = 0;
+    conn.send = (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'script.callFunction' && injected === 0) {
+        injected++;
+        return Promise.reject(new Error('BiDi error [unknown error]: execution contexts cleared'));
+      }
+      return original(method, params);
+    };
+    try {
+      expect(await page.evaluate(() => document.title)).toBe('Evaluate Playground');
+      expect(injected).toBe(1);
     } finally {
       conn.send = original;
     }

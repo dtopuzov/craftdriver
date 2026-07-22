@@ -1,14 +1,28 @@
 import { defineConfig, configDefaults } from 'vitest/config';
 import os from 'os';
 
-const maxWorkers = Math.max(1, Math.floor(os.cpus().length / 2));
+const localMaxWorkers = Math.max(1, Math.floor(os.cpus().length / 2));
+// Each integration-test file owns a browser/driver pair. Two pairs fit on a
+// developer machine, but have intermittently starved each other on the shared
+// CI runner (late browser effects, empty intercepted bodies, and setup phases
+// crossing otherwise generous deadlines). Keep CI deterministic; local runs
+// retain the faster parallel default.
+const maxWorkers = process.env.CI
+  ? 1
+  : process.env.BROWSER_NAME === 'firefox'
+    ? Math.min(2, localMaxWorkers)
+    : localMaxWorkers;
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
     testTimeout: 30000, // 30 seconds for browser tests
-    hookTimeout: 30000,
+    // Browser setup has its own bounded phases: Firefox driver readiness can
+    // take 15s, session creation 30s, and an initial navigation another 30s.
+    // Keep the harness outside those deadlines so loaded CI runners surface
+    // CraftDriver's specific error instead of a premature generic hook timeout.
+    hookTimeout: 90000,
     teardownTimeout: 30000,
     pool: 'forks',
     maxWorkers: maxWorkers,

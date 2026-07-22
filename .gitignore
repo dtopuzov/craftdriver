@@ -161,3 +161,6 @@ traces/
 # Saved authentication/storage state written by `craftdriver state save`.
 # These hold live session cookies — never commit them.
 .craftdriver/
+
+# Local implementation plans are working notes, not repository artifacts.
+plans/

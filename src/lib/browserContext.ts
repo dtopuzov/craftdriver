@@ -348,8 +348,7 @@ export class BrowserContext {
    * Return cookies scoped to this user context.
    *
    * Optionally filter by URL(s): only cookies whose `domain`/`path` would
-   * be sent on a request to that URL are returned. Mirrors Playwright's
-   * `BrowserContext.cookies(urls)` shape.
+   * be sent on a request to that URL are returned.
    *
    * @example
    * ```ts
@@ -432,14 +431,13 @@ export class BrowserContext {
     });
   }
 
-  // ── Storage state (Playwright-shape JSON) ────────────────────────────────
+  // ── Storage state (CraftDriver-native JSON) ─────────────────────────────
 
   /**
    * Snapshot cookies + localStorage for this context.
    *
-   * Returns `{ cookies, localStorage }` — a superset of Playwright's
-   * `storageState()` JSON shape, kept close enough that dumped files
-   * are interchangeable on a best-effort basis.
+   * Returns `{ cookies, localStorage }` in CraftDriver's native
+   * {@link SessionState} shape. It is not a cross-tool interchange format.
    *
    * **Limitation.** localStorage can only be read for origins that a page
    * in this context is currently visiting — BiDi has no out-of-band
@@ -474,7 +472,7 @@ export class BrowserContext {
    * const alice = await browser.newContext();
    * const page = await alice.newPage({ url: 'https://app.example.com/login' });
    * await loginAs(page, 'alice');
-   * await alice.saveStorageState('auth/alice.json');
+   * await alice.saveStorageState('.auth/alice.json');
    * await alice.close();
    * ```
    */

@@ -22,6 +22,7 @@ import type { ScriptEvaluateResult, RemoteValue } from './bidi/types.js';
 import { DEFAULT_NAVIGATION_TIMEOUT_MS, STATE_POLL_INTERVAL_MS } from './timing.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
+import { withRealmRetry } from './bidi/evaluate.js';
 
 type LoadState = 'load' | 'domcontentloaded';
 
@@ -164,24 +165,26 @@ export class Frame {
   ): Promise<T> {
     const fnSrc = typeof fn === 'function' ? fn.toString() : fn;
 
-    if (this.conn && this.bidiContextId) {
-      const target: Record<string, unknown> = { context: this.bidiContextId };
-      let result: ScriptEvaluateResult;
-      if (typeof fn === 'function') {
-        result = await this.conn.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: fnSrc,
-          target,
-          arguments: args.map(serializeLocalValue),
-          awaitPromise: true,
-        });
-      } else {
-        result = await this.conn.send<ScriptEvaluateResult>('script.callFunction', {
+    const conn = this.conn;
+    const bidiContextId = this.bidiContextId;
+    if (conn && bidiContextId) {
+      const target: Record<string, unknown> = { context: bidiContextId };
+      const result = await withRealmRetry(() => {
+        if (typeof fn === 'function') {
+          return conn.send<ScriptEvaluateResult>('script.callFunction', {
+            functionDeclaration: fnSrc,
+            target,
+            arguments: args.map(serializeLocalValue),
+            awaitPromise: true,
+          });
+        }
+        return conn.send<ScriptEvaluateResult>('script.callFunction', {
           functionDeclaration: `function() { ${fnSrc} }`,
           target,
           arguments: [],
           awaitPromise: true,
         });
-      }
+      });
       if (result.type === 'exception') {
         throw new Error(
           `evaluate() threw an exception in the frame: ${result.exceptionDetails?.text ?? 'unknown error'}`

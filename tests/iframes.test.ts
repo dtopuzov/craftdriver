@@ -49,6 +49,28 @@ describe('Iframes', () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
+  it('retries a transient realm swap while evaluating inside a frame', async () => {
+    if (!browser.isBiDiEnabled()) return;
+    const frame = await browser.frame('#my-frame');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conn = (browser as any).bidiSession.getConnection();
+    const original = conn.send.bind(conn);
+    let injected = 0;
+    conn.send = (method: string, params: Record<string, unknown> = {}) => {
+      if (method === 'script.callFunction' && injected === 0) {
+        injected++;
+        return Promise.reject(new Error('BiDi error [unknown error]: execution contexts cleared'));
+      }
+      return original(method, params);
+    };
+    try {
+      expect(await frame.evaluate(() => document.title)).toBe('Iframe Child Page');
+      expect(injected).toBe(1);
+    } finally {
+      conn.send = original;
+    }
+  });
+
   it('can use frame.locator() to interact with elements', async () => {
     const frame = await browser.frame('#my-frame');
     await frame.locator('#child-btn').click();

@@ -97,6 +97,20 @@ describe('exploration-to-test workflow', () => {
       cmd: 'logs',
       args: { action: 'wait', kind: 'error', timeout: 10_000 },
     });
+    // Console and completed-response events arrive on independent BiDi
+    // streams. Seeing the page's console.error does not guarantee that the
+    // later network.responseCompleted event is already in the journal. The
+    // journal scans retained entries before subscribing, so this remains
+    // race-free whichever event arrived first.
+    await session.run({
+      cmd: 'logs',
+      args: {
+        action: 'wait',
+        kind: 'response',
+        contains: '/api/checkout',
+        timeout: 10_000,
+      },
+    });
 
     const errors = (await session.run({
       cmd: 'logs',

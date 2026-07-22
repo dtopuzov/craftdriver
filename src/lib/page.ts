@@ -25,6 +25,7 @@ import type { BrowserContext } from './browserContext.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
+import { withRealmRetry } from './bidi/evaluate.js';
 
 type LoadState = 'load' | 'domcontentloaded' | 'networkidle' | 'none';
 
@@ -336,24 +337,25 @@ export class Page {
   ): Promise<T> {
     const fnSrc = typeof fn === 'function' ? fn.toString() : fn;
 
-    if (this.conn) {
+    const conn = this.conn;
+    if (conn) {
       const target: Record<string, unknown> = { context: this.contextId };
-      let result: ScriptEvaluateResult;
-      if (typeof fn === 'function') {
-        result = await this.conn.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: fnSrc,
-          target,
-          arguments: args.map(serializeLocalValue),
-          awaitPromise: true,
-        });
-      } else {
-        result = await this.conn.send<ScriptEvaluateResult>('script.callFunction', {
+      const result = await withRealmRetry(() => {
+        if (typeof fn === 'function') {
+          return conn.send<ScriptEvaluateResult>('script.callFunction', {
+            functionDeclaration: fnSrc,
+            target,
+            arguments: args.map(serializeLocalValue),
+            awaitPromise: true,
+          });
+        }
+        return conn.send<ScriptEvaluateResult>('script.callFunction', {
           functionDeclaration: `function() { ${fnSrc} }`,
           target,
           arguments: [],
           awaitPromise: true,
         });
-      }
+      });
       if (result.type === 'exception') {
         throw new CraftdriverError(
           ErrorCode.EVAL_THREW,

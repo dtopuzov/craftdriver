@@ -89,11 +89,11 @@ await browser.network.mock('**/api/users', {
 });
 
 // Save and reuse login state
-await browser.saveState('./session.json');
+await browser.saveState('.auth/session.json');
 
 await Browser.launch({
   browserName: 'chrome',
-  storageState: './session.json',
+  storageState: '.auth/session.json',
 });
 
 // Built-in accessibility checks via axe-core

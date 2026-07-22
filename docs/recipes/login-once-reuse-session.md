@@ -68,7 +68,7 @@ Chrome/Chromium and Firefox BiDi use the simpler launch form above.
 
 ## Notes
 
-- Keep generated auth files out of source control if they contain real secrets.
+- Add `.auth/` to `.gitignore`; generated state contains live session cookies.
 - Regenerate auth state when the app changes its login or session behavior.
 - Use separate files such as `.auth/admin.json` and `.auth/customer.json` for different roles.
 

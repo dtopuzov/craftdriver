@@ -19,7 +19,7 @@ const browser = await Browser.launch({ browserName: 'chrome' });
 // With pre-loaded session state
 const browser = await Browser.launch({
   browserName: 'chrome',
-  storageState: './auth.json',
+  storageState: '.auth/session.json',
 });
 ```
 
@@ -385,10 +385,10 @@ See [Session Management](./session-management.md) for full details.
 const storage = browser.storage;
 
 // Save current session to file
-await browser.saveState('./session.json');
+await browser.saveState('.auth/session.json');
 
 // Load session from file
-await browser.loadState('./session.json');
+await browser.loadState('.auth/session.json');
 
 // Or use an in-memory SessionState object
 await browser.loadState(await browser.storage.getState());

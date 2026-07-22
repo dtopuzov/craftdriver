@@ -21,8 +21,6 @@ import {
   PORT_RELEASE_DELAY_MS,
   BIDI_CONNECT_MAX_ATTEMPTS,
   BIDI_CONNECT_BACKOFF_STEP_MS,
-  EVAL_REALM_RETRY_ATTEMPTS,
-  EVAL_REALM_RETRY_DELAY_MS,
 } from './timing.js';
 import { ElementHandle } from './elementHandle.js';
 import { Locator } from './locator.js';
@@ -67,6 +65,7 @@ import { clearWithFastPath } from './clearFastPath.js';
 import { runExpectScreenshot, shouldUpdateVisualBaselines } from './visual/index.js';
 import type { ExpectScreenshotOptions, ScreenshotMatchResult } from './visual/index.js';
 import { publicPageInitScript } from './initScript.js';
+import { withRealmRetry } from './bidi/evaluate.js';
 
 /** Device metrics for custom mobile emulation */
 export interface DeviceMetrics {
@@ -1751,8 +1750,9 @@ export class Browser {
   ): Promise<T> {
     const fnSrc = typeof fn === 'function' ? fn.toString() : fn;
 
-    if (this.bidiSession?.isConnected()) {
-      const conn = this.bidiSession.getConnection();
+    const bidiSession = this.bidiSession;
+    if (bidiSession?.isConnected()) {
+      const conn = bidiSession.getConnection();
       // Classic-first navigations return at readyState === 'complete', which is
       // not a barrier the BiDi side respects: an immediately following
       // { context } call can race the browser swapping the old realm for the
@@ -1763,29 +1763,16 @@ export class Browser {
       const functionDeclaration = typeof fn === 'function' ? fnSrc : `function() { ${fnSrc} }`;
       const callArgs = typeof fn === 'function' ? args.map(serializeLocalValue) : [];
 
-      let result: ScriptEvaluateResult | undefined;
-      for (let attempt = 1; ; attempt++) {
-        const context = this.bidiSession.getContext();
+      const result = await withRealmRetry(() => {
+        const context = bidiSession.getContext();
         const target: Record<string, unknown> = context ? { context } : {};
-        try {
-          result = await conn.send<ScriptEvaluateResult>('script.callFunction', {
-            functionDeclaration,
-            target,
-            arguments: callArgs,
-            awaitPromise: true,
-          });
-          break;
-        } catch (err) {
-          if (
-            attempt < EVAL_REALM_RETRY_ATTEMPTS &&
-            String((err as Error)?.message).includes('execution contexts cleared')
-          ) {
-            await new Promise((r) => setTimeout(r, EVAL_REALM_RETRY_DELAY_MS));
-            continue;
-          }
-          throw err;
-        }
-      }
+        return conn.send<ScriptEvaluateResult>('script.callFunction', {
+          functionDeclaration,
+          target,
+          arguments: callArgs,
+          awaitPromise: true,
+        });
+      });
 
       if (result.type === 'exception') {
         throw new CraftdriverError(
@@ -2479,7 +2466,7 @@ export class Browser {
    *
    * @example
    * // Skip the login UI in every test by reusing a saved session.
-   * const ctx = await browser.newContext({ storageState: 'auth/alice.json' });
+   * const ctx = await browser.newContext({ storageState: '.auth/alice.json' });
    * const page = await ctx.newPage({ url: 'https://app.example.com/dashboard' });
    *
    * @example

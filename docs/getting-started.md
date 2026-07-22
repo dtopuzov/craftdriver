@@ -87,7 +87,7 @@ Pick a browser with `browserName`:
 const browser = await Browser.launch({
   browserName: 'firefox', // 'chrome' | 'chromium' | 'firefox' | 'safari'
   // BiDi: restore cookies + multi-origin localStorage before first navigation.
-  storageState: './session.json', // path or in-memory SessionState
+  storageState: '.auth/session.json', // path or in-memory SessionState
 });
 ```
 
