@@ -170,6 +170,56 @@ describe('Shadow DOM transport selection', () => {
     });
   });
 
+  it('passes semantic locator values as BiDi data instead of executable code', async () => {
+    const driver = new Driver(unusedEndpoint, 'session');
+    vi.spyOn(driver, 'findElement').mockResolvedValue(driver.webElementFromId('host'));
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let scriptCalls = 0;
+    const connection = {
+      send: async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        scriptCalls += 1;
+        if (scriptCalls === 1) {
+          return {
+            type: 'success',
+            realm: 'realm',
+            result: {
+              type: 'node',
+              sharedId: 'open-root',
+              value: { nodeType: 11, childNodeCount: 1 },
+            },
+          };
+        }
+        return {
+          type: 'success',
+          realm: 'realm',
+          result: { type: 'array', value: [] },
+        };
+      },
+    };
+    const text = '</script>"; globalThis.compromised = true; //\u2028';
+    const by = By.text(text);
+
+    const count = await new Locator(driver, By.css('#host'))
+      .withBiDi(() => ({ connection: connection as never, contextId: 'context-3' }))
+      .shadowRoot()
+      .locator(by)
+      .count();
+
+    expect(count).toBe(0);
+    expect(calls[1]).toMatchObject({
+      method: 'script.callFunction',
+      params: {
+        arguments: [
+          { sharedId: 'open-root' },
+          { type: 'string', value: JSON.stringify(by.descriptor) },
+        ],
+      },
+    });
+    expect(calls[1].params.functionDeclaration).not.toContain(text);
+    expect(calls[1].params.functionDeclaration).toContain('JSON.parse(queryJson)');
+  });
+
   it('restarts the complete plan through Classic and caches unsupported BiDi', async () => {
     const driver = new Driver(unusedEndpoint, 'session');
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});

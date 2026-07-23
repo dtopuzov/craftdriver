@@ -339,10 +339,8 @@ function remoteNodeSharedIds(value: RemoteValue | undefined): string[] {
   return [];
 }
 
-function semanticFunctionBody(descriptor: QueryDescriptor): string {
-  return `
+const SEMANTIC_QUERY_BODY = `
 ${PAGE_SEMANTICS_JS}
-const query = ${JSON.stringify(descriptor)};
 function normalized(value, options) {
   let result = value == null ? '' : String(value);
   if (options && options.trim !== false) result = result.trim().replace(/\\s+/g, ' ');
@@ -413,14 +411,19 @@ const matched = candidates.filter(matches);
 if (query.kind !== 'text') return matched;
 return matched.filter((candidate) => !Array.from(candidate.querySelectorAll('*')).some(matches));
 `;
-}
 
 const CLASSIC_SEMANTIC_SCRIPT = `
 const root = arguments[0];
-${semanticFunctionBody({ kind: 'text', value: '', options: {} }).replace(
-  /const query = [^;]+;/,
-  'const query = arguments[1];'
-)}
+const query = arguments[1];
+${SEMANTIC_QUERY_BODY}
+`;
+
+// The function source is static. User-controlled locator values cross the
+// protocol boundary as a string argument and are parsed strictly as data.
+const BIDI_SEMANTIC_FUNCTION = `(root, queryJson) => {
+const query = JSON.parse(queryJson);
+${SEMANTIC_QUERY_BODY}
+}
 `;
 
 export class QueryEnvironment {
@@ -668,18 +671,7 @@ export class QueryEnvironment {
 
     try {
       if (needsSemanticEvaluation(by.descriptor)) {
-        const response = await root.connection.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: `(root) => { ${semanticFunctionBody(by.descriptor!)} }`,
-          awaitPromise: false,
-          target: { context: root.contextId },
-          arguments: [{ sharedId: root.sharedId }],
-          resultOwnership: 'none',
-          serializationOptions: { maxObjectDepth: 1 },
-        });
-        if (response.type === 'exception') {
-          throw new Error(response.exceptionDetails?.text ?? 'BiDi semantic shadow query threw');
-        }
-        return remoteNodeSharedIds(response.result).map((id) => this.driver.webElementFromId(id));
+        return this.findSemanticFromBidiRoot(root, by.descriptor!);
       }
 
       const descriptor = by.descriptor;
@@ -698,16 +690,7 @@ export class QueryEnvironment {
         // the shared page function rather than translated approximately.
         const fallbackDescriptor: QueryDescriptor =
           descriptor ?? { kind: 'linkText', value: by.value, partial: by.using === 'partial link text' };
-        const response = await root.connection.send<ScriptEvaluateResult>('script.callFunction', {
-          functionDeclaration: `(root) => { ${semanticFunctionBody(fallbackDescriptor)} }`,
-          awaitPromise: false,
-          target: { context: root.contextId },
-          arguments: [{ sharedId: root.sharedId }],
-          resultOwnership: 'none',
-          serializationOptions: { maxObjectDepth: 1 },
-        });
-        if (response.type === 'exception') throw new Error(response.exceptionDetails?.text);
-        return remoteNodeSharedIds(response.result).map((id) => this.driver.webElementFromId(id));
+        return this.findSemanticFromBidiRoot(root, fallbackDescriptor);
       }
       const response = await root.connection.send<BidiLocateResult>('browsingContext.locateNodes', {
         context: root.contextId,
@@ -739,6 +722,27 @@ export class QueryEnvironment {
       }
       throw bidiDriverError(error, 'locate-nodes', queryPath, root.contextId);
     }
+  }
+
+  private async findSemanticFromBidiRoot(
+    root: Extract<ResolvedRoot, { kind: 'bidiShadow' }>,
+    descriptor: QueryDescriptor
+  ): Promise<WebElement[]> {
+    const response = await root.connection.send<ScriptEvaluateResult>('script.callFunction', {
+      functionDeclaration: BIDI_SEMANTIC_FUNCTION,
+      awaitPromise: false,
+      target: { context: root.contextId },
+      arguments: [
+        { sharedId: root.sharedId },
+        { type: 'string', value: JSON.stringify(descriptor) },
+      ],
+      resultOwnership: 'none',
+      serializationOptions: { maxObjectDepth: 1 },
+    });
+    if (response.type === 'exception') {
+      throw new Error(response.exceptionDetails?.text ?? 'BiDi semantic shadow query threw');
+    }
+    return remoteNodeSharedIds(response.result).map((id) => this.driver.webElementFromId(id));
   }
 }
 
