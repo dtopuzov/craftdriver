@@ -1,23 +1,33 @@
 import { By } from './by.js';
 import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
-import { until } from './wait.js';
 import fs from 'fs/promises';
 import path from 'path';
 import yazl from 'yazl';
-import { expectSelector } from './expect.js';
+import { expectResolved } from './expect.js';
 import { getKeyValue, type KeyValue } from './keys.js';
 import { A11y } from './a11y.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
-import { withApiCallStack } from './errors.js';
+import { CraftdriverError, ErrorCode, withApiCallStack } from './errors.js';
+import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
+import {
+  QueryEnvironment,
+  createLocatorPlan,
+  describeTarget,
+  isDetachedShadowError,
+  isTerminalQueryError,
+  withShadowRetryAttempts,
+  type ContextSwitcher,
+  type ElementTargetPlan,
+  type QueryBiDiProvider,
+} from './query.js';
+import { ShadowRootLocator } from './shadowRootLocator.js';
 
 export interface ElementOptions {
   timeout?: number;
 }
-
-export type ContextSwitcher = { in: () => Promise<void>; out: () => Promise<void> };
 
 /**
  * Zip a single local file in memory (as Selenium's `se/file` upload
@@ -39,39 +49,39 @@ function zipFileToBase64(filePath: string): Promise<string> {
 }
 
 export class ElementHandle {
-  /** Set only for snapshot handles created via `ElementHandle.fromWebElement()`. */
-  private _webElement?: WebElement;
-
-  /** Optional context switcher for frame/window scoping. */
-  private _contextSwitcher?: ContextSwitcher;
+  private target: ElementTargetPlan;
+  private environment: QueryEnvironment;
 
   constructor(
     private driver: Driver,
-    private by: By,
+    by: By,
     /** Returns the browser-level default timeout so per-call opts can fall back to it. */
-    private getDefaultTimeout: () => number = () => 5000
-  ) { }
+    private getDefaultTimeout: () => number = () => 5000,
+    environment?: QueryEnvironment,
+    target?: ElementTargetPlan
+  ) {
+    this.environment = environment ?? new QueryEnvironment(driver);
+    this.target = target ?? { kind: 'locator', plan: createLocatorPlan(by) };
+  }
 
   /**
    * Bind this handle to a browsing context (iframe or tab).
    * Element resolution will switch into the context before finding and switch out after.
    */
   withContext(switcher: ContextSwitcher): this {
-    this._contextSwitcher = switcher;
+    this.environment.setContextSwitcher(switcher);
+    return this;
+  }
+
+  /** Bind this handle to a live BiDi context provider. */
+  withBiDi(provider: QueryBiDiProvider): this {
+    this.environment.setBiDiProvider(provider);
     return this;
   }
 
   private async _withContext<T>(fn: () => Promise<T>, callerFn?: Function): Promise<T> {
     const run = async () => {
-      if (this._contextSwitcher) {
-        await this._contextSwitcher.in();
-        try {
-          return await fn();
-        } finally {
-          await this._contextSwitcher.out();
-        }
-      }
-      return fn();
+      return this.environment.withContext(fn);
     };
     return callerFn ? withApiCallStack(callerFn, run) : run();
   }
@@ -85,36 +95,108 @@ export class ElementHandle {
     webElement: WebElement,
     getDefaultTimeout: () => number
   ): ElementHandle {
-    const handle = new ElementHandle(driver, By.css('*'), getDefaultTimeout);
-    handle._webElement = webElement;
-    return handle;
+    return ElementHandle.fromTarget(
+      driver,
+      { kind: 'fixed', element: webElement },
+      getDefaultTimeout,
+      new QueryEnvironment(driver)
+    );
+  }
+
+  /** Internal factory used by locators and shadow-root search contexts. */
+  static fromTarget(
+    driver: Driver,
+    target: ElementTargetPlan,
+    getDefaultTimeout: () => number,
+    environment: QueryEnvironment
+  ): ElementHandle {
+    return new ElementHandle(driver, By.css('*'), getDefaultTimeout, environment, target);
   }
 
   /** Resolve to a located (not necessarily visible) WebElement. */
   private async _resolveLocated(options?: ElementOptions): Promise<WebElement> {
-    if (this._webElement) return this._webElement;
-    return this.driver.wait(until.elementLocated(this.by), {
-      timeout: options?.timeout ?? this.getDefaultTimeout(),
-    });
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
+    const deadline = Date.now() + timeout;
+    let lastError: unknown;
+    let stableResolution = false;
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
+      try {
+        const element = await this.environment.resolveTarget(this.target);
+        stableResolution = true;
+        if (element) return element;
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        lastError = error;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS));
+    }
+    if (!stableResolution && isDetachedShadowError(lastError)) {
+      throw withShadowRetryAttempts(lastError, attempts);
+    }
+    throw new CraftdriverError(
+      ErrorCode.NO_MATCH,
+      `No element matched locator "${describeTarget(this.target)}" within ${timeout}ms`,
+      {
+        detail: { selector: describeTarget(this.target), queryPath: describeTarget(this.target), timeout },
+        cause: lastError,
+      }
+    );
   }
 
   /** Resolve to a visible WebElement. */
   private async _resolveVisible(options?: ElementOptions): Promise<WebElement> {
-    if (this._webElement) return this._webElement;
-    return this.driver.wait(until.elementIsVisible(this.by), {
-      timeout: options?.timeout ?? this.getDefaultTimeout(),
-    });
+    if (this.target.kind === 'fixed') return this.target.element;
+    const timeout = options?.timeout ?? this.getDefaultTimeout();
+    const deadline = Date.now() + timeout;
+    let everMatched = false;
+    let lastError: unknown;
+    let stableResolution = false;
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
+      try {
+        const element = await this.environment.resolveTarget(this.target);
+        stableResolution = true;
+        if (element) {
+          everMatched = true;
+          if (await element.isDisplayed()) return element;
+        }
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        lastError = error;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS));
+    }
+    if (!stableResolution && isDetachedShadowError(lastError)) {
+      throw withShadowRetryAttempts(lastError, attempts);
+    }
+    const description = describeTarget(this.target);
+    throw new CraftdriverError(
+      everMatched ? ErrorCode.TIMEOUT_WAITING_VISIBLE : ErrorCode.NO_MATCH,
+      everMatched
+        ? `Timed out after ${timeout}ms waiting for locator "${description}" to become visible`
+        : `No element matched locator "${description}" within ${timeout}ms`,
+      { detail: { selector: description, queryPath: description, timeout }, cause: lastError }
+    );
+  }
+
+  private _resolveOnce(): Promise<WebElement | null> {
+    return this.environment.resolveTarget(this.target);
   }
 
   async click(options?: ElementOptions): Promise<void> {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      if (this._webElement) {
-        await this._webElement.click();
+      if (this.target.kind === 'fixed') {
+        await this.target.element.click();
         return;
       }
       await clickWithFastPath(
-        () => this.driver.findElement(this.by),
+        () => this._resolveOnce(),
         (remaining) => this._resolveVisible({ timeout: remaining }),
         timeout
       );
@@ -125,9 +207,7 @@ export class ElementHandle {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
       await fillWithFastPath(
-        () => this._webElement
-          ? Promise.resolve(this._webElement)
-          : this.driver.findElement(this.by),
+        () => this._resolveOnce(),
         (remaining) => this._resolveVisible({ timeout: remaining }),
         text,
         timeout
@@ -139,9 +219,7 @@ export class ElementHandle {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
       await clearWithFastPath(
-        () => this._webElement
-          ? Promise.resolve(this._webElement)
-          : this.driver.findElement(this.by),
+        () => this._resolveOnce(),
         (remaining) => this._resolveVisible({ timeout: remaining }),
         timeout
       );
@@ -151,15 +229,16 @@ export class ElementHandle {
   async press(key: KeyValue, options?: ElementOptions): Promise<void> {
     const timeout = options?.timeout ?? this.getDefaultTimeout();
     return this._withContext(async () => {
-      if (this._webElement) {
-        await this._webElement.click();
-      } else {
-        await clickWithFastPath(
-          () => this.driver.findElement(this.by),
-          (remaining) => this._resolveVisible({ timeout: remaining }),
-          timeout
-        );
+      if (this.target.kind === 'fixed') {
+        await this.target.element.click();
+        await this.driver.keyPressCode(getKeyValue(key), 1);
+        return;
       }
+      await clickWithFastPath(
+        () => this._resolveOnce(),
+        (remaining) => this._resolveVisible({ timeout: remaining }),
+        timeout
+      );
       const code = getKeyValue(key);
       await this.driver.keyPressCode(code, 1);
     }, ElementHandle.prototype.press);
@@ -219,7 +298,8 @@ export class ElementHandle {
         const el = await this._resolveLocated({ timeout });
         return el.isDisplayed();
       }, ElementHandle.prototype.isVisible);
-    } catch {
+    } catch (error) {
+      if (isTerminalQueryError(error) || isDetachedShadowError(error)) throw error;
       return false;
     }
   }
@@ -244,7 +324,8 @@ export class ElementHandle {
         const el = await this._resolveLocated(options);
         return el.getRect();
       }, ElementHandle.prototype.boundingBox);
-    } catch {
+    } catch (error) {
+      if (isTerminalQueryError(error) || isDetachedShadowError(error)) throw error;
       return null;
     }
   }
@@ -285,7 +366,27 @@ export class ElementHandle {
   }
 
   expect() {
-    return expectSelector(this.driver, this.by, this.getDefaultTimeout, this._contextSwitcher);
+    const description = describeTarget(this.target);
+    return expectResolved({
+      description,
+      detail: { selector: description, queryPath: description },
+      resolveAll: async () => {
+        const element = await this.environment.resolveTarget(this.target);
+        return element ? [element] : [];
+      },
+      getDefaultTimeout: this.getDefaultTimeout,
+      withContext: (operation) => this.environment.withContext(operation),
+    });
+  }
+
+  /** Cross the explicit open Shadow DOM boundary exposed by this host. */
+  shadowRoot(): ShadowRootLocator {
+    return new ShadowRootLocator(
+      this.driver,
+      { kind: 'shadow', host: this.target },
+      this.getDefaultTimeout,
+      this.environment
+    );
   }
 
   /**
@@ -373,3 +474,5 @@ export class ElementHandle {
     return this._a11y;
   }
 }
+
+export type { ContextSwitcher } from './query.js';

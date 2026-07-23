@@ -71,13 +71,23 @@ export class Frame {
   find(selector: string | By): ElementHandle {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     return new ElementHandle(this.driver, by, this.getDefaultTimeout)
-      .withContext(this.contextSwitcher);
+      .withContext(this.contextSwitcher)
+      .withBiDi(() =>
+        this.conn?.isConnected() && this.bidiContextId
+          ? { connection: this.conn, contextId: this.bidiContextId }
+          : undefined
+      );
   }
 
   locator(selector: string | By): Locator {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     return new Locator(this.driver, by, this.getDefaultTimeout)
-      .withContext(this.contextSwitcher);
+      .withContext(this.contextSwitcher)
+      .withBiDi(() =>
+        this.conn?.isConnected() && this.bidiContextId
+          ? { connection: this.conn, contextId: this.bidiContextId }
+          : undefined
+      );
   }
 
   expect(selector: string | By): ExpectApi {
@@ -95,7 +105,13 @@ export class Frame {
       await this.contextSwitcher.out();
     }
     return webElements.map((we) =>
-      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout).withContext(this.contextSwitcher)
+      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout)
+        .withContext(this.contextSwitcher)
+        .withBiDi(() =>
+          this.conn?.isConnected() && this.bidiContextId
+            ? { connection: this.conn, contextId: this.bidiContextId }
+            : undefined
+        )
     );
   }
 

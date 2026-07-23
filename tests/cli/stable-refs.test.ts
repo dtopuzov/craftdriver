@@ -150,6 +150,49 @@ describe('agent snapshot refs bind to element identity', () => {
 
     expect(second.documentId).not.toBe(first.documentId);
   });
+
+  it('walks open shadow trees and drives nested descendants by exact ref identity', async () => {
+    await session.run({ cmd: 'go', args: { url: `${EXAMPLES_BASE_URL}/shadow-dom.html` } });
+    const snap = (await session.run({ cmd: 'snapshot' })) as SnapshotResult;
+
+    // The primary card contributes two nested boundaries; the asynchronously
+    // inserted card may already exist by the time the snapshot runs and add two
+    // more. Either way, every traversed open boundary is explicit.
+    expect(snap.lines.filter((line) => line.includes('#shadow-root (open)')).length)
+      .toBeGreaterThanOrEqual(2);
+    expect(snap.lines.some((line) => line.includes('closed-false-positive'))).toBe(false);
+    expect(snap.lines.filter((line) => line.includes('#slotted-summary'))).toHaveLength(1);
+    expect(snap.lines.filter((line) => line.includes('#slotted-image'))).toHaveLength(1);
+
+    const cityRef = refFor(snap.lines, '#city');
+    const saveRef = refFor(snap.lines, '#nested-save');
+    await session.run({ cmd: 'fill', args: { selector: `ref=${cityRef}`, value: 'Sofia' } });
+    await session.run({ cmd: 'click', args: { selector: `ref=${saveRef}` } });
+
+    const status = (await session.run({
+      cmd: 'text',
+      args: { selector: '#status' },
+    })) as { text: string };
+    expect(status.text).toBe('saved:Sofia');
+  });
+
+  it('does not let a cloned diagnostic marker make a live ref ambiguous', async () => {
+    const snap = (await session.run({ cmd: 'snapshot' })) as SnapshotResult;
+    const payRef = refFor(snap.lines, '#pay');
+
+    await session.run({
+      cmd: 'eval',
+      args: {
+        js: `const clone = document.querySelector('#pay').cloneNode(true); clone.id = 'pay-clone'; document.body.appendChild(clone); return true;`,
+      },
+    });
+
+    const value = (await session.run({
+      cmd: 'text',
+      args: { selector: `ref=${payRef}` },
+    })) as { text: string };
+    expect(value.text).toContain('Pay now');
+  });
 });
 
 /**

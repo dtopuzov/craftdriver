@@ -3025,7 +3025,13 @@ export class Browser {
 
   find(selector: string | By): ElementHandle {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    return new ElementHandle(this.driver, by, this.getDefaultTimeout);
+    return new ElementHandle(this.driver, by, this.getDefaultTimeout).withBiDi(() => {
+      if (!this.bidiSession?.isConnected()) return undefined;
+      const contextId = this.bidiSession.getContext();
+      return contextId
+        ? { connection: this.bidiSession.getConnection(), contextId }
+        : undefined;
+    });
   }
 
   /**
@@ -3034,7 +3040,13 @@ export class Browser {
    */
   locator(selector: string | By): Locator {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    return new Locator(this.driver, by, this.getDefaultTimeout);
+    return new Locator(this.driver, by, this.getDefaultTimeout).withBiDi(() => {
+      if (!this.bidiSession?.isConnected()) return undefined;
+      const contextId = this.bidiSession.getContext();
+      return contextId
+        ? { connection: this.bidiSession.getConnection(), contextId }
+        : undefined;
+    });
   }
 
   /**
@@ -3045,7 +3057,13 @@ export class Browser {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     const webElements = await this.driver.findElements(by);
     return webElements.map((we) =>
-      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout)
+      ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout).withBiDi(() => {
+        if (!this.bidiSession?.isConnected()) return undefined;
+        const contextId = this.bidiSession.getContext();
+        return contextId
+          ? { connection: this.bidiSession.getConnection(), contextId }
+          : undefined;
+      })
     );
   }
 
@@ -3053,31 +3071,31 @@ export class Browser {
     role: string,
     opts?: { name?: string; exact?: boolean; includeHidden?: boolean }
   ): ElementHandle {
-    return new ElementHandle(this.driver, By.role(role, opts), this.getDefaultTimeout);
+    return this.find(By.role(role, opts));
   }
 
   getByText(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.text(text, opts), this.getDefaultTimeout);
+    return this.find(By.text(text, opts));
   }
 
   getByLabel(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.labelText(text, opts), this.getDefaultTimeout);
+    return this.find(By.labelText(text, opts));
   }
 
   getByPlaceholder(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.placeholder(text, opts), this.getDefaultTimeout);
+    return this.find(By.placeholder(text, opts));
   }
 
   getByTestId(id: string): ElementHandle {
-    return new ElementHandle(this.driver, By.testId(id), this.getDefaultTimeout);
+    return this.find(By.testId(id));
   }
 
   getByAltText(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.altText(text, opts), this.getDefaultTimeout);
+    return this.find(By.altText(text, opts));
   }
 
   getByTitle(text: string, opts?: { exact?: boolean }): ElementHandle {
-    return new ElementHandle(this.driver, By.title(text, opts), this.getDefaultTimeout);
+    return this.find(By.title(text, opts));
   }
 
   // Keyboard controller and enum for nicer usage: browser.keyboard.press(Key.Enter)

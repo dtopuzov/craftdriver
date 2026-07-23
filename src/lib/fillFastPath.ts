@@ -8,6 +8,7 @@ const RECOVERABLE_FILL_ERRORS: ReadonlySet<string> = new Set([
 ]);
 
 function isRecoverableFillError(err: unknown): boolean {
+  if (CraftdriverError.is(err, ErrorCode.DETACHED_SHADOW_ROOT)) return true;
   if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
   const code = err.detail?.webDriverError;
   return typeof code === 'string' && RECOVERABLE_FILL_ERRORS.has(code);

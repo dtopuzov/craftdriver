@@ -130,7 +130,12 @@ interface A11yViolation {
   impact: 'minor' | 'moderate' | 'serious' | 'critical';
   description: string;
   helpUrl: string;
-  nodes: Array<{ target: string[]; html: string; failureSummary: string }>;
+  nodes: Array<{
+    // A nested string[] is axe's selector path through open shadow roots.
+    target: Array<string | [string, string, ...string[]]>;
+    html: string;
+    failureSummary: string;
+  }>;
 }
 ```
 
@@ -175,3 +180,6 @@ a `window` flag so subsequent audits in the same document skip the
 inject step). The audit itself uses Classic WebDriver
 `execute/async` so the underlying `axe.run()` promise is awaited
 before the result is shipped back — works with or without BiDi.
+axe-core traverses open Shadow DOM itself. CraftDriver preserves axe's nested
+cross-tree selector paths in `node.target`; closed roots remain outside the
+audit, matching axe-core's support boundary.

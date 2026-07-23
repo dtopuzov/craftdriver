@@ -139,9 +139,10 @@ Anything else is treated as a CSS selector, so attribute selectors with
 
 ## Snapshot — sanitized DOM with refs
 
-`craftdriver snapshot` returns one line per visible interactive element
-on the active page, with a stable ref (`e1`, `e2`, …) that you can
-use as a selector for the next command:
+`craftdriver snapshot` returns visible semantic elements on the active page,
+with a stable ref (`e1`, `e2`, …) that you can use as a selector for the next
+command. Open Shadow DOM is traversed recursively and shown with indented
+`#shadow-root (open)` boundaries; closed roots are never inspected:
 
 ```bash
 $ craftdriver snapshot
@@ -166,7 +167,7 @@ A ref names one specific element for as long as that element lives:
 - a node that survives a DOM change keeps its ref across snapshots;
 - a new node always gets a fresh number — refs are never reused, not even
   after a navigation;
-- if the element is removed, duplicated, or the page navigates or
+- if the element is removed, or the page navigates or
   reloads, the ref fails with `STALE_REF` instead of resolving to
   whatever now sits in that position.
 
@@ -175,9 +176,11 @@ when you see `STALE_REF`; craftdriver will not guess a replacement.
 `error.detail.reason` says which case fired (`detached`,
 `document-changed`, `unknown-ref`, `ambiguous`, `no-snapshot`).
 
-Internally `ref=eN` resolves to a CSS attribute selector
-(`[data-craftdriver-ref="eN"]`) after craftdriver has checked the ref
-still identifies exactly one element; auto-waiting works unchanged.
+Internally `ref=eN` returns the exact element from the page's identity registry,
+including elements inside open shadow roots. The diagnostic
+`data-craftdriver-ref` attribute is never used for lookup or uniqueness, so an
+authored or cloned marker cannot redirect or invalidate a ref. Auto-waiting and
+native WebDriver actions work unchanged after identity resolution.
 
 ## Tabs
 

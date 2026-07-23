@@ -435,6 +435,11 @@ export class Page {
     const handle = new ElementHandle(this.driver, by, this.getDefaultTimeout);
     const sw = this._makeContextSwitcher();
     if (sw) handle.withContext(sw);
+    handle.withBiDi(() =>
+      this.conn?.isConnected()
+        ? { connection: this.conn, contextId: this.contextId }
+        : undefined
+    );
     return handle;
   }
 
@@ -443,6 +448,11 @@ export class Page {
     const loc = new Locator(this.driver, by, this.getDefaultTimeout);
     const sw = this._makeContextSwitcher();
     if (sw) loc.withContext(sw);
+    loc.withBiDi(() =>
+      this.conn?.isConnected()
+        ? { connection: this.conn, contextId: this.contextId }
+        : undefined
+    );
     return loc;
   }
 
@@ -458,6 +468,11 @@ export class Page {
     return webElements.map((we) => {
       const handle = ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout);
       if (sw) handle.withContext(sw);
+      handle.withBiDi(() =>
+        this.conn?.isConnected()
+          ? { connection: this.conn, contextId: this.contextId }
+          : undefined
+      );
       return handle;
     });
   }

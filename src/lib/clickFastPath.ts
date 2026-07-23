@@ -10,6 +10,7 @@ const RECOVERABLE_CLICK_ERRORS: ReadonlySet<string> = new Set([
 ]);
 
 function isRecoverableClickError(err: unknown): boolean {
+  if (CraftdriverError.is(err, ErrorCode.DETACHED_SHADOW_ROOT)) return true;
   if (!CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)) return false;
   const code = err.detail?.webDriverError;
   return typeof code === 'string' && RECOVERABLE_CLICK_ERRORS.has(code);

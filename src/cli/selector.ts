@@ -17,10 +17,10 @@
  *   placeholder=Search…      → By.placeholder('Search…')
  *   alt=Logo                 → By.altText('Logo')
  *   title=Help               → By.title('Help')
- *   ref=e5                   → By.css('[data-craftdriver-ref="e5"]')
+ *   ref=e5                   → By.ref('e5') (resolved through the page identity registry)
  *                              (refs come from `craftdriver snapshot` /
- *                              browser_snapshot; invalidated by the next
- *                              snapshot or navigation)
+ *                              browser_snapshot; invalidated by detachment,
+ *                              navigation, or page replacement)
  */
 import { By } from '../lib/by.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
@@ -85,11 +85,8 @@ export function parseSelector(input: string): By {
     case 'data-testid':
       return By.testId(valueRaw);
     case 'ref': {
-      // Refs are stamped onto elements by the snapshot evaluator as
-      // `data-craftdriver-ref="eN"`. They are stable until the next
-      // snapshot or navigation. We resolve them as a plain CSS
-      // attribute selector so all the usual auto-waiting paths work
-      // unchanged.
+      // Refs resolve through the page's identity registry. The marker
+      // attribute is diagnostic only and cannot cross a shadow boundary.
       const v = valueRaw.trim();
       if (!/^e\d+$/.test(v)) {
         throw new CraftdriverError(
@@ -98,7 +95,7 @@ export function parseSelector(input: string): By {
           { hint: 'refs look like e1, e2, … (take a snapshot to see them)' },
         );
       }
-      return By.css(`[data-craftdriver-ref="${v}"]`);
+      return By.ref(v);
     }
     default:
       // Treat unknown prefix as part of a CSS selector (e.g. attribute

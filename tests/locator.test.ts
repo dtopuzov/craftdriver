@@ -157,6 +157,14 @@ describe('Locator', () => {
       expect(await scoped.all().then((hs) => hs[0].getAttribute('id'))).toBe('scope-card-1-btn');
     });
 
+    it('nested Locator assertions resolve the complete parent chain', async () => {
+      await browser
+        .locator('#scope-card-2')
+        .locator(By.role('button', { name: 'Submit' }))
+        .expect()
+        .toHaveAttribute('id', 'scope-card-2-btn');
+    });
+
     it('filter({ has }) with a semantic locator correctly excludes non-matching siblings', async () => {
       const cardsWithSubmit = await browser
         .locator('.product-card')
@@ -164,6 +172,13 @@ describe('Locator', () => {
         .all();
       const ids = (await Promise.all(cardsWithSubmit.map((h) => h.getAttribute('id')))).sort();
       expect(ids).toEqual(['scope-card-1', 'scope-card-2']);
+    });
+
+    it('filter({ has }) preserves the nested locator filters', async () => {
+      const cancel = browser.locator('button').filter({ hasText: 'Cancel' });
+      const cards = await browser.locator('.product-card').filter({ has: cancel }).all();
+      expect(await Promise.all(cards.map((handle) => handle.getAttribute('id'))))
+        .toEqual(['scope-card-3']);
     });
 
     it('By.text exact match prefers the innermost element (no wrapper+child double match)', async () => {

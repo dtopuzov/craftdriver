@@ -21,7 +21,7 @@
  * something to paper over with a retry.
  */
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { Browser } from '../src';
+import { Browser, ErrorCode } from '../src';
 import { BROWSER_NAME, EXAMPLES_BASE_URL } from './utils';
 
 describe.skipIf(BROWSER_NAME !== 'safari')('Safari Classic-only regression suite', () => {
@@ -87,5 +87,22 @@ describe.skipIf(BROWSER_NAME !== 'safari')('Safari Classic-only regression suite
     const cookies = await browser.storage.getCookies({ name: 'safari-e2e' });
     expect(cookies).toHaveLength(1);
     expect(cookies[0]).toMatchObject({ name: 'safari-e2e', value: 'roundtrip' });
+  });
+
+  it('open Shadow DOM: nested semantic lookup, action, assertion, and closed-root error', async () => {
+    await browser.navigateTo(`${EXAMPLES_BASE_URL}/shadow-dom.html`);
+    const address = browser
+      .locator('#card')
+      .shadowRoot()
+      .locator('address-form')
+      .shadowRoot();
+
+    await address.getByLabel('City').fill('Safari');
+    await address.getByRole('button', { name: 'Save address' }).click();
+    await browser.expect('#status').toHaveText('saved:Safari');
+
+    await expect(
+      browser.locator('#closed-card').shadowRoot().locator('button').count()
+    ).rejects.toMatchObject({ code: ErrorCode.NO_OPEN_SHADOW_ROOT });
   });
 });

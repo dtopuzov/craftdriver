@@ -38,7 +38,18 @@
   <p id="child-result"></p>
   <input id="child-input" type="text" placeholder="type here" />
   <p id="child-value"></p>
+  <frame-widget id="frame-widget"></frame-widget>
   <script>
+    customElements.define('frame-widget', class extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<button id="shadow-frame-button" type="button">Shadow frame action</button>';
+        root.querySelector('button').addEventListener('click', () => {
+          document.querySelector('#child-result').textContent = 'shadow-clicked';
+        });
+      }
+    });
     document.getElementById('child-btn').addEventListener('click', function () {
       document.getElementById('child-result').textContent = 'clicked';
     });

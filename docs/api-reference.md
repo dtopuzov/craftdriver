@@ -30,6 +30,7 @@ Find page content with semantic locators and selector helpers.
 |---|---|---|---|
 | `By` | class | — | [selectors](selectors.md) |
 | `Locator` | class | — | [selectors](selectors.md) |
+| `ShadowRootLocator` | class | Lazy, explicit search context for one open ShadowRoot. | [selectors](selectors.md) |
 
 ## Input
 
@@ -149,6 +150,8 @@ Run axe-core accessibility checks and inspect violation details.
 | `A11yImpact` | type | Severity buckets reported by axe-core. | [accessibility](accessibility.md) |
 | `A11yOptions` | type | — | [accessibility](accessibility.md) |
 | `A11yResult` | type | — | [accessibility](accessibility.md) |
+| `A11yShadowSelector` | type | axe-core selector path through one or more open shadow boundaries. | [accessibility](accessibility.md) |
+| `A11yTarget` | type | A light-DOM selector or axe-core's nested selector path for Shadow DOM. | [accessibility](accessibility.md) |
 | `A11yViolation` | type | — | [accessibility](accessibility.md) |
 | `A11yViolationNode` | type | — | [accessibility](accessibility.md) |
 
@@ -185,4 +188,4 @@ Exports that are public but not yet assigned to a feature group.
 | `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
 | `SessionStateCookie` | type | — | — |
 
-Total exports: **94**.
+Total exports: **97**.
