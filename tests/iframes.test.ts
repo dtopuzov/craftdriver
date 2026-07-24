@@ -96,4 +96,12 @@ describe('Iframes', () => {
     await frame.locator('body').locator('#child-btn').click();
     await frame.locator('#child-result').expect().toHaveText('clicked');
   });
+
+  it('keeps frame context active across a shadow-root query and action', async () => {
+    const frame = await browser.frame('#my-frame');
+    const root = frame.locator('#frame-widget').shadowRoot();
+
+    await root.getByRole('button', { name: 'Shadow frame action' }).click();
+    await frame.expect('#child-result').toHaveText('shadow-clicked');
+  });
 });

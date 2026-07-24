@@ -1,43 +1,90 @@
 export type Locator = { using: string; value: string };
 
+export interface RoleLocatorOptions {
+  name?: string;
+  exact?: boolean;
+  includeHidden?: boolean;
+}
+
+export interface TextLocatorOptions {
+  exact?: boolean;
+  caseSensitive?: boolean;
+  trim?: boolean;
+}
+
+export interface ExactLocatorOptions {
+  exact?: boolean;
+}
+
+/**
+ * Semantic intent retained alongside the W3C wire representation.
+ *
+ * Light-DOM lookup keeps using `using`/`value` for backwards compatibility.
+ * Root-aware adapters use this descriptor when XPath is not interoperable
+ * (notably inside a ShadowRoot) instead of trying to parse generated XPath.
+ */
+export type QueryDescriptor =
+  | { kind: 'css'; value: string }
+  | { kind: 'xpath'; value: string; raw: true }
+  | { kind: 'linkText'; value: string; partial: boolean }
+  | { kind: 'ref'; value: string }
+  | { kind: 'role'; role: string; options: RoleLocatorOptions }
+  | { kind: 'text'; value: string; options: TextLocatorOptions }
+  | { kind: 'label'; value: string; options: ExactLocatorOptions }
+  | {
+      kind: 'placeholder' | 'alt' | 'title';
+      value: string;
+      options: ExactLocatorOptions;
+    };
+
 export class By {
   constructor(
     public using: string,
-    public value: string
+    public value: string,
+    /** Internal semantic metadata; public for adapter code, optional for structural compatibility. */
+    public readonly descriptor?: QueryDescriptor
   ) { }
 
   // Base CSS/XPath helpers
   static css(selector: string): By {
-    return new By('css selector', selector);
+    return new By('css selector', selector, { kind: 'css', value: selector });
   }
   static xpath(xpath: string): By {
-    return new By('xpath', xpath);
+    return new By('xpath', xpath, { kind: 'xpath', value: xpath, raw: true });
   }
 
   // Simple attribute-based helpers
   static id(id: string): By {
-    return new By('css selector', `#${cssEscape(id)}`);
+    return By.css(`#${cssEscape(id)}`);
   }
   static name(name: string): By {
-    return new By('css selector', `[name="${cssEscape(name)}"]`);
+    return By.css(`[name="${cssEscape(name)}"]`);
   }
   static className(cls: string): By {
-    return new By('css selector', `.${cssEscape(cls)}`);
+    return By.css(`.${cssEscape(cls)}`);
   }
   static tagName(tag: string): By {
-    return new By('css selector', tag);
+    return By.css(tag);
   }
   static attr(name: string, value: string): By {
-    return new By('css selector', `[${name}="${cssEscape(value)}"]`);
+    return By.css(`[${name}="${cssEscape(value)}"]`);
   }
   static dataAttr(name: string, value: string): By {
-    return new By('css selector', `[data-${name}="${cssEscape(value)}"]`);
+    return By.css(`[data-${name}="${cssEscape(value)}"]`);
   }
   static aria(name: string, value: string): By {
-    return new By('css selector', `[aria-${name}="${cssEscape(value)}"]`);
+    return By.css(`[aria-${name}="${cssEscape(value)}"]`);
   }
   static testId(value: string): By {
-    return new By('css selector', `[data-testid="${cssEscape(value)}"]`);
+    return By.css(`[data-testid="${cssEscape(value)}"]`);
+  }
+
+  /** Internal agent-snapshot identity reference. Prefer durable locators in tests. */
+  static ref(value: string): By {
+    return new By('css selector', `[data-craftdriver-ref="${cssEscape(value)}"]`, {
+      kind: 'ref',
+      value,
+    });
   }
 
   // Text-based locators (XPath)
@@ -51,10 +98,7 @@ export class By {
    * - `caseSensitive` — defaults to `true`.
    * - `trim` — collapse whitespace via `normalize-space()`. Defaults to `true`.
    */
-  static text(
-    text: string,
-    opts?: { exact?: boolean; caseSensitive?: boolean; trim?: boolean }
-  ): By {
+  static text(text: string, opts?: TextLocatorOptions): By {
     if (opts?.exact === false) {
       return By.partialText(text, opts);
     }
@@ -67,7 +111,7 @@ export class By {
     // Prefer the innermost element for symmetry with partialText — a wrapper
     // whose only child carries the same normalized text would otherwise match twice.
     const xpath = `.//*[${left} = ${right} and not(.//*[${left} = ${right}])]`;
-    return By.xpath(xpath);
+    return new By('xpath', xpath, { kind: 'text', value: text, options: { ...opts, exact: true } });
   }
 
   /**
@@ -75,7 +119,10 @@ export class By {
    * `By.text(s, { exact: false })` for symmetry with the other locators;
    * this lower-level entry point is kept for explicit use.
    */
-  static partialText(substring: string, opts?: { caseSensitive?: boolean; trim?: boolean }): By {
+  static partialText(
+    substring: string,
+    opts?: Omit<TextLocatorOptions, 'exact'>
+  ): By {
     const cs = opts?.caseSensitive !== false; // default true
     const trim = opts?.trim !== false; // default true
     const nodeExpr = trim ? 'normalize-space(.)' : 'string(.)';
@@ -84,7 +131,11 @@ export class By {
     const right = cs ? valueExpr : toLower(valueExpr);
     // Prefer the innermost element containing the substring to avoid matching large containers
     const xpath = `.//*[contains(${left}, ${right}) and not(.//*[contains(${left}, ${right})])]`;
-    return By.xpath(xpath);
+    return new By('xpath', xpath, {
+      kind: 'text',
+      value: substring,
+      options: { ...opts, exact: false },
+    });
   }
 
   // Accessibility-inspired helpers (approximate)
@@ -104,7 +155,7 @@ export class By {
    */
   static role(
     role: string,
-    opts?: { name?: string; exact?: boolean; includeHidden?: boolean }
+    opts?: RoleLocatorOptions
   ): By {
     // An element matches the role if it carries role="<role>" OR is a native
     // element whose implicit role is <role>. When an explicit role is present,
@@ -156,10 +207,10 @@ export class By {
     // WebDriver endpoint passes in, which would otherwise search the whole
     // document instead of the parent's subtree.
     const xpath = `.//*[( ${conditions.join(' and ')} )${visibleGuard}]`;
-    return By.xpath(xpath);
+    return new By('xpath', xpath, { kind: 'role', role, options: { ...opts } });
   }
 
-  static labelText(text: string, opts?: { exact?: boolean }): By {
+  static labelText(text: string, opts?: ExactLocatorOptions): By {
     const eq = opts?.exact !== false; // default exact
     const lit = normalizeSpaceLiteral(text);
     const labelMatch = eq ? `normalize-space(.) = ${lit}` : `contains(normalize-space(.), ${lit})`;
@@ -173,30 +224,44 @@ export class By {
     // approximation rather than the general nested-scope bug.
     const byFor = `.//*[@id=//label[${labelMatch}]/@for]`;
     const wrapped = `.//label[${labelMatch}]//*[self::input or self::textarea or self::select]`;
-    return By.xpath(`(${byFor} | ${wrapped})`);
+    return new By('xpath', `(${byFor} | ${wrapped})`, {
+      kind: 'label',
+      value: text,
+      options: { ...opts },
+    });
   }
 
-  static placeholder(text: string, opts?: { exact?: boolean }): By {
+  static placeholder(text: string, opts?: ExactLocatorOptions): By {
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@placeholder = ${lit}` : `contains(@placeholder, ${lit})`;
-    return By.xpath(`.//*[(self::input or self::textarea) and ${pred}]`);
+    return new By('xpath', `.//*[(self::input or self::textarea) and ${pred}]`, {
+      kind: 'placeholder',
+      value: text,
+      options: { ...opts },
+    });
   }
 
-  static altText(text: string, opts?: { exact?: boolean }): By {
+  static altText(text: string, opts?: ExactLocatorOptions): By {
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@alt = ${lit}` : `contains(@alt, ${lit})`;
-    return By.xpath(
-      `.//*[(self::img or self::area or (self::input and @type='image')) and ${pred}]`
+    return new By(
+      'xpath',
+      `.//*[(self::img or self::area or (self::input and @type='image')) and ${pred}]`,
+      { kind: 'alt', value: text, options: { ...opts } }
     );
   }
 
-  static title(text: string, opts?: { exact?: boolean }): By {
+  static title(text: string, opts?: ExactLocatorOptions): By {
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@title = ${lit}` : `contains(@title, ${lit})`;
-    return By.xpath(`.//*[@title and ${pred}]`);
+    return new By('xpath', `.//*[@title and ${pred}]`, {
+      kind: 'title',
+      value: text,
+      options: { ...opts },
+    });
   }
 
   // Link-text locators — the native W3C "link text" / "partial link text"
@@ -207,12 +272,12 @@ export class By {
   // strategy is resolved by the driver rather than as a document-rooted XPath.
   /** Match an `<a>` whose (trimmed) rendered text exactly equals `text`. */
   static linkText(text: string): By {
-    return new By('link text', text);
+    return new By('link text', text, { kind: 'linkText', value: text, partial: false });
   }
 
   /** Match an `<a>` whose (trimmed) rendered text contains `text`. */
   static partialLinkText(text: string): By {
-    return new By('partial link text', text);
+    return new By('partial link text', text, { kind: 'linkText', value: text, partial: true });
   }
 }
 

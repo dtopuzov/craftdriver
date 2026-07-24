@@ -99,4 +99,24 @@ describe('a11y (axe-core wrapper)', () => {
     const report = await bad.a11y.audit();
     expect(report.violations.map((v) => v.id)).toContain('image-alt');
   });
+
+  it('preserves axe selector paths through nested open shadow roots', async () => {
+    await browser.navigateTo(`${EXAMPLES_BASE_URL}/shadow-dom.html`);
+
+    const report = await browser.a11y.audit({ rules: ['image-alt'], minImpact: 'minor' });
+    const violation = report.violations.find((item) => item.id === 'image-alt');
+    expect(violation).toBeDefined();
+    const targets = violation!.nodes.map((node) => JSON.stringify(node.target));
+    // Slotted content is reported once. A late open card may add another
+    // nested violation, but the attractive violation in the closed root must
+    // never appear.
+    expect(targets.filter((target) => target.includes('slotted-image'))).toHaveLength(1);
+    expect(targets.some((target) => target.includes('shadow-image'))).toBe(true);
+    expect(targets.some((target) => target.includes('closed-image'))).toBe(false);
+    expect(
+      violation!.nodes.some((node) =>
+        node.target.some((part) => Array.isArray(part) && part.length >= 2)
+      )
+    ).toBe(true);
+  });
 });

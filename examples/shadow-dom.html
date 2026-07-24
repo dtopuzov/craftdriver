@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CraftDriver Shadow DOM fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 24px; }
+      user-card, closed-card, no-root { display: block; margin: 12px 0; }
+      #status { min-height: 20px; }
+    </style>
+  </head>
+  <body>
+    <h1>Shadow DOM fixture</h1>
+    <div id="status">idle</div>
+    <button id="replace-card" type="button">Replace card</button>
+
+    <!-- Open, nested, and slotted happy path -->
+    <user-card id="card">
+      <span slot="summary" id="slotted-summary" role="note">Slotted summary</span>
+      <img slot="summary" id="slotted-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+    </user-card>
+
+    <!-- Async-host, closed-root, and missing-root cases -->
+    <div id="late-card-container"></div>
+    <closed-card id="closed-card"></closed-card>
+    <no-root id="no-root"></no-root>
+
+    <script>
+      // Nested open-root form control.
+      class AddressForm extends HTMLElement {
+        constructor() {
+          super();
+          const root = this.attachShadow({ mode: 'open' });
+          root.innerHTML = `
+            <style>:host { display:block; padding:8px; border:1px solid #aaa }</style>
+            <label for="city">City</label>
+            <input id="city" data-testid="city" placeholder="Enter city" title="Delivery city" />
+            <span id="save-address-label">Save address</span>
+            <button id="nested-save" type="button" aria-labelledby="save-address-label">Save</button>
+            <img id="shadow-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+          `;
+          root.querySelector('#nested-save').addEventListener('click', () => {
+            document.querySelector('#status').textContent = 'saved:' + root.querySelector('#city').value;
+          });
+          setTimeout(() => {
+            const delayed = document.createElement('button');
+            delayed.id = 'delayed-shadow-action';
+            delayed.type = 'button';
+            delayed.textContent = 'Delayed shadow action';
+            delayed.addEventListener('click', () => {
+              document.querySelector('#status').textContent = 'delayed';
+            });
+            root.appendChild(delayed);
+          }, 250);
+        }
+      }
+
+      // Open-root host with slots, semantic content, and actions.
+      class UserCard extends HTMLElement {
+        constructor() {
+          super();
+          const root = this.attachShadow({ mode: 'open' });
+          root.innerHTML = `
+            <style>:host { display:block; padding:8px; border:1px solid #444 }</style>
+            <section role="region" aria-label="Account">
+              <slot name="summary"><span>Fallback summary</span></slot>
+              <slot><button id="fallback-control" type="button">Fallback action</button></slot>
+              <a id="profile-link" href="#profile">Profile link</a>
+              <img id="avatar" alt="User avatar" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+              <button class="action" id="edit" type="button">Edit</button>
+              <button class="action" id="delete" type="button">Delete</button>
+              <address-form id="address"></address-form>
+            </section>
+          `;
+          root.querySelector('#edit').addEventListener('click', () => {
+            document.querySelector('#status').textContent = 'edited';
+          });
+          root.querySelector('#delete').addEventListener('click', () => {
+            document.querySelector('#status').textContent = 'deleted';
+          });
+          setTimeout(() => {
+            const delayed = document.createElement('button');
+            delayed.id = 'delayed-card-action';
+            delayed.type = 'button';
+            delayed.textContent = 'Delayed card action';
+            delayed.addEventListener('click', () => {
+              document.querySelector('#status').textContent = 'delayed-card';
+            });
+            root.appendChild(delayed);
+          }, 250);
+        }
+      }
+
+      // Closed-root privacy boundary.
+      class ClosedCard extends HTMLElement {
+        constructor() {
+          super();
+          const root = this.attachShadow({ mode: 'closed' });
+          root.innerHTML = `
+            <button id="closed-false-positive" type="button">Edit</button>
+            <img id="closed-image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+          `;
+        }
+      }
+
+      customElements.define('address-form', AddressForm);
+      customElements.define('user-card', UserCard);
+      customElements.define('closed-card', ClosedCard);
+
+      document.querySelector('#replace-card').addEventListener('click', () => {
+        const replacement = document.createElement('user-card');
+        replacement.id = 'card';
+        const summary = document.createElement('span');
+        summary.slot = 'summary';
+        summary.id = 'slotted-summary';
+        summary.setAttribute('role', 'note');
+        summary.textContent = 'Replacement summary';
+        replacement.appendChild(summary);
+        document.querySelector('#card').replaceWith(replacement);
+      });
+
+      setTimeout(() => {
+        const late = document.createElement('user-card');
+        late.id = 'late-card';
+        document.querySelector('#late-card-container').appendChild(late);
+      }, 250);
+
+      setTimeout(() => {
+        const delayed = document.createElement('button');
+        delayed.id = 'delayed-flat-action';
+        delayed.type = 'button';
+        delayed.textContent = 'Delayed flat action';
+        document.body.appendChild(delayed);
+      }, 250);
+    </script>
+  </body>
+</html>

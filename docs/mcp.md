@@ -182,15 +182,15 @@ Use `ref=eN` as the selector for the next call:
 
 - **A ref names one element for as long as it lives.** A surviving node keeps
   its ref across snapshots, and refs are never reused — so a ref cannot drift
-  onto a different element. If it is removed, duplicated, or the page
+  onto a different element. If it is removed or the page
   navigates, the call fails `STALE_REF`; take a fresh snapshot then.
 - **Never copy refs into test code.** Convert live role/name, label, test ID,
   text, or DOM evidence into a durable selector and validate it.
 - **Token efficient.** `ref=e7` is 5 characters; `role=button[name=Sign in]`
   is 26. Over a 50-step flow that adds up.
-- **Auto-waiting still works.** Internally `ref=eN` resolves to a CSS
-  attribute selector (`[data-craftdriver-ref="eN"]`); every action
-  takes the normal visible+enabled wait path.
+- **Auto-waiting still works.** `ref=eN` resolves directly to the exact element
+  in the page identity registry, including inside an open shadow root; every
+  action takes the normal visible+enabled wait path.
 
 **Invalidation rules**
 
@@ -198,12 +198,16 @@ Use `ref=eN` as the selector for the next call:
   its ref across snapshots; snapshots do **not** renumber it.
 - New elements get fresh numbers. Refs are never reused, including after a
   navigation or reload.
-- A ref whose element was removed or duplicated, or that was issued before
+- A ref whose element was removed, or that was issued before
   the page navigated or reloaded, fails with `STALE_REF` — take a fresh
   snapshot. It never resolves to a different element.
 - `error.detail.reason` distinguishes `detached`, `document-changed`,
   `unknown-ref`, `ambiguous`, and `no-snapshot`.
 - Refs are exploration state and must never appear in committed tests.
+
+Snapshots recursively enter open Shadow DOM, mark each boundary with an
+indented `#shadow-root (open)` line, flatten slot assignment without duplicate
+entries, and never inspect closed roots.
 
 ## Post-action payload
 

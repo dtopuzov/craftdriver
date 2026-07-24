@@ -27,11 +27,10 @@
  * makes every pre-navigation ref detectably stale instead of silently
  * rebound.
  *
- * The element marker attribute (`data-craftdriver-ref`) is kept so
- * `ref=eN` still resolves through the ordinary CSS auto-waiting path, but
- * the map — not the attribute — is the source of truth. An attribute that
- * the map does not corroborate (authored into the HTML, or duplicated by
- * `cloneNode`) never resolves.
+ * The element marker attribute (`data-craftdriver-ref`) is diagnostic only.
+ * Resolution goes directly through the registry, which works for elements
+ * inside open shadow trees and cannot be confused by authored or cloned
+ * marker attributes.
  */
 import type { Browser } from '../lib/browser.js';
 import { PAGE_SEMANTICS_JS } from './pageSemantics.js';
@@ -48,7 +47,7 @@ const MAX_REFS = 2000;
 export interface SnapshotShape {
   url: string;
   title: string;
-  /** One line per visible interactive node, prefixed with `eN: `. */
+  /** Visible semantic nodes plus indented open-shadow boundary lines. */
   lines: string[];
   /**
    * Identity of the document the refs belong to. Changes on navigation and
@@ -197,7 +196,7 @@ export function renderDelta(
   if (prev.documentId !== next.documentId || prev.url !== next.url) {
     return `${header}\n${next.lines.join('\n')}`;
   }
-  const strip = (l: string): string => l.replace(/^e\d+:\s*/, '');
+  const strip = (l: string): string => l.replace(/^(\s*)e\d+:\s*/, '$1');
   // Count occurrences rather than testing membership: a page with three
   // identical "Remove" buttons must still report a change when one of them
   // goes, and a set-difference silently calls that "no changes".
@@ -315,10 +314,13 @@ if (expected !== null && reg.doc !== expected) {
 }
 const el = reg.map.get(ref);
 if (!el) return { status: 'unknown-ref', documentId: reg.doc };
-if (!document.contains(el)) return { status: 'detached', documentId: reg.doc };
-const marked = document.querySelectorAll('[data-craftdriver-ref="' + ref + '"]');
-if (marked.length !== 1 || marked[0] !== el) {
-  return { status: 'ambiguous', documentId: reg.doc, count: marked.length };
+if (!el.isConnected || el.ownerDocument !== document) {
+  return { status: 'detached', documentId: reg.doc };
+}
+// The reverse map is the exact identity index. A mismatch is only possible for a
+// corrupt/legacy registry; marker attributes deliberately do not participate.
+if (reg.reverse && reg.reverse.get(el) !== ref) {
+  return { status: 'ambiguous', documentId: reg.doc };
 }
 return { status: 'ok', documentId: reg.doc };
 `;
@@ -329,7 +331,7 @@ return { status: 'ok', documentId: reg.doc };
  *
  * Strategy:
  * 1. Get or create the per-document ref registry.
- * 2. Walk a curated set of selectors (interactive + structural).
+ * 2. Walk the composed tree, entering open shadow roots and flattened slots.
  * 3. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
  * 4. Reuse each node's existing ref, or issue the next unused one.
  * 5. Cap output at MAX_NODES so the snapshot stays bounded regardless
@@ -348,8 +350,17 @@ function newDocId(epoch) {
 function registry() {
   let reg = window.__craftdriverRefs;
   if (!reg || !reg.map) {
-    reg = { doc: newDocId(1), epoch: 1, next: 1, issued: 0, map: new Map() };
+    reg = {
+      doc: newDocId(1), epoch: 1, next: 1, issued: 0,
+      map: new Map(), reverse: new WeakMap()
+    };
     window.__craftdriverRefs = reg;
+  }
+  if (!reg.reverse) {
+    reg.reverse = new WeakMap();
+    reg.map.forEach(function (el, ref) {
+      if (el) reg.reverse.set(el, ref);
+    });
   }
   // Never reissue a number the session has already handed out. A fresh
   // document starts its counter above the session high-water mark, so a
@@ -364,24 +375,26 @@ function registry() {
   // re-key on every single snapshot — invalidating refs the instant they
   // were handed out.
   if (reg.issued >= MAX_REFS) {
-    const marked = document.querySelectorAll('[data-craftdriver-ref]');
-    for (let i = 0; i < marked.length; i++) marked[i].removeAttribute('data-craftdriver-ref');
+    reg.map.forEach(function (el) {
+      if (el && el.removeAttribute) el.removeAttribute('data-craftdriver-ref');
+    });
     reg.epoch += 1;
     reg.doc = newDocId(reg.epoch);
     reg.issued = 0;
     reg.map = new Map();
+    reg.reverse = new WeakMap();
   }
   return reg;
 }
 function refFor(reg, el) {
-  const existing = el.getAttribute('data-craftdriver-ref');
-  // Trust the attribute only when the registry agrees it names this node;
-  // that rejects authored markup and cloneNode duplicates.
+  const existing = reg.reverse.get(el);
   if (existing && reg.map.get(existing) === el) return existing;
   const ref = 'e' + reg.next;
   reg.next += 1;
   reg.issued += 1;
   reg.map.set(ref, el);
+  reg.reverse.set(el, ref);
+  // Diagnostic only. Exact ref resolution never queries this attribute.
   el.setAttribute('data-craftdriver-ref', ref);
   return ref;
 }
@@ -409,22 +422,21 @@ const reg = registry();
 const sel = 'a,button,input,select,textarea,h1,h2,h3,h4,h5,h6,[role],nav,main,header,footer,form,img,label';
 const out = [];
 const refs = [];
-const nodes = document.querySelectorAll(sel);
-for (let i = 0; i < nodes.length && out.length < MAX_NODES; i++) {
-  const el = nodes[i];
-  if (!visible(el)) continue;
+const seen = new WeakSet();
+function emit(el, depth) {
+  if (out.length >= MAX_NODES || !visible(el)) return;
   // A <header>/<footer> inside sectioning content is not a landmark, and
   // listing it as a bare tag would be pure noise. Everything else keeps a
   // line even without an ARIA role, so controls stay addressable by ref.
   const tag = el.tagName.toLowerCase();
-  if (!ariaRole(el) && (tag === 'header' || tag === 'footer')) continue;
+  if (!ariaRole(el) && (tag === 'header' || tag === 'footer')) return;
   const role = displayRole(el);
   let name = accName(el);
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME - 1) + '…';
   const hint = locatorHint(el);
   const ref = refFor(reg, el);
   refs.push(ref);
-  let line = ref + ': ' + role;
+  let line = '  '.repeat(depth) + ref + ': ' + role;
   if (name) line += ' "' + name + '"';
   if (hint) line += ' ' + hint;
   // Annotate disabled/checked state, agents need it.
@@ -432,6 +444,34 @@ for (let i = 0; i < nodes.length && out.length < MAX_NODES; i++) {
   if (el.checked) line += ' (checked)';
   out.push(line);
 }
+function visitContainer(container, depth) {
+  const children = container && container.children ? Array.from(container.children) : [];
+  for (let i = 0; i < children.length && out.length < MAX_NODES; i++) {
+    visitElement(children[i], depth);
+  }
+}
+function visitElement(el, depth) {
+  if (!el || seen.has(el) || out.length >= MAX_NODES) return;
+  seen.add(el);
+  const openRoot = el.shadowRoot || null;
+  if (el.matches(sel) || openRoot) emit(el, depth);
+  if (openRoot) {
+    if (out.length < MAX_NODES) out.push('  '.repeat(depth + 1) + '#shadow-root (open)');
+    visitContainer(openRoot, depth + 2);
+    return;
+  }
+  if (el.tagName === 'SLOT') {
+    const assigned = el.assignedElements ? el.assignedElements({ flatten: true }) : [];
+    if (assigned.length) {
+      for (let i = 0; i < assigned.length && out.length < MAX_NODES; i++) {
+        visitElement(assigned[i], depth);
+      }
+      return;
+    }
+  }
+  visitContainer(el, depth);
+}
+visitContainer(document, 0);
 return { lines: out, refs: refs, documentId: reg.doc, nextRef: reg.next };
 `;
 }

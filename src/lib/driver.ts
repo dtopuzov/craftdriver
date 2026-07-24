@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { By } from './by.js';
 import { WebElement, W3C_ELEMENT_KEY, LEGACY_ELEMENT_KEY } from './webelement.js';
+import { ClassicShadowRoot, W3C_SHADOW_ROOT_KEY } from './shadowRoot.js';
 import { WebDriverWait, type Condition, type WaitOptions } from './wait.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { SESSION_CREATE_TIMEOUT_MS } from './timing.js';
@@ -21,6 +22,7 @@ function isMoveTargetOutOfBounds(err: unknown): boolean {
 export class Driver {
   /** BiDi WebSocket URL if available */
   public __wsUrl?: string;
+  private bidiShadowQueriesSupported = true;
 
   constructor(
     private endpoint: WebDriverEndpoint,
@@ -36,6 +38,49 @@ export class Driver {
    */
   isRemote(): boolean {
     return this.endpoint.poolKey !== undefined;
+  }
+
+  /** Session-wide capability cache for the optional BiDi shadow adapter. */
+  canUseBiDiShadowQueries(): boolean {
+    return this.bidiShadowQueriesSupported;
+  }
+
+  /** Disable BiDi shadow lookup after a conclusive protocol/interoperability failure. */
+  disableBiDiShadowQueries(): boolean {
+    if (!this.bidiShadowQueriesSupported) return false;
+    this.bidiShadowQueriesSupported = false;
+    return true;
+  }
+
+  /** Build a Classic element wrapper from a W3C/BiDi shared node id. */
+  webElementFromId(elementId: string): WebElement {
+    return new WebElement(this.endpoint, this.sessionId, elementId);
+  }
+
+  /** Build an internal Classic shadow-root wrapper from its W3C id. */
+  shadowRootFromId(shadowRootId: string): ClassicShadowRoot {
+    return new ClassicShadowRoot(this, shadowRootId);
+  }
+
+  /**
+   * Recursively deserialize W3C element and shadow-root references.
+   * Execute Script can return either reference at any depth.
+   */
+  deserializeWireValue<T = unknown>(value: unknown): T {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.deserializeWireValue(item)) as T;
+    }
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const elementId = record[W3C_ELEMENT_KEY] ?? record[LEGACY_ELEMENT_KEY];
+      if (typeof elementId === 'string') return this.webElementFromId(elementId) as T;
+      const shadowRootId = record[W3C_SHADOW_ROOT_KEY];
+      if (typeof shadowRootId === 'string') return this.shadowRootFromId(shadowRootId) as T;
+      return Object.fromEntries(
+        Object.entries(record).map(([key, item]) => [key, this.deserializeWireValue(item)])
+      ) as T;
+    }
+    return value as T;
   }
 
   static async create(
@@ -149,6 +194,15 @@ export class Driver {
   }
 
   async findElement(locator: By): Promise<WebElement> {
+    if (locator.descriptor?.kind === 'ref') {
+      const elements = await this.findElements(locator);
+      if (elements[0]) return elements[0];
+      throw new CraftdriverError(
+        ErrorCode.NO_MATCH,
+        `Snapshot ref ${locator.descriptor.value} does not identify a live element`,
+        { detail: { ref: locator.descriptor.value } }
+      );
+    }
     const client = new HttpClient(this.endpoint);
     const res = await client.send<Record<string, string>>({
       method: 'POST',
@@ -160,10 +214,21 @@ export class Driver {
       (res as unknown as Record<string, string>);
     const elId = (value as any)?.[W3C_ELEMENT_KEY] || (value as any)?.[LEGACY_ELEMENT_KEY];
     if (!elId) throw new Error(`findElement failed: ${JSON.stringify(res)}`);
-    return new WebElement(this.endpoint, this.sessionId, elId);
+    return this.webElementFromId(elId);
   }
 
   async findElements(locator: By): Promise<WebElement[]> {
+    if (locator.descriptor?.kind === 'ref') {
+      const element = await this.executeScript<WebElement | null>(
+        `
+const reg = window.__craftdriverRefs;
+const el = reg && reg.map ? reg.map.get(arguments[0]) : null;
+return el && el.isConnected && el.ownerDocument === document ? el : null;
+`,
+        [locator.descriptor.value]
+      );
+      return element instanceof WebElement ? [element] : [];
+    }
     const client = new HttpClient(this.endpoint);
     const res = await client.send<Array<Record<string, string>> | Record<string, string>>({
       method: 'POST',
@@ -176,7 +241,7 @@ export class Driver {
       .map((v) => {
         const elId = (v as any)?.[W3C_ELEMENT_KEY] || (v as any)?.[LEGACY_ELEMENT_KEY];
         if (!elId) return undefined;
-        return new WebElement(this.endpoint, this.sessionId, elId);
+        return this.webElementFromId(elId);
       })
       .filter(Boolean) as WebElement[];
   }
@@ -188,7 +253,14 @@ export class Driver {
       path: `/session/${this.sessionId}/execute/sync`,
       body: { script, args },
     });
-    return ((res as CommandResponse<T>)?.value ?? (res as unknown as T)) as T;
+    // `null` is a meaningful script result (notably for `host.shadowRoot` on
+    // missing or closed roots). Nullish coalescing would replace it with the
+    // whole `{ value: null }` response and make callers think an object was
+    // returned, so unwrap by field presence instead.
+    const value = res && typeof res === 'object' && 'value' in res
+      ? (res as CommandResponse<T>).value
+      : (res as unknown as T);
+    return this.deserializeWireValue<T>(value);
   }
 
   /**
@@ -203,7 +275,56 @@ export class Driver {
       path: `/session/${this.sessionId}/execute/async`,
       body: { script, args },
     });
-    return ((res as CommandResponse<T>)?.value ?? (res as unknown as T)) as T;
+    const value = res && typeof res === 'object' && 'value' in res
+      ? (res as CommandResponse<T>).value
+      : (res as unknown as T);
+    return this.deserializeWireValue<T>(value);
+  }
+
+  /** W3C Get Element Shadow Root command. Open-only policy is enforced by the query layer. */
+  async getElementShadowRoot(element: WebElement): Promise<ClassicShadowRoot> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<Record<string, string>>({
+      method: 'GET',
+      path: `/session/${this.sessionId}/element/${element.getId()}/shadow`,
+    });
+    const value =
+      (res as CommandResponse<Record<string, string>>)?.value ??
+      (res as unknown as Record<string, string>);
+    const id = value?.[W3C_SHADOW_ROOT_KEY];
+    if (!id) throw new Error(`getElementShadowRoot failed: ${JSON.stringify(res)}`);
+    return this.shadowRootFromId(id);
+  }
+
+  async findElementFromShadowRoot(shadowRootId: string, locator: By): Promise<WebElement> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<Record<string, string>>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/shadow/${shadowRootId}/element`,
+      body: { using: locator.using, value: locator.value },
+    });
+    const value =
+      (res as CommandResponse<Record<string, string>>)?.value ??
+      (res as unknown as Record<string, string>);
+    const id = value?.[W3C_ELEMENT_KEY] ?? value?.[LEGACY_ELEMENT_KEY];
+    if (!id) throw new Error(`findElementFromShadowRoot failed: ${JSON.stringify(res)}`);
+    return this.webElementFromId(id);
+  }
+
+  async findElementsFromShadowRoot(shadowRootId: string, locator: By): Promise<WebElement[]> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<Array<Record<string, string>>>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/shadow/${shadowRootId}/elements`,
+      body: { using: locator.using, value: locator.value },
+    });
+    const value =
+      (res as CommandResponse<Array<Record<string, string>>>)?.value ??
+      (res as unknown as Array<Record<string, string>>);
+    return (value ?? [])
+      .map((item) => item?.[W3C_ELEMENT_KEY] ?? item?.[LEGACY_ELEMENT_KEY])
+      .filter((id): id is string => typeof id === 'string')
+      .map((id) => this.webElementFromId(id));
   }
 
   /** Configure the script (and async-script) timeout in milliseconds. */

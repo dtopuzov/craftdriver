@@ -435,6 +435,67 @@ await card.getByRole('button', { name: 'Buy' }).click();
 await card.getByText('In stock').expect().toBeVisible();
 ```
 
+## Open Shadow DOM
+
+CraftDriver crosses Shadow DOM with an explicit, lazy `shadowRoot()` boundary.
+Call it on the locator or element handle for the shadow host, then locate within
+the returned `ShadowRootLocator`:
+
+```typescript
+const card = browser.locator('user-card#account').shadowRoot();
+
+await card.getByRole('button', { name: 'Edit' }).click();
+await card.getByLabel('Display name').fill('Alice');
+await card.locator('.status').expect().toHaveText('Saved');
+```
+
+The boundary is explicit: `browser.locator('user-card .status')` does not pierce
+the root and ordinary CSS keeps its normal tree scope. Both API styles work:
+
+```typescript
+// Lazy Locator host — re-resolves the host and root for every operation.
+const lazyRoot = browser.locator('#account').shadowRoot();
+
+// ElementHandle style — browser.find() is locator-backed and auto-waits too.
+const handleRoot = browser.find('#account').shadowRoot();
+await handleRoot.find(By.testId('save')).click();
+```
+
+Nested open roots compose by crossing each boundary in order:
+
+```typescript
+const address = browser
+  .locator('checkout-shell')
+  .shadowRoot()
+  .locator('address-form')
+  .shadowRoot();
+
+await address.getByPlaceholder('City').fill('Sofia');
+await address.getByRole('button', { name: 'Save address' }).click();
+```
+
+`ShadowRootLocator` is a search context, not an element. It provides
+`locator()`, `find()`, `findAll()`, and all `getBy*()` helpers; actions and
+assertions live on the descendant `Locator`/`ElementHandle`. Filters, indexing,
+auto-waiting, assertions, locator-scoped accessibility audits, `Page`, and
+`Frame` contexts retain the complete root-aware query chain.
+
+The host follows normal locator cardinality: when it matches more than one
+element, use `first()`, `last()`, or `nth()` before `shadowRoot()` to select the
+intended host. Descendant `count()` returns `0` for no current matches, while
+actions and positive assertions auto-wait using the configured timeout.
+
+Only roots exposed by the page's public `host.shadowRoot` getter are supported.
+A missing or closed root throws `NO_OPEN_SHADOW_ROOT`; CraftDriver does not use
+WebDriver as a closed-root backdoor. Detached roots restart the complete lazy
+query and end with `DETACHED_SHADOW_ROOT` only when a stable root cannot be
+established. Raw XPath inside a shadow root is transport-dependent; CSS and the
+semantic `getBy*`/`By.*` helpers are the portable choices.
+
+The same API is covered on Chrome, Firefox, and Safari. CraftDriver uses
+WebDriver BiDi shadow primitives when the session supports them and falls back
+to the standard WebDriver Classic shadow-root endpoints otherwise.
+
 ### Locator actions and state
 
 | Method                          | Description                                            |

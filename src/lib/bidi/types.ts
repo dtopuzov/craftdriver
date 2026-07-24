@@ -109,7 +109,7 @@ export type RemoteValue =
   | { type: 'date'; value: string }
   | { type: 'map'; value?: [RemoteValue, RemoteValue][] }
   | { type: 'set'; value?: RemoteValue[] }
-  | { type: 'node'; value: NodeProperties }
+  | { type: 'node'; value: NodeProperties; sharedId?: string; handle?: string }
   | { type: 'window'; value: { context: BrowsingContext } };
 
 export interface NodeProperties {

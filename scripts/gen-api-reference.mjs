@@ -27,6 +27,7 @@ const TOPIC_DOC = {
   page: 'docs/browser-api.md',
   frame: 'docs/browser-api.md',
   locator: 'docs/selectors.md',
+  shadowRootLocator: 'docs/selectors.md',
   elementHandle: 'docs/element-api.md',
   webelement: 'docs/element-api.md',
   by: 'docs/selectors.md',
@@ -94,7 +95,7 @@ const CATEGORIES = [
   {
     title: 'Locators And Elements',
     description: 'Find page content with semantic locators and selector helpers.',
-    symbols: ['By', 'Locator'],
+    symbols: ['By', 'Locator', 'ShadowRootLocator'],
   },
   {
     title: 'Input',
@@ -197,6 +198,8 @@ const CATEGORIES = [
       'A11yImpact',
       'A11yOptions',
       'A11yResult',
+      'A11yShadowSelector',
+      'A11yTarget',
       'A11yViolation',
       'A11yViolationNode',
     ],

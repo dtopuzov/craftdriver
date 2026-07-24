@@ -5,6 +5,12 @@ import { CraftdriverError, ErrorCode } from './errors.js';
 /** Severity buckets reported by axe-core. */
 export type A11yImpact = 'minor' | 'moderate' | 'serious' | 'critical';
 
+/** axe-core selector path through one or more open shadow boundaries. */
+export type A11yShadowSelector = [string, string, ...string[]];
+
+/** A light-DOM selector or axe-core's nested selector path for Shadow DOM. */
+export type A11yTarget = string | A11yShadowSelector;
+
 export interface A11yOptions {
   /**
    * Rule IDs to skip entirely. The common case — most projects maintain
@@ -20,8 +26,8 @@ export interface A11yOptions {
 }
 
 export interface A11yViolationNode {
-  /** CSS selector chain identifying the violating node. */
-  target: string[];
+  /** CSS targets; nested arrays describe paths through open shadow roots. */
+  target: A11yTarget[];
   /** HTML snippet of the violating node. */
   html: string;
   /** Human-readable summary of why this node failed. */
@@ -241,7 +247,9 @@ const AUDIT_SCRIPT = `
               helpUrl: v.helpUrl,
               nodes: (v.nodes || []).map(function (n) {
                 return {
-                  target: (n.target || []).map(String),
+                  target: (n.target || []).map(function (part) {
+                    return Array.isArray(part) ? part.map(String) : String(part);
+                  }),
                   html: n.html,
                   failureSummary: n.failureSummary || '',
                 };

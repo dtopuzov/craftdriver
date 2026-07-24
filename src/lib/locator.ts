@@ -1,60 +1,104 @@
 import { By } from './by.js';
 import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
-import { ElementHandle, type ContextSwitcher } from './elementHandle.js';
-import { expectSelector } from './expect.js';
+import { ElementHandle } from './elementHandle.js';
+import { expectResolved } from './expect.js';
 import type { ExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
+import {
+  QueryEnvironment,
+  cloneLocatorPlan,
+  createLocatorPlan,
+  describeLocatorPlan,
+  isDetachedShadowError,
+  isTerminalQueryError,
+  withShadowRetryAttempts,
+  type ContextSwitcher,
+  type ElementTargetPlan,
+  type LocatorPlan,
+  type QueryBiDiProvider,
+} from './query.js';
+import { ShadowRootLocator } from './shadowRootLocator.js';
 
 export interface ActionOptions {
   timeout?: number;
 }
 
 export class Locator {
-  private _index: number | null = null;        // null=first, -1=last, >=0 = nth(index)
-  private _filterText: string | RegExp | null = null;
-  private _filterHas: Locator | null = null;
-  private _parent: Locator | null = null;
-  private _contextSwitcher?: ContextSwitcher;
+  private plan: LocatorPlan;
+  private environment: QueryEnvironment;
 
   constructor(
     private driver: Driver,
-    private by: By,
-    private getDefaultTimeout: () => number = () => 5000
-  ) { }
+    by: By,
+    private getDefaultTimeout: () => number = () => 5000,
+    environment?: QueryEnvironment,
+    plan?: LocatorPlan
+  ) {
+    this.environment = environment ?? new QueryEnvironment(driver);
+    this.plan = plan ?? createLocatorPlan(by);
+  }
 
-  /** Bind this locator to a browsing context (iframe/tab) for frame-scoped element resolution. */
+  /** Internal factory used by root-aware search contexts. */
+  static fromPlan(
+    driver: Driver,
+    plan: LocatorPlan,
+    getDefaultTimeout: () => number,
+    environment: QueryEnvironment
+  ): Locator {
+    return new Locator(driver, plan.by, getDefaultTimeout, environment, plan);
+  }
+
+  /** Internal immutable snapshot for child/root/filter composition. */
+  _queryPlan(): LocatorPlan {
+    return cloneLocatorPlan(this.plan);
+  }
+
+  /** Internal shared query environment for child/root composition. */
+  _queryEnvironment(): QueryEnvironment {
+    return this.environment;
+  }
+
+  /** Bind this locator to a browsing context (iframe/tab). */
   withContext(switcher: ContextSwitcher): this {
-    this._contextSwitcher = switcher;
+    this.environment.setContextSwitcher(switcher);
     return this;
   }
 
-  private async _withContext<T>(fn: () => Promise<T>): Promise<T> {
-    if (this._contextSwitcher) {
-      await this._contextSwitcher.in();
-      try {
-        return await fn();
-      } finally {
-        await this._contextSwitcher.out();
-      }
-    }
-    return fn();
+  /** Bind this locator to a live BiDi context provider. */
+  withBiDi(provider: QueryBiDiProvider): this {
+    this.environment.setBiDiProvider(provider);
+    return this;
   }
 
-  /** Return a new child Locator whose search is scoped within this locator's first match. */
+  private _withContext<T>(fn: () => Promise<T>): Promise<T> {
+    return this.environment.withContext(fn);
+  }
+
+  /** Return a new child Locator scoped within this locator's first match. */
   locator(selector: string | By): Locator {
-    const childBy = typeof selector === 'string' ? By.css(selector) : selector;
-    const child = new Locator(this.driver, childBy, this.getDefaultTimeout);
-    child._parent = this;
-    child._contextSwitcher = this._contextSwitcher;
-    return child;
+    const by = typeof selector === 'string' ? By.css(selector) : selector;
+    const plan = createLocatorPlan(by, {
+      kind: 'element',
+      target: { kind: 'locator', plan: this._queryPlan() },
+    });
+    return Locator.fromPlan(this.driver, plan, this.getDefaultTimeout, this.environment);
   }
 
-  /** Return a child Locator matching a descendant by ARIA role, scoped within this locator's first match. */
+  /** Cross the explicit open Shadow DOM boundary exposed by the current host. */
+  shadowRoot(): ShadowRootLocator {
+    return new ShadowRootLocator(
+      this.driver,
+      { kind: 'shadow', host: { kind: 'locator', plan: this._queryPlan() } },
+      this.getDefaultTimeout,
+      this.environment
+    );
+  }
+
   getByRole(
     role: string,
     opts?: { name?: string; exact?: boolean; includeHidden?: boolean }
@@ -62,142 +106,113 @@ export class Locator {
     return this.locator(By.role(role, opts));
   }
 
-  /** Return a child Locator matching a descendant by visible text, scoped within this locator's first match. */
   getByText(text: string, opts?: { exact?: boolean }): Locator {
     return this.locator(By.text(text, opts));
   }
 
-  /** Return a child Locator matching a descendant by associated label, scoped within this locator's first match. */
   getByLabel(text: string, opts?: { exact?: boolean }): Locator {
     return this.locator(By.labelText(text, opts));
   }
 
-  /** Return a child Locator matching a descendant by placeholder text, scoped within this locator's first match. */
   getByPlaceholder(text: string, opts?: { exact?: boolean }): Locator {
     return this.locator(By.placeholder(text, opts));
   }
 
-  /** Return a child Locator matching a descendant by alt text, scoped within this locator's first match. */
   getByAltText(text: string, opts?: { exact?: boolean }): Locator {
     return this.locator(By.altText(text, opts));
   }
 
-  /** Return a child Locator matching a descendant by title attribute, scoped within this locator's first match. */
   getByTitle(text: string, opts?: { exact?: boolean }): Locator {
     return this.locator(By.title(text, opts));
   }
 
-  /** Return a child Locator matching a descendant by data-testid, scoped within this locator's first match. */
   getByTestId(id: string): Locator {
     return this.locator(By.testId(id));
   }
 
-  /** Return a new Locator targeting the element at position `index` (0-based). */
   nth(index: number): Locator {
-    const l = this._clone();
-    l._index = index;
-    return l;
+    const locator = this._clone();
+    locator.plan.index = index;
+    return locator;
   }
 
-  /** Return a new Locator targeting the first match. */
   first(): Locator {
     return this.nth(0);
   }
 
-  /** Return a new Locator targeting the last match. */
   last(): Locator {
-    const l = this._clone();
-    l._index = -1;
-    return l;
+    const locator = this._clone();
+    locator.plan.index = 'last';
+    return locator;
   }
 
-  /** Return a new Locator that narrows matches by text or child-locator presence. */
   filter(opts: { hasText?: string | RegExp; has?: Locator }): Locator {
-    const l = this._clone();
-    if (opts.hasText !== undefined) l._filterText = opts.hasText;
-    if (opts.has !== undefined) l._filterHas = opts.has;
-    return l;
+    const locator = this._clone();
+    if (opts.hasText !== undefined) locator.plan.filterText = opts.hasText;
+    if (opts.has !== undefined) locator.plan.filterHas = opts.has._queryPlan();
+    return locator;
   }
 
   private _clone(): Locator {
-    const l = new Locator(this.driver, this.by, this.getDefaultTimeout);
-    l._index = this._index;
-    l._filterText = this._filterText;
-    l._filterHas = this._filterHas;
-    l._parent = this._parent;
-    l._contextSwitcher = this._contextSwitcher;
-    return l;
+    return Locator.fromPlan(
+      this.driver,
+      cloneLocatorPlan(this.plan),
+      this.getDefaultTimeout,
+      this.environment
+    );
   }
 
-  /** Resolve all raw WebElements for this.by, scoped to the parent if set. */
-  private async _findRaw(): Promise<WebElement[]> {
-    if (this._parent) {
-      const parentEls = await this._parent._findFinal();
-      if (parentEls.length === 0) return [];
-      return parentEls[0].findElements(this.by);
-    }
-    return this.driver.findElements(this.by);
+  private _target(): ElementTargetPlan {
+    return { kind: 'locator', plan: this._queryPlan() };
   }
 
-  /** Apply text / has filters to the raw result set. */
-  private async _findFiltered(): Promise<WebElement[]> {
-    let elements = await this._findRaw();
-
-    if (this._filterText !== null) {
-      const pattern = this._filterText;
-      const texts = await Promise.all(elements.map((el) => el.getText()));
-      elements = elements.filter((_, i) => {
-        const t = texts[i];
-        return pattern instanceof RegExp ? pattern.test(t) : t.includes(String(pattern));
-      });
-    }
-
-    if (this._filterHas !== null) {
-      const hasBy = this._filterHas.by;
-      const kept: WebElement[] = [];
-      for (const el of elements) {
-        const children = await el.findElements(hasBy);
-        if (children.length > 0) kept.push(el);
-      }
-      elements = kept;
-    }
-
-    return elements;
+  private _findFinal(): Promise<WebElement[]> {
+    return this.environment.resolveAll(this.plan);
   }
 
-  /** Apply index on top of the filtered result set. */
-  private async _findFinal(): Promise<WebElement[]> {
-    const els = await this._findFiltered();
-    const idx = this._index;
-    if (idx === -1) return els.length > 0 ? [els[els.length - 1]] : [];
-    if (idx !== null) return els.length > idx ? [els[idx]] : [];
-    return els;
+  private _selectorDetail(): Record<string, unknown> {
+    const by = this.plan.by;
+    return {
+      selector: describeLocatorPlan(this.plan),
+      queryPath: describeLocatorPlan(this.plan),
+      using: by.using,
+      value: by.value,
+    };
   }
 
-  /** Poll until a visible element is available in the final result set. */
   private async _waitForVisible(timeout: number): Promise<WebElement> {
     const deadline = Date.now() + timeout;
     let lastError: unknown;
     let everMatched = false;
-    while (Date.now() < deadline) {
+    let stableResolution = false;
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
       try {
-        const els = await this._findFinal();
-        if (els.length > 0) everMatched = true;
-        for (const el of els) {
-          if (await el.isDisplayed()) return el;
+        const elements = await this._findFinal();
+        stableResolution = true;
+        if (elements.length > 0) everMatched = true;
+        for (const element of elements) {
+          if (await element.isDisplayed()) return element;
         }
-      } catch (e) {
-        lastError = e;
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        lastError = error;
       }
-      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS));
     }
-    const selector = `${this.by.using}=${this.by.value}`;
+    if (!stableResolution && isDetachedShadowError(lastError)) {
+      throw withShadowRetryAttempts(lastError, attempts);
+    }
+    const queryPath = describeLocatorPlan(this.plan);
+    const detail = { ...this._selectorDetail(), timeout };
     if (everMatched) {
       throw new CraftdriverError(
         ErrorCode.TIMEOUT_WAITING_VISIBLE,
-        `Timed out after ${timeout}ms waiting for locator "${selector}" to become visible (element exists but is not displayed)`,
+        `Timed out after ${timeout}ms waiting for locator "${queryPath}" to become visible (element exists but is not displayed)`,
         {
-          detail: { selector, timeout, using: this.by.using, value: this.by.value },
+          detail,
           cause: lastError,
           hint: 'The element matched but never became visible — wait for the containing view (modal, accordion, etc.) to open first.',
         }
@@ -205,70 +220,59 @@ export class Locator {
     }
     throw new CraftdriverError(
       ErrorCode.NO_MATCH,
-      `No element matched locator "${selector}" within ${timeout}ms`,
+      `No element matched locator "${queryPath}" within ${timeout}ms`,
       {
-        detail: { selector, timeout, using: this.by.using, value: this.by.value },
+        detail,
         cause: lastError,
         hint: 'Selector matched zero elements. Verify the selector against the page; consider By.role / By.testId / By.labelText for resilience.',
       }
     );
   }
 
-  /** Poll until any element is present in the final result set (need not be visible). */
   private async _waitForAny(timeout: number): Promise<WebElement> {
     const deadline = Date.now() + timeout;
     let lastError: unknown;
-    while (Date.now() < deadline) {
+    let stableResolution = false;
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
       try {
-        const els = await this._findFinal();
-        if (els.length > 0) return els[0];
-      } catch (e) {
-        lastError = e;
+        const elements = await this._findFinal();
+        stableResolution = true;
+        if (elements.length > 0) return elements[0];
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        lastError = error;
       }
-      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS));
     }
-    const selector = `${this.by.using}=${this.by.value}`;
+    if (!stableResolution && isDetachedShadowError(lastError)) {
+      throw withShadowRetryAttempts(lastError, attempts);
+    }
+    const queryPath = describeLocatorPlan(this.plan);
+    const detail = { ...this._selectorDetail(), timeout };
     throw new CraftdriverError(
       ErrorCode.NO_MATCH,
-      `No element matched locator "${selector}" within ${timeout}ms`,
+      `No element matched locator "${queryPath}" within ${timeout}ms`,
       {
-        detail: { selector, timeout, using: this.by.using, value: this.by.value },
+        detail,
         cause: lastError,
         hint: 'Selector matched zero elements. Verify the selector against the page; consider By.role / By.testId / By.labelText for resilience.',
       }
     );
   }
 
-  private async _resolve(options?: ActionOptions): Promise<WebElement> {
-    const timeout = options?.timeout ?? this.getDefaultTimeout();
-    return this._waitForVisible(timeout);
+  private _resolve(options?: ActionOptions): Promise<WebElement> {
+    return this._waitForVisible(options?.timeout ?? this.getDefaultTimeout());
   }
 
-  /** Resolve the current final match once without waiting. */
   private async _resolveOnce(): Promise<WebElement | null> {
-    const els = await this._findFinal();
-    return els.length > 0 ? els[0] : null;
+    return (await this._findFinal())[0] ?? null;
   }
 
-  private async _resolveExisting(options?: ActionOptions): Promise<WebElement> {
-    const timeout = options?.timeout ?? this.getDefaultTimeout();
-    return this._waitForAny(timeout);
-  }
-
-  /**
-   * Resolve to a visible element WITHOUT applying context switching (used inside _withContext blocks).
-   * The caller is responsible for switching context before calling this.
-   */
-  private async _waitForVisibleOrSimple(options?: ActionOptions): Promise<WebElement> {
-    return this._resolve(options);
-  }
-
-  /**
-   * Resolve to an existing element WITHOUT applying context switching (used inside _withContext blocks).
-   * The caller is responsible for switching context before calling this.
-   */
-  private async _waitForAnyOrSimple(options?: ActionOptions): Promise<WebElement> {
-    return this._resolveExisting(options);
+  private _resolveExisting(options?: ActionOptions): Promise<WebElement> {
+    return this._waitForAny(options?.timeout ?? this.getDefaultTimeout());
   }
 
   async click(options?: ActionOptions): Promise<void> {
@@ -276,7 +280,7 @@ export class Locator {
     return this._withContext(async () => {
       await clickWithFastPath(
         () => this._resolveOnce(),
-        (remaining) => this._waitForVisibleOrSimple({ timeout: remaining }),
+        (remaining) => this._waitForVisible(remaining),
         timeout
       );
     });
@@ -287,7 +291,7 @@ export class Locator {
     return this._withContext(async () => {
       await fillWithFastPath(
         () => this._resolveOnce(),
-        (remaining) => this._waitForVisibleOrSimple({ timeout: remaining }),
+        (remaining) => this._waitForVisible(remaining),
         text,
         timeout
       );
@@ -295,13 +299,9 @@ export class Locator {
   }
 
   async text(options?: ActionOptions): Promise<string> {
-    return this._withContext(async () => {
-      const el = await this._waitForAnyOrSimple(options);
-      return (await el.getText()) ?? '';
-    });
+    return this._withContext(async () => (await this._resolveExisting(options)).getText());
   }
 
-  /** Alias for text(). */
   async textContent(options?: ActionOptions): Promise<string> {
     return this.text(options);
   }
@@ -310,37 +310,29 @@ export class Locator {
     try {
       return await this._withContext(async () => {
         const timeout = options?.timeout ?? Math.min(this.getDefaultTimeout(), 1000);
-        const el = await this._waitForAnyOrSimple({ timeout });
-        return el.isDisplayed();
+        return (await this._waitForAny(timeout)).isDisplayed();
       });
-    } catch {
+    } catch (error) {
+      if (isTerminalQueryError(error) || isDetachedShadowError(error)) throw error;
       return false;
     }
   }
 
-  /**
-   * Returns the number of currently matching elements in the DOM (no auto-wait).
-   * Use `waitFor` if you need to wait for a specific count.
-   */
   async count(): Promise<number> {
-    return this._withContext(async () => {
-      const els = await this._findFinal();
-      return els.length;
-    });
+    return this._withContext(async () => (await this._findFinal()).length);
   }
 
-  /**
-   * Returns snapshot `ElementHandle`s for all currently matching elements.
-   * Each handle is bound to the element resolved at call time.
-   */
   async all(): Promise<ElementHandle[]> {
     return this._withContext(async () => {
-      const els = await this._findFinal();
-      return els.map((we) => {
-        const handle = ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout);
-        if (this._contextSwitcher) handle.withContext(this._contextSwitcher);
-        return handle;
-      });
+      const elements = await this._findFinal();
+      return elements.map((element) =>
+        ElementHandle.fromTarget(
+          this.driver,
+          { kind: 'fixed', element },
+          this.getDefaultTimeout,
+          this.environment
+        )
+      );
     });
   }
 
@@ -349,67 +341,74 @@ export class Locator {
     timeout?: number;
   }): Promise<unknown> {
     return this._withContext(async () => {
-      const { state } = options;
       const timeout = options.timeout ?? this.getDefaultTimeout();
-      if (state === 'visible') return this._waitForVisible(timeout);
-      if (state === 'attached') return this._waitForAny(timeout);
-      if (state === 'detached' || state === 'hidden') {
-        return this._waitForNegativeState(state, timeout);
+      if (options.state === 'visible') return this._waitForVisible(timeout);
+      if (options.state === 'attached') return this._waitForAny(timeout);
+      if (options.state === 'detached' || options.state === 'hidden') {
+        return this._waitForNegativeState(options.state, timeout);
       }
       throw new CraftdriverError(
         ErrorCode.INVALID_ARGUMENT,
-        `Unknown waitFor state: "${state}". Expected one of: attached, detached, visible, hidden.`,
-        { detail: { state } }
+        `Unknown waitFor state: "${String(options.state)}". Expected one of: attached, detached, visible, hidden.`,
+        { detail: { state: options.state } }
       );
     });
   }
 
-  /** Poll until the element is detached from DOM (`detached`) or no longer visible (`hidden`). */
   private async _waitForNegativeState(
     state: 'detached' | 'hidden',
     timeout: number
   ): Promise<void> {
     const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const els = await this._findFinal();
-      if (state === 'detached') {
-        if (els.length === 0) return;
-      } else {
-        // 'hidden': pass when nothing matches or no match is displayed.
-        let anyVisible = false;
-        for (const el of els) {
-          if (await el.isDisplayed()) { anyVisible = true; break; }
+    for (;;) {
+      try {
+        const elements = await this._findFinal();
+        if (state === 'detached' && elements.length === 0) return;
+        if (state === 'hidden') {
+          let anyVisible = false;
+          for (const element of elements) {
+            if (await element.isDisplayed()) {
+              anyVisible = true;
+              break;
+            }
+          }
+          if (!anyVisible) return;
         }
-        if (!anyVisible) return;
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        if (isDetachedShadowError(error) && state === 'detached') return;
       }
-      await new Promise<void>((r) => setTimeout(r, DEFAULT_POLL_INTERVAL_MS));
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, DEFAULT_POLL_INTERVAL_MS));
     }
-    const selector = `${this.by.using}=${this.by.value}`;
     throw new CraftdriverError(
       ErrorCode.TIMEOUT_WAITING_STATE,
-      `Timed out after ${timeout}ms waiting for locator "${selector}" to become ${state}`,
-      { detail: { selector, state, timeout } }
+      `Timed out after ${timeout}ms waiting for locator "${describeLocatorPlan(this.plan)}" to become ${state}`,
+      { detail: { ...this._selectorDetail(), state, timeout } }
     );
   }
 
-  /** Returns an assertion API scoped to this locator's selector. */
   expect(): ExpectApi {
-    return expectSelector(this.driver, this.by, this.getDefaultTimeout, this._contextSwitcher);
+    return expectResolved({
+      description: describeLocatorPlan(this.plan),
+      detail: this._selectorDetail(),
+      resolveAll: () => this._findFinal(),
+      getDefaultTimeout: this.getDefaultTimeout,
+      withContext: (operation) => this._withContext(operation),
+    });
   }
 
   private _a11y?: A11y;
-  /**
-   * Accessibility audit scoped to the resolved element. Re-resolves the
-   * locator on every audit/check call.
-   */
   get a11y(): A11y {
     if (!this._a11y) {
       this._a11y = new A11y({
         driver: this.driver,
         resolveTarget: () => this._resolve(),
-        withContext: (fn) => this._withContext(fn),
+        withContext: (operation) => this._withContext(operation),
       });
     }
     return this._a11y;
   }
 }
+
+export type { ContextSwitcher } from './query.js';

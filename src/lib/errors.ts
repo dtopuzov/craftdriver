@@ -35,11 +35,15 @@ export const ErrorCode = {
   INVALID_ARGUMENT: 'INVALID_ARGUMENT',
   /** Feature exists but is not available on this browser/transport (e.g. Chromium-only over Firefox). */
   UNSUPPORTED: 'UNSUPPORTED',
+  /** A host resolved, but its public `shadowRoot` getter exposed no open root. */
+  NO_OPEN_SHADOW_ROOT: 'NO_OPEN_SHADOW_ROOT',
+  /** A shadow-root reference detached and re-resolution could not recover. */
+  DETACHED_SHADOW_ROOT: 'DETACHED_SHADOW_ROOT',
   /** Method called in an invalid state (e.g. `clock.tick()` before `install()`). */
   STATE_INVALID: 'STATE_INVALID',
   /**
    * An agent-surface snapshot ref (`ref=eN`) no longer identifies exactly one
-   * live element — it was removed, duplicated, never issued, or issued against
+   * live element — it was removed, never issued, or issued against
    * a document the page has since navigated away from. Take a fresh snapshot;
    * craftdriver never guesses a replacement element. `detail.reason` carries
    * the specific cause.
