@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/dtopuzov/craftdriver/compare/v1.8.0...v1.9.0) (2026-07-24)
+
+
+### Features
+
+* add open Shadow DOM support ([#49](https://github.com/dtopuzov/craftdriver/issues/49)) ([fadd962](https://github.com/dtopuzov/craftdriver/commit/fadd962c6d1a583501d9efb7c8117d42ce3710a6)), closes [#40](https://github.com/dtopuzov/craftdriver/issues/40)
+
 # [1.8.0](https://github.com/dtopuzov/craftdriver/compare/v1.7.0...v1.8.0) (2026-07-21)
 
 
