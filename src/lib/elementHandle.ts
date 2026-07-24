@@ -4,7 +4,8 @@ import type { WebElement } from './webelement.js';
 import fs from 'fs/promises';
 import path from 'path';
 import yazl from 'yazl';
-import { expectResolved } from './expect.js';
+import { expectElementResolved } from './expect.js';
+import type { ElementExpectApi } from './expect.js';
 import { getKeyValue, type KeyValue } from './keys.js';
 import { A11y } from './a11y.js';
 import { clickWithFastPath } from './clickFastPath.js';
@@ -365,9 +366,9 @@ export class ElementHandle {
     }, ElementHandle.prototype.select);
   }
 
-  expect() {
+  expect(): ElementExpectApi {
     const description = describeTarget(this.target);
-    return expectResolved({
+    return expectElementResolved({
       description,
       detail: { selector: description, queryPath: description },
       resolveAll: async () => {

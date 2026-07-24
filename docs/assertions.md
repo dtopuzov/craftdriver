@@ -1,6 +1,6 @@
 # Assertions
 
-CraftDriver provides a fluent assertion API via `browser.expect()` for testing element states.
+CraftDriver provides auto-waiting assertions for the current page and for elements.
 
 > For accessibility assertions, see [docs/accessibility.md](./accessibility.md) — `browser.a11y.check()` is the assertion form of the axe-core wrapper.
 
@@ -11,6 +11,10 @@ CraftDriver provides a fluent assertion API via `browser.expect()` for testing e
 await browser.expect('#message').toHaveText('Success!');
 await browser.expect('#email').toHaveValue('test@example.com');
 await browser.expect('#modal').toBeVisible();
+
+// Assert on the active page (no selector argument)
+await browser.expect().toHaveURL('https://example.test/dashboard');
+await browser.expect().toHaveTitle('Dashboard');
 ```
 
 ## Assertion Methods
@@ -61,14 +65,122 @@ await browser.expect('#input').toHaveAttribute('disabled', 'true');
 await browser.expect('#image').toHaveAttribute('alt', 'Product photo');
 ```
 
+### toHaveCount(expected)
+
+Assert the exact number of elements currently matched by a locator. The expected
+count must be a non-negative integer. Unlike element-state assertions, a count of
+zero is valid and means that no elements match.
+
+```typescript
+await browser.expect('.cart-item').toHaveCount(3);
+await browser.locator('.cart-item').expect().toHaveCount(3);
+await browser.expect('.validation-error').toHaveCount(0);
+```
+
+### toBeFocused()
+
+Assert that the element is the focused element in its document or shadow root.
+This is useful for keyboard navigation, autofocus, and focus-management tests.
+
+```typescript
+await browser.find('#search').click();
+await browser.locator('#search').expect().toBeFocused();
+await browser.locator('#submit').expect().not.toBeFocused();
+```
+
+The element must exist for both the positive and negated forms. A missing element
+does not satisfy `not.toBeFocused()`.
+
+### toBeInViewport()
+
+Assert that a positive-area portion of the element intersects the current
+viewport. It checks geometry, not whether another element covers the target.
+It intentionally has no intersection-ratio option.
+
+```typescript
+const checkout = browser.locator('#checkout');
+await checkout.expect().not.toBeInViewport();
+await browser.evaluate(`document.querySelector('#checkout').scrollIntoView()`);
+await checkout.expect().toBeInViewport();
+```
+
+`toBeVisible()` and `toBeInViewport()` answer different questions: a rendered
+element below the fold can be visible but not in the viewport. The element must
+exist for both viewport assertions; removal is instead expressed explicitly as
+`await locator.waitFor({ state: 'detached' })`.
+
+### toHaveCSS(property, value)
+
+Assert the browser's **computed** value for a CSS property. Use CSS property
+names such as `background-color`, not JavaScript names such as
+`backgroundColor`.
+
+Given this page:
+
+```html
+<style>
+  .toolbar { display: flex; }
+  .hidden { display: none; }
+</style>
+
+<nav id="primary" class="toolbar">Primary navigation</nav>
+<nav id="secondary" class="toolbar hidden">Secondary navigation</nav>
+```
+
+the selector `.toolbar` locates **both** `<nav>` elements. `toHaveCSS()` does
+not filter or change what the locator finds; like other element assertions, it
+asserts the first matched element:
+
+```typescript
+await browser.expect('#primary').toHaveCSS('display', 'flex'); // passes
+await browser.expect('#secondary').toHaveCSS('display', 'none'); // passes
+await browser.expect('#secondary').toHaveCSS('display', 'flex'); // fails
+
+await browser.expect('.toolbar').toHaveCount(2); // selector matched both
+await browser.expect('.toolbar').toHaveCSS('display', 'flex'); // first match is #primary
+```
+
+Computed values include styles from stylesheets, inheritance, and the cascade;
+they are not limited to the element's inline `style` attribute. Browsers can
+normalize computed values—for example, colors may be returned as `rgb(...)`.
+Use the form produced by `getComputedStyle()` when asserting such properties.
+
+The negated form is also available:
+
+```typescript
+await browser.expect('#secondary').not.toHaveCSS('display', 'flex');
+```
+
+As with focus and viewport assertions, the element must exist for both forms.
+
+## Page Assertions
+
+Call `expect()` without a selector to assert the URL or title of the active
+page. Strings match exactly; use a regular expression for partial matching.
+
+```typescript
+await browser.expect().toHaveURL('https://example.test/dashboard');
+await browser.expect().toHaveURL(/\/dashboard(?:\?|$)/);
+await browser.expect().toHaveTitle('Dashboard');
+await browser.expect().not.toHaveURL(/\/login/);
+```
+
+An explicit `Page` supports the same API:
+
+```typescript
+const page = await browser.activePage();
+await page.expect().toHaveTitle(/Dashboard/);
+```
+
 ## Negation
 
-Use `.not` to negate any assertion:
+Use `.not` to wait for the inverse of an assertion:
 
 ```typescript
 await browser.expect('#error').not.toBeVisible();
 await browser.expect('#input').not.toHaveValue('');
 await browser.expect('#button').not.toHaveAttribute('disabled', 'true');
+await browser.expect('.spinner').not.toHaveCount(1);
 ```
 
 ## Element-Scoped Assertions
@@ -173,10 +285,6 @@ await browser.expect('#submit').toHaveAttribute('disabled', 'true');
 ### Page Title and URL
 
 ```typescript
-// Use browser methods directly for page-level checks
-const title = await browser.title();
-expect(title).toBe('Dashboard'); // Using Vitest/Jest expect
-
-const url = await browser.url();
-expect(url).toContain('/dashboard');
+await browser.expect().toHaveTitle('Dashboard');
+await browser.expect().toHaveURL(/\/dashboard/);
 ```

@@ -3,7 +3,7 @@ import type { Driver } from './driver.js';
 import type { WebElement } from './webelement.js';
 import { ElementHandle } from './elementHandle.js';
 import { expectResolved } from './expect.js';
-import type { ExpectApi } from './expect.js';
+import type { LocatorExpectApi } from './expect.js';
 import { A11y } from './a11y.js';
 import { CraftdriverError, ErrorCode } from './errors.js';
 import { DEFAULT_POLL_INTERVAL_MS } from './timing.js';
@@ -388,7 +388,7 @@ export class Locator {
     );
   }
 
-  expect(): ExpectApi {
+  expect(): LocatorExpectApi {
     return expectResolved({
       description: describeLocatorPlan(this.plan),
       detail: this._selectorDetail(),

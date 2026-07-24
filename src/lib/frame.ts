@@ -14,7 +14,7 @@ import { Driver } from './driver.js';
 import { ElementHandle, type ContextSwitcher } from './elementHandle.js';
 import { Locator } from './locator.js';
 import { expectSelector } from './expect.js';
-import type { ExpectApi } from './expect.js';
+import type { LocatorExpectApi } from './expect.js';
 import { until } from './wait.js';
 import type { WebElement } from './webelement.js';
 import type { BiDiConnection } from './bidi/connection.js';
@@ -90,7 +90,7 @@ export class Frame {
       );
   }
 
-  expect(selector: string | By): ExpectApi {
+  expect(selector: string | By): LocatorExpectApi {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     return expectSelector(this.driver, by, this.getDefaultTimeout, this.contextSwitcher);
   }

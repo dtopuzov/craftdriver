@@ -32,6 +32,17 @@ Find page content with semantic locators and selector helpers.
 | `Locator` | class | — | [selectors](selectors.md) |
 | `ShadowRootLocator` | class | Lazy, explicit search context for one open ShadowRoot. | [selectors](selectors.md) |
 
+## Assertions
+
+Auto-wait for page, locator, and element conditions.
+
+| Symbol | Kind | Summary | Docs |
+|---|---|---|---|
+| `AssertionOptions` | type | Per-assertion timeout override. | [assertions](assertions.md) |
+| `DocumentExpectApi` | type | Auto-waiting assertions for the current browser page or an explicit Page. | [assertions](assertions.md) |
+| `ElementExpectApi` | type | Auto-waiting assertions for a single resolved element. | [assertions](assertions.md) |
+| `LocatorExpectApi` | type | Auto-waiting assertions for a locator collection and its first element. | [assertions](assertions.md) |
+
 ## Input
 
 Drive keyboard, mouse, and low-level key values.
@@ -188,4 +199,4 @@ Exports that are public but not yet assigned to a feature group.
 | `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
 | `SessionStateCookie` | type | — | — |
 
-Total exports: **97**.
+Total exports: **101**.
