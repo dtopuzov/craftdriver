@@ -65,6 +65,31 @@ describe.skipIf(BROWSER_NAME !== 'safari')('Safari Classic-only regression suite
     expect(result).toBe(3);
   });
 
+  it('runs page, collection, focus, CSS, and viewport assertions', async () => {
+    await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
+
+    await browser.expect().toHaveURL(`${EXAMPLES_BASE_URL}/login.html`);
+    await browser.expect().toHaveTitle('Craftdriver Login Example');
+    await browser.locator('input').expect().toHaveCount(2);
+    await browser.locator('.card').expect().toHaveCSS('display', 'block');
+
+    await browser.click('#username');
+    await browser.locator('#username').expect().toBeFocused();
+    await browser.locator('#password').expect().not.toBeFocused();
+
+    await browser.evaluate(`
+      var button = document.createElement('button');
+      button.id = 'safari-offscreen-button';
+      button.textContent = 'Continue';
+      button.style.marginTop = '200vh';
+      document.body.appendChild(button);
+    `);
+    const button = browser.locator('#safari-offscreen-button');
+    await button.expect().not.toBeInViewport();
+    await browser.evaluate(`document.querySelector('#safari-offscreen-button').scrollIntoView()`);
+    await button.expect().toBeInViewport();
+  });
+
   it('screenshot() (viewport only, no fullPage) returns non-empty image data', async () => {
     await browser.navigateTo(`${EXAMPLES_BASE_URL}/login.html`);
     const buf = await browser.screenshot();

@@ -25,6 +25,12 @@ export { type RemoteWebDriverOptions, type RemoteAuth } from './lib/remote.js';
 export { Key } from './lib/keys.js';
 export { By } from './lib/by.js';
 export { Locator } from './lib/locator.js';
+export {
+  type AssertionOptions,
+  type DocumentExpectApi,
+  type ElementExpectApi,
+  type LocatorExpectApi,
+} from './lib/expect.js';
 export { ShadowRootLocator } from './lib/shadowRootLocator.js';
 export { Frame } from './lib/frame.js';
 export { Page } from './lib/page.js';

@@ -1,6 +1,7 @@
 import { HttpClient } from './http.js';
 import type { CommandResponse, WebDriverEndpoint } from './types.js';
 import { By } from './by.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 export const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
 export const LEGACY_ELEMENT_KEY = 'ELEMENT';
@@ -115,6 +116,26 @@ export class WebElement {
 
   getId(): string {
     return this.elementId;
+  }
+
+  private async executeScript<T>(script: string, args: unknown[] = []): Promise<T> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<T>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/execute/sync`,
+      body: { script, args },
+    });
+    return (res as CommandResponse<T>)?.value ?? (res as unknown as T);
+  }
+
+  private async executeAsyncScript<T>(script: string, args: unknown[] = []): Promise<T> {
+    const client = new HttpClient(this.endpoint);
+    const res = await client.send<T>({
+      method: 'POST',
+      path: `/session/${this.sessionId}/execute/async`,
+      body: { script, args },
+    });
+    return (res as CommandResponse<T>)?.value ?? (res as unknown as T);
   }
 
   async click(): Promise<void> {
@@ -233,6 +254,68 @@ export class WebElement {
     });
     const value = (res as CommandResponse<boolean>)?.value ?? (res as unknown as boolean);
     return Boolean(value);
+  }
+
+  /** Whether this element is the focused element in its document or shadow root. */
+  async isFocused(): Promise<boolean> {
+    return Boolean(await this.executeScript<boolean>(`
+      var element = arguments[0];
+      if (!element || !element.isConnected) { throw new Error('Element is detached'); }
+      var root = element.getRootNode ? element.getRootNode() : element.ownerDocument;
+      return !!root && root.activeElement === element;
+    `, [this.toJSON()]));
+  }
+
+  /** Read a CSS property's computed value using the element's owning window. */
+  async getComputedCssValue(property: string): Promise<string> {
+    const value = await this.executeScript<string>(`
+      var element = arguments[0];
+      var property = arguments[1];
+      if (!element || !element.isConnected) { throw new Error('Element is detached'); }
+      var view = element.ownerDocument && element.ownerDocument.defaultView;
+      var styles = view && view.getComputedStyle(element);
+      return styles ? styles.getPropertyValue(property) : '';
+    `, [this.toJSON(), property]);
+    return String(value ?? '');
+  }
+
+  /** Whether a positive-area portion of this element intersects the viewport. */
+  async isInViewport(): Promise<boolean> {
+    const result = await this.executeAsyncScript<{
+      attached: boolean;
+      supported: boolean;
+      inViewport: boolean;
+    }>(`
+      var element = arguments[0];
+      var done = arguments[arguments.length - 1];
+      if (!element || !element.isConnected) {
+        done({ attached: false, supported: true, inViewport: false });
+        return;
+      }
+      if (typeof IntersectionObserver === 'undefined') {
+        done({ attached: true, supported: false, inViewport: false });
+        return;
+      }
+      var observer = new IntersectionObserver(function(entries) {
+        observer.disconnect();
+        var entry = entries[0];
+        var rect = entry && entry.intersectionRect;
+        done({
+          attached: element.isConnected,
+          supported: true,
+          inViewport: !!(entry && entry.isIntersecting && rect && rect.width > 0 && rect.height > 0)
+        });
+      });
+      observer.observe(element);
+    `, [this.toJSON()]);
+    if (!result?.attached) throw new Error('Element is detached');
+    if (!result.supported) {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'toBeInViewport() requires IntersectionObserver support'
+      );
+    }
+    return Boolean(result.inViewport);
   }
 
   async getTagName(): Promise<string> {

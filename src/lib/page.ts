@@ -13,8 +13,8 @@ import { By } from './by.js';
 import { Driver } from './driver.js';
 import { ElementHandle } from './elementHandle.js';
 import { Locator } from './locator.js';
-import { expectSelector } from './expect.js';
-import type { ExpectApi } from './expect.js';
+import { expectDocument, expectSelector } from './expect.js';
+import type { DocumentExpectApi, LocatorExpectApi } from './expect.js';
 import { until } from './wait.js';
 import { bidiWaitFor } from './loadState.js';
 import type { WebElement } from './webelement.js';
@@ -456,7 +456,17 @@ export class Page {
     return loc;
   }
 
-  expect(selector: string | By): ExpectApi {
+  expect(): DocumentExpectApi;
+  expect(selector: string | By): LocatorExpectApi;
+  expect(selector?: string | By): DocumentExpectApi | LocatorExpectApi {
+    if (selector === undefined) {
+      return expectDocument({
+        description: 'page',
+        readUrl: () => this.url(),
+        readTitle: () => this.title(),
+        getDefaultTimeout: this.getDefaultTimeout,
+      });
+    }
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     return expectSelector(this.driver, by, this.getDefaultTimeout, this._makeContextSwitcher());
   }

@@ -24,7 +24,8 @@ import {
 } from './timing.js';
 import { ElementHandle } from './elementHandle.js';
 import { Locator } from './locator.js';
-import { expectSelector } from './expect.js';
+import { expectDocument, expectSelector } from './expect.js';
+import type { DocumentExpectApi, LocatorExpectApi } from './expect.js';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import os from 'os';
@@ -3018,7 +3019,17 @@ export class Browser {
     });
   }
 
-  expect(selector: string | By) {
+  expect(): DocumentExpectApi;
+  expect(selector: string | By): LocatorExpectApi;
+  expect(selector?: string | By): DocumentExpectApi | LocatorExpectApi {
+    if (selector === undefined) {
+      return expectDocument({
+        description: 'page',
+        readUrl: () => this.url(),
+        readTitle: () => this.title(),
+        getDefaultTimeout: this.getDefaultTimeout,
+      });
+    }
     const by = typeof selector === 'string' ? By.css(selector) : selector;
     return expectSelector(this.driver, by, this.getDefaultTimeout);
   }

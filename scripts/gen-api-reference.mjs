@@ -30,6 +30,7 @@ const TOPIC_DOC = {
   shadowRootLocator: 'docs/selectors.md',
   elementHandle: 'docs/element-api.md',
   webelement: 'docs/element-api.md',
+  expect: 'docs/assertions.md',
   by: 'docs/selectors.md',
   keys: 'docs/keyboard-mouse.md',
   keyboard: 'docs/keyboard-mouse.md',
@@ -96,6 +97,11 @@ const CATEGORIES = [
     title: 'Locators And Elements',
     description: 'Find page content with semantic locators and selector helpers.',
     symbols: ['By', 'Locator', 'ShadowRootLocator'],
+  },
+  {
+    title: 'Assertions',
+    description: 'Auto-wait for page, locator, and element conditions.',
+    symbols: ['AssertionOptions', 'DocumentExpectApi', 'ElementExpectApi', 'LocatorExpectApi'],
   },
   {
     title: 'Input',

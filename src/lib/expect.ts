@@ -23,39 +23,140 @@ export interface ResolvedExpectSource {
   withContext?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
-export interface ExpectApi {
-  toHaveText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-  toContainText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-  toHaveValue(value: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-  toHaveAttribute(name: string, value?: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-  toHaveClass(className: string, opts?: { timeout?: number }): Promise<void>;
-  toBeVisible(opts?: { timeout?: number }): Promise<void>;
-  toBeEnabled(opts?: { timeout?: number }): Promise<void>;
-  toBeDisabled(opts?: { timeout?: number }): Promise<void>;
-  toBeChecked(opts?: { timeout?: number }): Promise<void>;
+/** Per-assertion timeout override. */
+export interface AssertionOptions {
+  timeout?: number;
+}
+
+export interface ResolvedDocumentExpectSource {
+  description: string;
+  readUrl: () => Promise<string>;
+  readTitle: () => Promise<string>;
+  getDefaultTimeout?: () => number;
+}
+
+/** Auto-waiting assertions for the current browser page or an explicit Page. */
+export interface DocumentExpectApi {
+  toHaveURL(url: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  toHaveTitle(title: string | RegExp, opts?: AssertionOptions): Promise<void>;
   not: {
-    toBeVisible(opts?: { timeout?: number }): Promise<void>;
-    toBeEnabled(opts?: { timeout?: number }): Promise<void>;
-    toBeDisabled(opts?: { timeout?: number }): Promise<void>;
-    toBeChecked(opts?: { timeout?: number }): Promise<void>;
-    toHaveText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-    toContainText(text: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-    toHaveValue(value: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-    toHaveAttribute(name: string, value?: string | RegExp, opts?: { timeout?: number }): Promise<void>;
-    toHaveClass(className: string, opts?: { timeout?: number }): Promise<void>;
+    toHaveURL(url: string | RegExp, opts?: AssertionOptions): Promise<void>;
+    toHaveTitle(title: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  };
+}
+
+/** Auto-waiting assertions for a single resolved element. */
+export interface ElementExpectApi {
+  toHaveText(text: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  toContainText(text: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  toHaveValue(value: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  toHaveAttribute(name: string, value?: string | RegExp, opts?: AssertionOptions): Promise<void>;
+  toHaveClass(className: string, opts?: AssertionOptions): Promise<void>;
+  toHaveCSS(property: string, value: string, opts?: AssertionOptions): Promise<void>;
+  toBeVisible(opts?: AssertionOptions): Promise<void>;
+  toBeEnabled(opts?: AssertionOptions): Promise<void>;
+  toBeDisabled(opts?: AssertionOptions): Promise<void>;
+  toBeChecked(opts?: AssertionOptions): Promise<void>;
+  toBeFocused(opts?: AssertionOptions): Promise<void>;
+  toBeInViewport(opts?: AssertionOptions): Promise<void>;
+  not: {
+    toBeVisible(opts?: AssertionOptions): Promise<void>;
+    toBeEnabled(opts?: AssertionOptions): Promise<void>;
+    toBeDisabled(opts?: AssertionOptions): Promise<void>;
+    toBeChecked(opts?: AssertionOptions): Promise<void>;
+    toBeFocused(opts?: AssertionOptions): Promise<void>;
+    toBeInViewport(opts?: AssertionOptions): Promise<void>;
+    toHaveText(text: string | RegExp, opts?: AssertionOptions): Promise<void>;
+    toContainText(text: string | RegExp, opts?: AssertionOptions): Promise<void>;
+    toHaveValue(value: string | RegExp, opts?: AssertionOptions): Promise<void>;
+    toHaveAttribute(name: string, value?: string | RegExp, opts?: AssertionOptions): Promise<void>;
+    toHaveClass(className: string, opts?: AssertionOptions): Promise<void>;
+    toHaveCSS(property: string, value: string, opts?: AssertionOptions): Promise<void>;
+  };
+}
+
+/** Auto-waiting assertions for a locator collection and its first element. */
+export interface LocatorExpectApi extends Omit<ElementExpectApi, 'not'> {
+  toHaveCount(count: number, opts?: AssertionOptions): Promise<void>;
+  not: ElementExpectApi['not'] & {
+    toHaveCount(count: number, opts?: AssertionOptions): Promise<void>;
   };
 }
 
 function matchValue(actual: string, expected: string | RegExp): boolean {
   if (expected instanceof RegExp) {
-    return expected.test(actual);
+    // RegExp.prototype.test() mutates lastIndex for global/sticky expressions.
+    // Assertions should be repeatable without changing a caller-owned object.
+    return new RegExp(expected.source, expected.flags).test(actual);
   }
   return actual === expected;
 }
 
 /** Format an expected string/RegExp for failure messages. */
 function fmt(expected: string | RegExp): string {
-  return expected instanceof RegExp ? `/${expected.source}/` : `"${expected}"`;
+  return expected instanceof RegExp ? expected.toString() : `"${expected}"`;
+}
+
+export function expectDocument(source: ResolvedDocumentExpectSource): DocumentExpectApi {
+  const getDefaultTimeout = source.getDefaultTimeout ?? (() => DEFAULT_ELEMENT_TIMEOUT_MS);
+
+  function fail(message: string, callerFn: Function, detail: Record<string, unknown>): never {
+    const error = new CraftdriverError(ErrorCode.EXPECT_MISMATCH, message, { detail });
+    if (Error.captureStackTrace) Error.captureStackTrace(error, callerFn);
+    throw error;
+  }
+
+  async function pollValue(
+    read: () => Promise<string>,
+    predicate: (value: string) => boolean,
+    timeout: number
+  ): Promise<{ matched: boolean; last: string }> {
+    const deadline = Date.now() + timeout;
+    let last = '';
+    for (;;) {
+      try {
+        last = await read();
+        if (predicate(last)) return { matched: true, last };
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        // Navigation can make URL/title reads transiently unavailable. Retry.
+      }
+      if (Date.now() >= deadline) return { matched: false, last };
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
+    }
+  }
+
+  function matcher(
+    name: 'URL' | 'title',
+    matcherName: 'toHaveURL' | 'toHaveTitle',
+    read: () => Promise<string>,
+    negate: boolean
+  ) {
+    return async function documentMatcher(expected: string | RegExp, opts?: AssertionOptions) {
+      const timeout = opts?.timeout ?? getDefaultTimeout();
+      const { matched, last } = await pollValue(
+        read,
+        (actual) => negate !== matchValue(actual, expected),
+        timeout
+      );
+      if (matched) return;
+      const negation = negate ? 'not ' : '';
+      fail(
+        `Expected ${source.description} ${name} ${negation}to be ${fmt(expected)} but got "${last}" within ${timeout}ms`,
+        documentMatcher,
+        { target: source.description, matcher: `${negate ? 'not.' : ''}${matcherName}`, expected, actual: last, timeout }
+      );
+    };
+  }
+
+  return {
+    toHaveURL: matcher('URL', 'toHaveURL', source.readUrl, false),
+    toHaveTitle: matcher('title', 'toHaveTitle', source.readTitle, false),
+    not: {
+      toHaveURL: matcher('URL', 'toHaveURL', source.readUrl, true),
+      toHaveTitle: matcher('title', 'toHaveTitle', source.readTitle, true),
+    },
+  };
 }
 
 export function expectSelector(
@@ -63,7 +164,7 @@ export function expectSelector(
   by: By,
   getDefaultTimeout: () => number = () => DEFAULT_ELEMENT_TIMEOUT_MS,
   contextSwitcher?: ContextSwitcher
-): ExpectApi {
+): LocatorExpectApi {
   return expectResolved({
     description: `${by.using}(${by.value})`,
     detail: { selector: `${by.using}=${by.value}`, using: by.using, value: by.value },
@@ -83,7 +184,7 @@ export function expectSelector(
 }
 
 /** Build assertions around an arbitrary root-aware element resolver. */
-export function expectResolved(source: ResolvedExpectSource): ExpectApi {
+export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
   const getDefaultTimeout = source.getDefaultTimeout ?? (() => DEFAULT_ELEMENT_TIMEOUT_MS);
   const description = source.description;
   function fail(message: string, callerFn?: Function, detail?: Record<string, unknown>): never {
@@ -102,8 +203,9 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
    * returning whether it matched and the last value read (for failure messages).
    *
    * `onMissing` decides what a lookup/read failure means:
-   * - `'retry'` — keep polling (positive matchers: the element must appear and satisfy the predicate).
-   * - `'pass'`  — treat as satisfied (negative matchers: a missing element trivially cannot match).
+   * - `'retry'` — keep polling because the matcher requires a resolved element.
+   * - `'pass'`  — treat absence as satisfying matchers such as negative
+   *   visibility and viewport intersection.
    * Each iteration performs one complete resolver pass, so nested/shadow
    * locators and ordinary document locators share identical assertion scope.
    */
@@ -149,6 +251,44 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
   const readText = async (el: WebElement): Promise<string> => (await el.getText())?.trim?.() ?? '';
   const readValue = async (el: WebElement): Promise<string> => String((await el.getProperty('value')) ?? '');
   const readClass = async (el: WebElement): Promise<string> => (await el.getAttribute('class')) ?? '';
+
+  async function pollCount(
+    predicate: (count: number) => boolean,
+    timeout: number
+  ): Promise<{ matched: boolean; last: number }> {
+    const deadline = Date.now() + timeout;
+    let last = 0;
+    let lastError: unknown;
+    let stableResolution = false;
+    let attempts = 0;
+    for (;;) {
+      attempts += 1;
+      try {
+        last = (await source.resolveAll()).length;
+        stableResolution = true;
+        if (predicate(last)) return { matched: true, last };
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
+        lastError = error;
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, ASSERTION_POLL_INTERVAL_MS));
+    }
+    if (!stableResolution && isDetachedShadowError(lastError)) {
+      throw withShadowRetryAttempts(lastError, attempts);
+    }
+    return { matched: false, last };
+  }
+
+  function validateCount(expected: number): void {
+    if (!Number.isInteger(expected) || expected < 0) {
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `Expected count must be a non-negative integer, got ${String(expected)}`,
+        { detail: { count: expected } }
+      );
+    }
+  }
 
   const toHaveText = async function toHaveText(
     expected: string | RegExp,
@@ -248,12 +388,96 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
     fail(`Expected element ${description} to not be checked within ${timeout}ms`, toBeNotChecked);
   };
 
+  const toHaveCount = async function toHaveCount(expected: number, opts?: AssertionOptions) {
+    validateCount(expected);
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched, last } = await pollCount((count) => count === expected, timeout);
+    if (matched) return;
+    fail(`Expected locator ${description} to have count ${expected} but got ${last}`, toHaveCount, {
+      matcher: 'toHaveCount', expected, actual: last, timeout,
+    });
+  };
+
+  const notToHaveCount = async function notToHaveCount(expected: number, opts?: AssertionOptions) {
+    validateCount(expected);
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched, last } = await pollCount((count) => count !== expected, timeout);
+    if (matched) return;
+    fail(`Expected locator ${description} not to have count ${expected}`, notToHaveCount, {
+      matcher: 'not.toHaveCount', expected, actual: last, timeout,
+    });
+  };
+
+  const toBeFocused = async function toBeFocused(opts?: AssertionOptions) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched } = await pollElement((el) => el.isFocused(), (focused) => focused, timeout, 'retry');
+    if (matched) return;
+    fail(`Expected element ${description} to be focused within ${timeout}ms`, toBeFocused);
+  };
+
+  const toBeNotFocused = async function toBeNotFocused(opts?: AssertionOptions) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched } = await pollElement((el) => el.isFocused(), (focused) => !focused, timeout, 'retry');
+    if (matched) return;
+    fail(`Expected element ${description} not to be focused within ${timeout}ms`, toBeNotFocused);
+  };
+
+  const toHaveCSS = async function toHaveCSS(
+    property: string,
+    expected: string,
+    opts?: AssertionOptions
+  ) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched, last } = await pollElement(
+      (el) => el.getComputedCssValue(property),
+      (actual) => actual === expected,
+      timeout,
+      'retry'
+    );
+    if (matched) return;
+    fail(`Expected element ${description} to have computed CSS "${property}: ${expected}" but got "${last ?? ''}"`, toHaveCSS, {
+      matcher: 'toHaveCSS', property, expected, actual: last, timeout,
+    });
+  };
+
+  const notToHaveCSS = async function notToHaveCSS(
+    property: string,
+    expected: string,
+    opts?: AssertionOptions
+  ) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched, last } = await pollElement(
+      (el) => el.getComputedCssValue(property),
+      (actual) => actual !== expected,
+      timeout,
+      'retry'
+    );
+    if (matched) return;
+    fail(`Expected element ${description} not to have computed CSS "${property}: ${expected}"`, notToHaveCSS, {
+      matcher: 'not.toHaveCSS', property, expected, actual: last, timeout,
+    });
+  };
+
+  const toBeInViewport = async function toBeInViewport(opts?: AssertionOptions) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched } = await pollElement((el) => el.isInViewport(), (inViewport) => inViewport, timeout, 'retry');
+    if (matched) return;
+    fail(`Expected element ${description} to intersect the viewport within ${timeout}ms`, toBeInViewport);
+  };
+
+  const toBeNotInViewport = async function toBeNotInViewport(opts?: AssertionOptions) {
+    const timeout = opts?.timeout ?? getDefaultTimeout();
+    const { matched } = await pollElement((el) => el.isInViewport(), (inViewport) => !inViewport, timeout, 'pass');
+    if (matched) return;
+    fail(`Expected element ${description} not to intersect the viewport within ${timeout}ms`, toBeNotInViewport);
+  };
+
   const notToHaveText = async function notToHaveText(
     expected: string | RegExp,
     opts?: { timeout?: number }
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
-    const { matched } = await pollElement(readText, (t) => !matchValue(t, expected), timeout, 'pass');
+    const { matched } = await pollElement(readText, (t) => !matchValue(t, expected), timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have text ${fmt(expected)}`, notToHaveText);
   };
@@ -264,7 +488,7 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const notContains = (t: string) => (expected instanceof RegExp ? !expected.test(t) : !t.includes(expected));
-    const { matched } = await pollElement(readText, notContains, timeout, 'pass');
+    const { matched } = await pollElement(readText, notContains, timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT contain text ${fmt(expected)}`, notToContainText);
   };
@@ -274,7 +498,7 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
     opts?: { timeout?: number }
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
-    const { matched } = await pollElement(readValue, (v) => !matchValue(v, expected), timeout, 'pass');
+    const { matched } = await pollElement(readValue, (v) => !matchValue(v, expected), timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have value ${fmt(expected)}`, notToHaveValue);
   };
@@ -287,7 +511,7 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const predicate = (attr: string | null) =>
       value === undefined ? attr === null : attr === null || !matchValue(attr, value);
-    const { matched } = await pollElement((el) => el.getAttribute(name), predicate, timeout, 'pass');
+    const { matched } = await pollElement((el) => el.getAttribute(name), predicate, timeout, 'retry');
     if (matched) return;
     if (value === undefined) {
       fail(`Expected element ${description} to NOT have attribute "${name}"`, notToHaveAttribute);
@@ -301,7 +525,7 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const lacksClass = (cls: string) => !cls.split(/\s+/).includes(className);
-    const { matched } = await pollElement(readClass, lacksClass, timeout, 'pass');
+    const { matched } = await pollElement(readClass, lacksClass, timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have class "${className}"`, notToHaveClass);
   };
@@ -320,20 +544,36 @@ export function expectResolved(source: ResolvedExpectSource): ExpectApi {
     toHaveValue: wrapCtx(toHaveValue),
     toHaveAttribute: wrapCtx(toHaveAttribute),
     toHaveClass: wrapCtx(toHaveClass),
+    toHaveCount: wrapCtx(toHaveCount),
+    toHaveCSS: wrapCtx(toHaveCSS),
     toBeVisible: wrapCtx(toBeVisible),
     toBeEnabled: wrapCtx(toBeEnabled),
     toBeDisabled: wrapCtx(toBeDisabled),
     toBeChecked: wrapCtx(toBeChecked),
+    toBeFocused: wrapCtx(toBeFocused),
+    toBeInViewport: wrapCtx(toBeInViewport),
     not: {
       toBeVisible: wrapCtx(toBeNotVisible),
       toBeEnabled: wrapCtx(toBeDisabled), // not enabled = disabled
       toBeDisabled: wrapCtx(toBeEnabled), // not disabled = enabled
       toBeChecked: wrapCtx(toBeNotChecked),
+      toBeFocused: wrapCtx(toBeNotFocused),
+      toBeInViewport: wrapCtx(toBeNotInViewport),
       toHaveText: wrapCtx(notToHaveText),
       toContainText: wrapCtx(notToContainText),
       toHaveValue: wrapCtx(notToHaveValue),
       toHaveAttribute: wrapCtx(notToHaveAttribute),
       toHaveClass: wrapCtx(notToHaveClass),
+      toHaveCount: wrapCtx(notToHaveCount),
+      toHaveCSS: wrapCtx(notToHaveCSS),
     },
   };
+}
+
+/** Build element assertions without collection-only matchers such as toHaveCount(). */
+export function expectElementResolved(source: ResolvedExpectSource): ElementExpectApi {
+  const api = expectResolved(source);
+  const { toHaveCount: _toHaveCount, not: allNot, ...elementApi } = api;
+  const { toHaveCount: _notToHaveCount, ...elementNot } = allNot;
+  return { ...elementApi, not: elementNot };
 }
