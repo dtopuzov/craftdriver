@@ -203,8 +203,9 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
    * returning whether it matched and the last value read (for failure messages).
    *
    * `onMissing` decides what a lookup/read failure means:
-   * - `'retry'` — keep polling (positive matchers: the element must appear and satisfy the predicate).
-   * - `'pass'`  — treat as satisfied (negative matchers: a missing element trivially cannot match).
+   * - `'retry'` — keep polling because the matcher requires a resolved element.
+   * - `'pass'`  — treat absence as satisfying matchers such as negative
+   *   visibility and viewport intersection.
    * Each iteration performs one complete resolver pass, so nested/shadow
    * locators and ordinary document locators share identical assertion scope.
    */
@@ -466,7 +467,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
 
   const toBeNotInViewport = async function toBeNotInViewport(opts?: AssertionOptions) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
-    const { matched } = await pollElement((el) => el.isInViewport(), (inViewport) => !inViewport, timeout, 'retry');
+    const { matched } = await pollElement((el) => el.isInViewport(), (inViewport) => !inViewport, timeout, 'pass');
     if (matched) return;
     fail(`Expected element ${description} not to intersect the viewport within ${timeout}ms`, toBeNotInViewport);
   };
@@ -476,7 +477,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
     opts?: { timeout?: number }
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
-    const { matched } = await pollElement(readText, (t) => !matchValue(t, expected), timeout, 'pass');
+    const { matched } = await pollElement(readText, (t) => !matchValue(t, expected), timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have text ${fmt(expected)}`, notToHaveText);
   };
@@ -487,7 +488,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const notContains = (t: string) => (expected instanceof RegExp ? !expected.test(t) : !t.includes(expected));
-    const { matched } = await pollElement(readText, notContains, timeout, 'pass');
+    const { matched } = await pollElement(readText, notContains, timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT contain text ${fmt(expected)}`, notToContainText);
   };
@@ -497,7 +498,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
     opts?: { timeout?: number }
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
-    const { matched } = await pollElement(readValue, (v) => !matchValue(v, expected), timeout, 'pass');
+    const { matched } = await pollElement(readValue, (v) => !matchValue(v, expected), timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have value ${fmt(expected)}`, notToHaveValue);
   };
@@ -510,7 +511,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const predicate = (attr: string | null) =>
       value === undefined ? attr === null : attr === null || !matchValue(attr, value);
-    const { matched } = await pollElement((el) => el.getAttribute(name), predicate, timeout, 'pass');
+    const { matched } = await pollElement((el) => el.getAttribute(name), predicate, timeout, 'retry');
     if (matched) return;
     if (value === undefined) {
       fail(`Expected element ${description} to NOT have attribute "${name}"`, notToHaveAttribute);
@@ -524,7 +525,7 @@ export function expectResolved(source: ResolvedExpectSource): LocatorExpectApi {
   ) {
     const timeout = opts?.timeout ?? getDefaultTimeout();
     const lacksClass = (cls: string) => !cls.split(/\s+/).includes(className);
-    const { matched } = await pollElement(readClass, lacksClass, timeout, 'pass');
+    const { matched } = await pollElement(readClass, lacksClass, timeout, 'retry');
     if (matched) return;
     fail(`Expected element ${description} to NOT have class "${className}"`, notToHaveClass);
   };

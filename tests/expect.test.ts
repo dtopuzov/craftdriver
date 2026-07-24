@@ -110,7 +110,6 @@ describe('Expect assertions', () => {
     it('asserts a locator collection and auto-waits for changes', async () => {
       await browser.locator('input').expect().toHaveCount(2);
       await browser.locator('input').expect().not.toHaveCount(1);
-      await browser.locator('.does-not-exist').expect().toHaveCount(0);
 
       await browser.evaluate(`
         setTimeout(function() {
@@ -120,6 +119,10 @@ describe('Expect assertions', () => {
         }, 100);
       `);
       await browser.expect('input').toHaveCount(3);
+    });
+
+    it('treats a missing locator as a collection with count zero', async () => {
+      await browser.locator('.does-not-exist').expect().toHaveCount(0);
     });
 
     it.each([-1, 1.5])('rejects invalid count %s', async (count) => {
@@ -182,10 +185,8 @@ describe('Expect assertions', () => {
       await button.expect().toBeInViewport();
     });
 
-    it('does not let a missing locator satisfy the negated assertion', async () => {
-      await expect(
-        browser.locator('#does-not-exist').expect().not.toBeInViewport({ timeout: 10 })
-      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    it('allows a missing locator to satisfy the negated assertion', async () => {
+      await browser.locator('#does-not-exist').expect().not.toBeInViewport({ timeout: 10 });
     });
   });
 
@@ -207,9 +208,48 @@ describe('Expect assertions', () => {
       await browser.expect('#username').not.toHaveAttribute('type', 'password');
     });
 
-    it('not.toBeVisible() asserts element is not visible', async () => {
-      // Result is hidden initially
+    it('not.toBeVisible() accepts an existing hidden element', async () => {
       await browser.expect('#result').not.toBeVisible();
+    });
+
+    it('not.toBeVisible() accepts a missing element', async () => {
+      await browser.expect('#does-not-exist').not.toBeVisible({ timeout: 10 });
+    });
+
+    it('not.toHaveText() requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toHaveText('Error', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    });
+
+    it('not.toContainText() requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toContainText('Error', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    });
+
+    it('not.toHaveValue() requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toHaveValue('invalid', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    });
+
+    it('not.toHaveAttribute() with a value requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toHaveAttribute('type', 'password', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    });
+
+    it('not.toHaveAttribute() without a value requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toHaveAttribute('disabled', undefined, { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
+    });
+
+    it('not.toHaveClass() requires an element', async () => {
+      await expect(
+        browser.expect('#does-not-exist').not.toHaveClass('error', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
     });
   });
 });

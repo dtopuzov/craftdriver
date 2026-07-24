@@ -114,9 +114,10 @@ await checkout.expect().toBeInViewport();
 ```
 
 `toBeVisible()` and `toBeInViewport()` answer different questions: a rendered
-element below the fold can be visible but not in the viewport. The element must
-exist for both viewport assertions; removal is instead expressed explicitly as
-`await locator.waitFor({ state: 'detached' })`.
+element below the fold can be visible but not in the viewport. `toBeInViewport()`
+requires a matching element. `not.toBeInViewport()` also passes when no element
+matches because an absent element does not intersect the viewport. Assert
+`toHaveCount(1)` first when element existence is part of the intended result.
 
 ### toHaveCSS(property, value)
 
@@ -160,7 +161,7 @@ The negated form is also available:
 await browser.expect('#secondary').not.toHaveCSS('display', 'flex');
 ```
 
-As with focus and viewport assertions, the element must exist for both forms.
+As with focus assertions, the element must exist for both forms.
 
 ## Page Assertions
 
@@ -192,16 +193,16 @@ await browser.expect('#button').not.toHaveAttribute('disabled', 'true');
 await browser.expect('.spinner').not.toHaveCount(1);
 ```
 
-Negation does not apply one universal missing-element rule. Assertions about an
-element's state or geometry—focus, CSS, checked/enabled state, and viewport
-intersection—require an element for both their positive and negated forms. A
-missing element therefore does not satisfy `not.toBeFocused()`,
-`not.toHaveCSS()`, or `not.toBeInViewport()`.
+Negated text, contained-text, value, attribute, class, CSS, focus, checked, and
+enabled-state assertions require a matching element. A missing element does not
+satisfy these assertions, which prevents an incorrect selector from producing a
+successful value or state assertion.
 
-`not.toBeVisible()` and the existing negative text/value/attribute/class
-matchers do allow a missing element. Count assertions instead inspect the whole
-collection, so zero is an ordinary count. Use `toHaveCount(0)` or
-`waitFor({ state: 'detached' })` when removal is the intended outcome.
+`not.toBeVisible()` and `not.toBeInViewport()` also pass when no element matches:
+an absent element is neither visible nor intersecting the viewport. Count
+assertions inspect the whole collection, so a missing locator has count zero.
+Use `toHaveCount(0)` or `waitFor({ state: 'detached' })` when removal is the
+specific intended outcome.
 
 Prefer a positive assertion when the exact result is known. It produces a more
 specific test and failure:
