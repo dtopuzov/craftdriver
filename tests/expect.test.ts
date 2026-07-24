@@ -26,6 +26,13 @@ describe('Expect assertions', () => {
     it('supports regex matching', async () => {
       await browser.expect('h1').toHaveText(/Log.*/);
     });
+
+    it('does not mutate a caller-owned regular expression', async () => {
+      const expected = /Log.*/g;
+      expected.lastIndex = 2;
+      await browser.expect('h1').toHaveText(expected);
+      expect(expected.lastIndex).toBe(2);
+    });
   });
 
   describe('toContainText()', () => {
@@ -115,8 +122,8 @@ describe('Expect assertions', () => {
       await browser.expect('input').toHaveCount(3);
     });
 
-    it('rejects invalid counts', async () => {
-      await expect(browser.expect('input').toHaveCount(-1)).rejects.toMatchObject({
+    it.each([-1, 1.5])('rejects invalid count %s', async (count) => {
+      await expect(browser.expect('input').toHaveCount(count)).rejects.toMatchObject({
         code: 'INVALID_ARGUMENT',
       });
     });
@@ -127,6 +134,12 @@ describe('Expect assertions', () => {
       await browser.click('#username');
       await browser.locator('#username').expect().toBeFocused();
       await browser.locator('#password').expect().not.toBeFocused();
+    });
+
+    it('requires an element for the negated assertion', async () => {
+      await expect(
+        browser.locator('#does-not-exist').expect().not.toBeFocused({ timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
     });
   });
 
@@ -141,6 +154,15 @@ describe('Expect assertions', () => {
         }, 100);
       `);
       await browser.expect('.card').toHaveCSS('display', 'flex');
+    });
+
+    it('requires an element for the negated assertion', async () => {
+      await expect(
+        browser
+          .locator('#does-not-exist')
+          .expect()
+          .not.toHaveCSS('display', 'flex', { timeout: 10 })
+      ).rejects.toMatchObject({ code: 'EXPECT_MISMATCH' });
     });
   });
 

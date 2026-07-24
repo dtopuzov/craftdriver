@@ -85,10 +85,9 @@ export interface LocatorExpectApi extends Omit<ElementExpectApi, 'not'> {
 
 function matchValue(actual: string, expected: string | RegExp): boolean {
   if (expected instanceof RegExp) {
-    expected.lastIndex = 0;
-    const matched = expected.test(actual);
-    expected.lastIndex = 0;
-    return matched;
+    // RegExp.prototype.test() mutates lastIndex for global/sticky expressions.
+    // Assertions should be repeatable without changing a caller-owned object.
+    return new RegExp(expected.source, expected.flags).test(actual);
   }
   return actual === expected;
 }
@@ -118,7 +117,8 @@ export function expectDocument(source: ResolvedDocumentExpectSource): DocumentEx
       try {
         last = await read();
         if (predicate(last)) return { matched: true, last };
-      } catch {
+      } catch (error) {
+        if (isTerminalQueryError(error)) throw error;
         // Navigation can make URL/title reads transiently unavailable. Retry.
       }
       if (Date.now() >= deadline) return { matched: false, last };

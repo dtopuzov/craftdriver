@@ -17,6 +17,15 @@ await browser.expect().toHaveURL('https://example.test/dashboard');
 await browser.expect().toHaveTitle('Dashboard');
 ```
 
+Except for collection matchers such as `toHaveCount()`, locator assertions
+inspect the first matching element. Select a particular element explicitly when
+more than one match is possible:
+
+```typescript
+await browser.locator('.result').first().expect().toHaveText('First result');
+await browser.locator('.result').nth(2).expect().toHaveText('Third result');
+```
+
 ## Assertion Methods
 
 ### toHaveText(expected)
@@ -181,6 +190,28 @@ await browser.expect('#error').not.toBeVisible();
 await browser.expect('#input').not.toHaveValue('');
 await browser.expect('#button').not.toHaveAttribute('disabled', 'true');
 await browser.expect('.spinner').not.toHaveCount(1);
+```
+
+Negation does not apply one universal missing-element rule. Assertions about an
+element's state or geometry—focus, CSS, checked/enabled state, and viewport
+intersection—require an element for both their positive and negated forms. A
+missing element therefore does not satisfy `not.toBeFocused()`,
+`not.toHaveCSS()`, or `not.toBeInViewport()`.
+
+`not.toBeVisible()` and the existing negative text/value/attribute/class
+matchers do allow a missing element. Count assertions instead inspect the whole
+collection, so zero is an ordinary count. Use `toHaveCount(0)` or
+`waitFor({ state: 'detached' })` when removal is the intended outcome.
+
+Prefer a positive assertion when the exact result is known. It produces a more
+specific test and failure:
+
+```typescript
+// Prefer this when "none" is the intended final value.
+await browser.expect('#menu').toHaveCSS('display', 'none');
+
+// Use this only when any value other than "flex" is acceptable.
+await browser.expect('#menu').not.toHaveCSS('display', 'flex');
 ```
 
 ## Element-Scoped Assertions

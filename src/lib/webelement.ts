@@ -1,6 +1,7 @@
 import { HttpClient } from './http.js';
 import type { CommandResponse, WebDriverEndpoint } from './types.js';
 import { By } from './by.js';
+import { CraftdriverError, ErrorCode } from './errors.js';
 
 export const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
 export const LEGACY_ELEMENT_KEY = 'ELEMENT';
@@ -273,22 +274,26 @@ export class WebElement {
       if (!element || !element.isConnected) { throw new Error('Element is detached'); }
       var view = element.ownerDocument && element.ownerDocument.defaultView;
       var styles = view && view.getComputedStyle(element);
-      return styles ? styles.getPropertyValue(property).trim() : '';
+      return styles ? styles.getPropertyValue(property) : '';
     `, [this.toJSON(), property]);
     return String(value ?? '');
   }
 
   /** Whether a positive-area portion of this element intersects the viewport. */
   async isInViewport(): Promise<boolean> {
-    const result = await this.executeAsyncScript<{ attached: boolean; inViewport: boolean }>(`
+    const result = await this.executeAsyncScript<{
+      attached: boolean;
+      supported: boolean;
+      inViewport: boolean;
+    }>(`
       var element = arguments[0];
       var done = arguments[arguments.length - 1];
       if (!element || !element.isConnected) {
-        done({ attached: false, inViewport: false });
+        done({ attached: false, supported: true, inViewport: false });
         return;
       }
       if (typeof IntersectionObserver === 'undefined') {
-        done({ attached: true, inViewport: false });
+        done({ attached: true, supported: false, inViewport: false });
         return;
       }
       var observer = new IntersectionObserver(function(entries) {
@@ -297,12 +302,19 @@ export class WebElement {
         var rect = entry && entry.intersectionRect;
         done({
           attached: element.isConnected,
+          supported: true,
           inViewport: !!(entry && entry.isIntersecting && rect && rect.width > 0 && rect.height > 0)
         });
       });
       observer.observe(element);
     `, [this.toJSON()]);
     if (!result?.attached) throw new Error('Element is detached');
+    if (!result.supported) {
+      throw new CraftdriverError(
+        ErrorCode.UNSUPPORTED,
+        'toBeInViewport() requires IntersectionObserver support'
+      );
+    }
     return Boolean(result.inViewport);
   }
 

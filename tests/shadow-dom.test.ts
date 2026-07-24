@@ -54,6 +54,19 @@ describe('open Shadow DOM', () => {
     await browser.expect('#status').toHaveText('saved:Sofia');
   });
 
+  it('asserts focus inside a nested open shadow root', async () => {
+    const address = browser
+      .locator('#card')
+      .shadowRoot()
+      .locator('address-form')
+      .shadowRoot();
+    const city = address.getByLabel('City');
+
+    await city.click();
+    await city.expect().toBeFocused();
+    await address.getByRole('button', { name: 'Save address' }).expect().not.toBeFocused();
+  });
+
   it('applies hidden-role semantics across the shadow host boundary', async () => {
     const card = browser.locator('#card').shadowRoot();
     const page = await browser.activePage();
