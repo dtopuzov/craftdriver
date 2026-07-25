@@ -36,10 +36,14 @@ A few rules tie these together:
   scope — see [Locators (lazy & chainable)](#locators-lazy--chainable). Both
   accept a string or a `By`.
 
-> **Which one should I reach for?** Prefer locators that describe an element the
-> way a person perceives it — its role, label, or visible text — plus test IDs
-> for anything ambiguous. They keep working when the surrounding markup changes.
-> Drop to CSS for structural matching, and to XPath only when nothing else fits.
+> **Which one should I reach for?** Prefer the locator that is at once the most
+> **stable** and the most **meaningful**. A role, label, or visible-text locator
+> reads like intent and doubles as an accessibility signal — reach for it while
+> the name is stable. When the name is dynamic (`"Count is 0"`) or the UI is
+> translated, don't pin to it: anchor on a stable id or attribute (a
+> `data-testid` if the app already has one). Drop to CSS for structural matching,
+> and to XPath only when nothing else fits. See
+> [Choosing a locator](#choosing-a-locator).
 
 ## Quick reference
 
@@ -66,8 +70,10 @@ A few rules tie these together:
 ## Semantic locators
 
 These describe an element by what it *is* to the user — its role, label, or
-text — not by where it sits in the markup. They're the most readable and the
-most resilient, so reach for them first. Each is a `getBy*` method on the
+text — not by where it sits in the markup. They're the most readable, and the
+most resilient *while the name they match is stable* — reach for them first for
+stable labels, and see [Choosing a locator](#choosing-a-locator) for when a name
+is dynamic or localized. Each is a `getBy*` method on the
 browser (and on any [locator](#locators-lazy--chainable)); the `By.*` form named
 in each heading is the same strategy as an object you can pass to `find()`,
 `locator()`, `click()`, or a filter.
@@ -139,6 +145,15 @@ browser.getByRole('button', { name: 'Close' });
 // Include hidden elements
 browser.getByRole('button', { name: 'Close', includeHidden: true });
 ```
+
+> **`name` is a string, not a RegExp.** It is matched exactly by default; pass
+> `exact: false` for a substring. (Names compile to XPath, which has no regex
+> operator — a `RegExp` throws `INVALID_ARGUMENT`.) Accessible names are also
+> *locale-sensitive* and sometimes *dynamic* — `"Count is 0"` becomes
+> `"Count is 1"`, and `"Save"` becomes `"Guardar"` in another language. Don't
+> hardcode a name that changes or differs per language; select those elements by
+> a stable id or `data-testid` instead. `craftdriver locators` flags a name that
+> looks dynamic.
 
 ### getByText(text, options?)
 
@@ -217,7 +232,10 @@ browser.getByTitle('Delete row');
 
 Find an element by its `data-testid`. Test ids are invisible to users and
 untouched by design changes, so they're the most stable choice for elements with
-no meaningful role or text.
+no meaningful role or text — or whose accessible name is dynamic or localized.
+They're an escape hatch, though, not a default: reach for them when the app
+already ships test ids, or you deliberately add one, not ahead of a stable
+semantic locator.
 
 ```html
 <button data-testid="checkout">Proceed to checkout</button>
@@ -356,31 +374,52 @@ browser.find(By.xpath('//div[contains(@class, "error")]'));
 
 ## Choosing a locator
 
-Prefer locators that describe intent; avoid ones that pin to incidental
-structure.
+There is no single "best" locator — it depends on the page, on whether the
+accessible names are stable, and on what the app already exposes. One principle
+covers it:
+
+> **Prefer the locator that is at once the most _stable_ and the most
+> _meaningful_.** Semantic, user-facing locators are excellent — but only while
+> the value they match is stable.
 
 ```typescript
 // ✅ Resilient — tracks what the element is
-browser.getByRole('button', { name: 'Log in' });
-browser.getByLabel('Email');
-browser.getByTestId('checkout');
-browser.find('#login-button');
+browser.getByRole('button', { name: 'Log in' }); // stable, human-readable name
+browser.getByLabel('Email'); // label stays put as the field's value changes
+browser.find('#login-button'); // an existing, stable id
 
 // ❌ Fragile — breaks when markup or styling shifts
 browser.find('div > div > button:nth-child(3)');
 browser.find('.btn.mt-4.px-6'); // utility classes churn
 ```
 
-A rough order of preference:
+Reach for them in this order:
 
-```
-getByTestId  >  getByRole({ name })  >  getByLabel  >
-getByText  >  By.id / By.css  >  By.xpath
-```
+1. **`getByRole({ name })` / `getByLabel` / `getByText`** — when the name is a
+   stable label (`Sign in`, `Email`, `Save`). Reads like intent and doubles as
+   an accessibility check.
+2. **The name is dynamic or the UI is translated** → don't hardcode it. Anchor on
+   something stable instead: an existing unique **id or attribute**, or a
+   **`data-testid`** _if the app already has one_.
+3. **`getByRole` without a name** / **`getByLabel`** — still semantic, and stable
+   even when the field's value changes.
+4. **`By.id` / stable `By.css`** — a real id or semantic class.
+5. **`getByText`** — handy, but reads best in assertions.
+6. **`By.xpath`** — a genuine last resort.
 
-The first few say *what the element is*; the last two pin to *how the page is
-built* and break more easily. When an element is genuinely hard to select, add a
-`data-testid` to it rather than reaching for a brittle CSS or XPath path.
+Two rules that fall out of this:
+
+- **Never hardcode a _localized_ or _dynamic_ accessible name.** `getByRole('button',
+  { name: 'Save' })` breaks the moment the page renders in another language, and
+  `{ name: 'Count is 0' }` breaks on the next click. Select those by a stable id
+  or test id.
+- **`data-testid` is an escape hatch, not a default.** It is the most stable
+  choice _when the app already ships test ids, or you own the app and choose to
+  add them_ — reach for it when nothing semantic and stable fits, not first.
+
+When you're unsure whether a name is stable, let the tooling decide:
+`craftdriver locators <selector>` re-resolves every candidate against the live
+page and demotes a name that looks dynamic below a stable anchor.
 
 ## Locators (lazy & chainable)
 

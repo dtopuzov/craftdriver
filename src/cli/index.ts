@@ -576,7 +576,9 @@ function prettyResult(cmd: string, result: unknown): string {
     const head = r.best
       ? `best: ${r.best as string}`
       : `no unique locator — ${(r.note as string) ?? 'add a data-testid'}`;
-    return [head, ...rows].join('\n');
+    // A note can accompany a best too (e.g. the accessible name looks dynamic).
+    const hint = r.best && typeof r.note === 'string' ? [`note: ${r.note as string}`] : [];
+    return [head, ...hint, ...rows].join('\n');
   }
   if (cmd === 'session:list' && Array.isArray(r.sessions)) {
     const head = `${r.count} of ${r.limit} sessions open`;

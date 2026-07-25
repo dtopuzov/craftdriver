@@ -51,7 +51,7 @@ export interface LocatorReport {
   note?: string;
 }
 
-interface Evidence {
+export interface Evidence {
   role: string | null;
   name: string | null;
   label: string | null;
@@ -85,6 +85,23 @@ function looksGenerated(value: string): boolean {
  */
 function usableAsExactMatch(value: string): boolean {
   return value.length > 0 && value.length <= MAX_NAME;
+}
+
+/**
+ * Whether an accessible name (or text) looks *dynamic* — a value that changes
+ * between renders, so a hardcoded exact-match locator built on it will rot.
+ *
+ * Deliberately cheap and approximate: a digit or a currency sign. It flags the
+ * common offenders ("Count is 0", "3 items", "$4.99", "12:30 PM") and only
+ * misses genuinely stable names that happen to carry a number ("COVID-19").
+ * A false positive costs nothing but ordering — the name-bearing candidate is
+ * demoted, never dropped — so the agent, which saw the live page, can still
+ * pick it when it knows the number is stable. This is the automated half of
+ * "prefer the most stable *and* meaningful locator": use the semantic name when
+ * it is stable, fall to a stable anchor when it is not.
+ */
+export function looksVolatile(name: string): boolean {
+  return /\d/.test(name) || /[$£€¥]/.test(name);
 }
 
 export async function locatorCandidates(
@@ -123,16 +140,24 @@ export async function locatorCandidates(
       if (validated.filter((c) => c.status === 'unique').length >= limit) break;
     }
     const best = validated.find((c) => c.status === 'unique') ?? null;
+    const dynamicNote =
+      evidence.name && looksVolatile(evidence.name)
+        ? `accessible name "${evidence.name}" looks dynamic (contains a number); ` +
+          'a hardcoded name will break when the value changes — prefer a stable locator'
+        : undefined;
     return {
       target: describeSelector(by),
       candidates: validated.slice(0, Math.max(limit, 1) + 2),
       best: best ? best.selector : null,
       ...(best
-        ? {}
+        ? dynamicNote
+          ? { note: dynamicNote }
+          : {}
         : {
           note:
+            dynamicNote ??
             'no durable locator resolved uniquely; add a data-testid to this element ' +
-            'rather than committing a positional selector',
+              'rather than committing a positional selector',
         }),
     };
   } finally {
@@ -180,66 +205,86 @@ return {
 `;
 }
 
-/** Build candidates in durability order. */
-function propose(e: Evidence): Array<Omit<LocatorCandidate, 'status' | 'matches'>> {
+/**
+ * Build candidates in durability order.
+ *
+ * When the accessible name/text is stable, the user-facing, accessibility-
+ * checking locators (role+name, label, text) lead — that is the semantic ideal.
+ * When the name looks dynamic ({@link looksVolatile}), a hardcoded name would
+ * rot on the next render, so the stable structural anchors (label, test id,
+ * `#id`, `[name]`) move ahead of the role+name and text candidates. Those stay
+ * listed but demoted: the agent may still know the number is stable.
+ */
+export function propose(e: Evidence): Array<Omit<LocatorCandidate, 'status' | 'matches'>> {
   const out: Array<Omit<LocatorCandidate, 'status' | 'matches'>> = [];
+  const nameVolatile = e.name !== null && looksVolatile(e.name);
 
-  // 1. Role + accessible name — survives restyling and DOM reshuffles.
-  //
-  // Never truncate a value destined for an exact-match locator: an
-  // ellipsis guarantees it resolves to nothing. Skip instead, and let a
-  // later candidate carry the element. `]` would also break the
+  // Role + accessible name — survives restyling and DOM reshuffles, and states
+  // what a user perceives. Never truncate a value destined for an exact-match
+  // locator: an ellipsis guarantees it resolves to nothing. Skip instead, and
+  // let a later candidate carry the element. `]` would also break the
   // `role=x[name=y]` grammar, which has no escape for it.
-  if (e.role && e.name && usableAsExactMatch(e.name) && !e.name.includes(']')) {
-    out.push({
-      kind: 'role',
-      selector: `role=${e.role}[name=${e.name}]`,
-      code: `By.role(${JSON.stringify(e.role)}, { name: ${JSON.stringify(e.name)} })`,
-    });
-  }
+  const addRoleName = (): void => {
+    if (e.role && e.name && usableAsExactMatch(e.name) && !e.name.includes(']')) {
+      out.push({
+        kind: 'role',
+        selector: `role=${e.role}[name=${e.name}]`,
+        code: `By.role(${JSON.stringify(e.role)}, { name: ${JSON.stringify(e.name)} })`,
+      });
+    }
+  };
 
-  // 2. Associated label — the thing a user actually reads for form fields.
-  if (e.label && usableAsExactMatch(e.label)) {
-    out.push({
-      kind: 'label',
-      selector: `label=${e.label}`,
-      code: `By.labelText(${JSON.stringify(e.label)})`,
-    });
-  }
+  // Text — durable only where it is unique, which validation decides. Shares
+  // the dynamic-name fate: a button reading "Count is 0" has volatile text too.
+  const addText = (): void => {
+    if (e.text && usableAsExactMatch(e.text)) {
+      out.push({ kind: 'text', selector: `text=${e.text}`, code: `By.text(${JSON.stringify(e.text)})` });
+    }
+  };
 
-  // 3. Test id — durable by contract when the app ships one.
-  if (e.testid) {
-    out.push({
-      kind: 'testid',
-      selector: `testid=${e.testid}`,
-      code: `By.testId(${JSON.stringify(e.testid)})`,
-    });
-  }
+  // Associated label — the thing a user actually reads for a form field, and
+  // stable even as the field's value changes.
+  const addLabel = (): void => {
+    if (e.label && usableAsExactMatch(e.label)) {
+      out.push({ kind: 'label', selector: `label=${e.label}`, code: `By.labelText(${JSON.stringify(e.label)})` });
+    }
+  };
 
-  // 4. Text — durable only where it is unique, which validation decides.
-  if (e.text && usableAsExactMatch(e.text)) {
-    out.push({
-      kind: 'text',
-      selector: `text=${e.text}`,
-      code: `By.text(${JSON.stringify(e.text)})`,
-    });
-  }
+  // Test id — durable by contract, but only when the app already ships one.
+  const addTestid = (): void => {
+    if (e.testid) {
+      out.push({ kind: 'testid', selector: `testid=${e.testid}`, code: `By.testId(${JSON.stringify(e.testid)})` });
+    }
+  };
 
-  // 5. Minimal CSS, last, and only when it is not obviously generated.
-  //
-  // The id also has to survive being written bare into a selector: `.`,
-  // `:` and friends are CSS syntax, so `#user.email` silently means
-  // "id user AND class email", and a quote breaks the generated code.
-  if (e.id && !looksGenerated(e.id) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(e.id)) {
-    out.push({
-      kind: 'css',
-      selector: `#${e.id}`,
-      code: `By.css(${JSON.stringify('#' + e.id)})`,
-    });
-  }
-  if (e.nameAttr && !looksGenerated(e.nameAttr)) {
-    const css = `${e.tag}[name=${JSON.stringify(e.nameAttr)}]`;
-    out.push({ kind: 'css', selector: `css=${css}`, code: `By.css(${JSON.stringify(css)})` });
+  // Minimal CSS from an existing, non-generated id or name attribute — a stable
+  // anchor that is not test-only markup. The id has to survive being written
+  // bare into a selector: `.`, `:` and friends are CSS syntax, so `#user.email`
+  // silently means "id user AND class email", and a quote breaks the code.
+  const addCss = (): void => {
+    if (e.id && !looksGenerated(e.id) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(e.id)) {
+      out.push({ kind: 'css', selector: `#${e.id}`, code: `By.css(${JSON.stringify('#' + e.id)})` });
+    }
+    if (e.nameAttr && !looksGenerated(e.nameAttr)) {
+      const css = `${e.tag}[name=${JSON.stringify(e.nameAttr)}]`;
+      out.push({ kind: 'css', selector: `css=${css}`, code: `By.css(${JSON.stringify(css)})` });
+    }
+  };
+
+  if (nameVolatile) {
+    // Dynamic name: anchor on stable structure first, demote name-bearing ones.
+    addLabel();
+    addTestid();
+    addCss();
+    addRoleName();
+    addText();
+  } else {
+    // Stable name: lead with the user-facing, a11y-checking locators.
+    addRoleName();
+    addLabel();
+    addTestid();
+    addText();
+    addCss();
   }
 
   return out;
