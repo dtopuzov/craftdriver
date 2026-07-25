@@ -41,7 +41,7 @@ await browser.waitForLoadState('load');
 import { By } from 'craftdriver';
 
 By.testId('submit')                  // [data-testid="submit"]  ← preferred
-By.role('button', { name: /save/i }) // ARIA role + accessible name
+By.role('button', { name: 'Save' })  // ARIA role + accessible name (string, not RegExp; add exact:false for substring)
 By.labelText('Email')                // form label
 By.text('Sign in', { exact: true })  // visible text
 By.css('button.primary')             // last resort
