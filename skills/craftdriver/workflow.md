@@ -26,7 +26,10 @@ the complete exploration flow into one `--ephemeral` script.
 ## 3. Inspect before acting
 
 Read role/name, labels, test IDs, visible text, and nearby DOM structure from the
-snapshot. Prefer a semantic selector and prove it:
+snapshot. Prefer the selector that is at once the most **stable** and the most
+**meaningful** — a semantic role/name/label locator while the name is a stable
+label, a stable id/attribute the moment the name is dynamic or the app is
+translated. Prove it:
 
 ```bash
 npx craftdriver exists 'role=button[name=Sign in]'
@@ -44,8 +47,11 @@ durable selector and let CraftDriver validate it against the live page:
 npx craftdriver locators ref=e7
 ```
 
-Use a candidate it reports as `unique`. If none is unique, add a `data-testid`
-to the application rather than committing a positional selector.
+Use the candidate it reports as `best`. When the accessible name looks dynamic
+(a counter, a price, a date) the ranker demotes the role/name candidate below a
+stable anchor and attaches a `note` — follow it, and if you saw the name change
+during exploration, don't lock a test to it. If nothing resolves uniquely, add a
+`data-testid` to the application rather than committing a positional selector.
 
 ## 4. Exercise the user flow
 

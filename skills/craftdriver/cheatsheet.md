@@ -37,16 +37,22 @@ await browser.waitForLoadState('load');
 
 ## Selectors
 
+Prefer the most **stable** and **meaningful** locator. Semantic while the name is
+a stable label; a stable anchor the moment it is dynamic or localized.
+
 ```ts
 import { By } from 'craftdriver';
 
-By.testId('submit')                  // [data-testid="submit"]  ← preferred
-By.role('button', { name: 'Save' })  // ARIA role + accessible name (string, not RegExp; add exact:false for substring)
-By.labelText('Email')                // form label
-By.text('Sign in', { exact: true })  // visible text
-By.css('button.primary')             // last resort
-By.xpath('//button')                 // never if anything else works
+By.role('button', { name: 'Save' })  // role + STABLE name (string, not RegExp; exact:false = substring)
+By.labelText('Email')                // form label — stable as the field value changes
+By.text('Sign in')                   // visible text
+By.testId('checkout')                // stable escape hatch — dynamic/localized name, or app already has test ids
+By.css('#login-button')              // an existing, stable id / semantic class
+By.xpath('//button')                 // last resort
 ```
+
+Never hardcode a dynamic or localized name: `{ name: 'Count is 0' }` breaks on the
+next click, `{ name: 'Save' }` breaks in another language — use a stable id/testid.
 
 ## Locators (Playwright-style)
 

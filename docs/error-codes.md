@@ -34,7 +34,7 @@ try {
 
 | Code | When it fires | Typical recovery |
 |---|---|---|
-| `NO_MATCH` | Selector matched zero elements within the timeout. | Fix the selector. Prefer `By.testId` / `By.role` / `By.labelText` over CSS for resilience. |
+| `NO_MATCH` | Selector matched zero elements within the timeout. | Fix the selector. Prefer `By.role` / `By.labelText` (or `By.testId`) over CSS for resilience. |
 | `TIMEOUT_WAITING_VISIBLE` | Selector matched an element, but it never became visible within the timeout. | Open the containing view first (modal, accordion, tab). The element is in the DOM but not displayed. |
 | `TIMEOUT_WAITING_STATE` | Element visible but never reached the requested state (`enabled`, `checked`, `attached`, `detached`, `hidden`). | Wait for the precondition that drives the state transition. |
 | `TIMEOUT_WAITING_LOAD` | Page never reached the requested load state (`load` / `domcontentloaded` / `networkidle`). | Bump the navigation timeout, or wait on a stable DOM signal instead. |
