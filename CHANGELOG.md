@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/dtopuzov/craftdriver/compare/v1.9.0...v1.9.1) (2026-07-25)
+
+
+### Bug Fixes
+
+* **by): clear error on non-string locator names; feat(locators:** rank stable anchors above dynamic ones ([#53](https://github.com/dtopuzov/craftdriver/issues/53)) ([7f05ed5](https://github.com/dtopuzov/craftdriver/commit/7f05ed5febeb7d8ce1fb2af42e59439638554092))
+
 # [1.9.0](https://github.com/dtopuzov/craftdriver/compare/v1.8.0...v1.9.0) (2026-07-24)
 
 
