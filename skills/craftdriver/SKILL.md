@@ -21,12 +21,27 @@ polling loops.
 
 ## Selector order
 
-Prefer evidence from the live page in this order:
+There is no universal best selector. Prefer the one that is at once the most
+**stable** and the most **meaningful** — a semantic locator reads like intent
+and doubles as an accessibility check, but only while the value it matches is
+stable. From live-page evidence:
 
 ```text
-By.role({ name }) / By.labelText / By.testId
-→ exact visible text → stable CSS → XPath only as a last resort
+1. By.role({ name }) / By.labelText / By.text   — when the name is a STABLE label
+2. name is dynamic or the app is translated     → drop the name; anchor on a
+   stable id/attribute (By.testId only if the app already has one)
+3. By.role (no name) / By.labelText              — stable even as values change
+4. stable By.css (real id / semantic class)
+5. By.text                                       — mostly for assertions
+6. By.xpath                                      — last resort
 ```
+
+**Never hardcode a localized or dynamic accessible name.** `By.role('button',
+{ name: 'Count is 0' })` breaks on the next click; `{ name: 'Save' }` breaks when
+the page renders in another language. `name` is a string, not a RegExp — for
+fuzzy matching use `{ exact: false }`; for dynamic/localized text use a stable id
+or test id. `data-testid` is an escape hatch, not a default: use it when the app
+already ships test ids, not ahead of a stable semantic locator.
 
 Confirm a selector against the live page with `craftdriver exists` or
 `craftdriver find` before putting it in a test.
@@ -47,9 +62,12 @@ check it against the live page:
 npx craftdriver locators ref=e7
 ```
 
-Use a candidate reported `unique` (ordered by durability: role + accessible
-name, label, test ID, unique text, minimal CSS). If none is unique, add a
-`data-testid` to the application instead of committing a positional selector.
+Use the candidate reported `best` (the first `unique` one, ordered by the
+stability rule above). The ranker demotes a role/name whose accessible name
+looks dynamic below a stable anchor and adds a `note` — heed it: if you also
+watched the name change while exploring, treat it as dynamic and pick the stable
+candidate. If nothing resolves uniquely, add a `data-testid` to the application
+instead of committing a positional selector.
 
 ## Test rules
 

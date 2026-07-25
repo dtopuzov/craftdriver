@@ -51,7 +51,7 @@ export interface LocatorReport {
   note?: string;
 }
 
-interface Evidence {
+export interface Evidence {
   role: string | null;
   name: string | null;
   label: string | null;
@@ -85,6 +85,25 @@ function looksGenerated(value: string): boolean {
  */
 function usableAsExactMatch(value: string): boolean {
   return value.length > 0 && value.length <= MAX_NAME;
+}
+
+/**
+ * Whether an accessible name (or text) looks *dynamic* — a value that changes
+ * between renders, so a hardcoded exact-match locator built on it will rot.
+ *
+ * Deliberately cheap and approximate: any Unicode number or currency sign. It
+ * flags the common offenders ("Count is 0", "3 items", "$4.99", "٣ items",
+ * "₹99", "12:30 PM") and only misses genuinely stable names that happen to
+ * carry a number ("COVID-19"). Using `\p{N}`/`\p{Sc}` rather than ASCII `\d`
+ * keeps it honest with the localization guidance — a localized numeral is just
+ * as dynamic as an ASCII one. A false positive costs nothing but ordering — the
+ * name-bearing candidate is demoted, never dropped — so the agent, which saw
+ * the live page, can still pick it when it knows the number is stable. This is
+ * the automated half of "prefer the most stable *and* meaningful locator": use
+ * the semantic value when it is stable, fall to a stable anchor when it is not.
+ */
+export function looksVolatile(value: string): boolean {
+  return /[\p{N}\p{Sc}]/u.test(value);
 }
 
 export async function locatorCandidates(
@@ -123,16 +142,24 @@ export async function locatorCandidates(
       if (validated.filter((c) => c.status === 'unique').length >= limit) break;
     }
     const best = validated.find((c) => c.status === 'unique') ?? null;
+    const dynamicNote =
+      evidence.name && looksVolatile(evidence.name)
+        ? `accessible name "${evidence.name}" looks dynamic (contains a number); ` +
+          'a hardcoded name will break when the value changes — prefer a stable locator'
+        : undefined;
     return {
       target: describeSelector(by),
       candidates: validated.slice(0, Math.max(limit, 1) + 2),
       best: best ? best.selector : null,
       ...(best
-        ? {}
+        ? dynamicNote
+          ? { note: dynamicNote }
+          : {}
         : {
           note:
+            dynamicNote ??
             'no durable locator resolved uniquely; add a data-testid to this element ' +
-            'rather than committing a positional selector',
+              'rather than committing a positional selector',
         }),
     };
   } finally {
@@ -180,69 +207,84 @@ return {
 `;
 }
 
-/** Build candidates in durability order. */
-function propose(e: Evidence): Array<Omit<LocatorCandidate, 'status' | 'matches'>> {
-  const out: Array<Omit<LocatorCandidate, 'status' | 'matches'>> = [];
+/**
+ * Build candidates in durability order.
+ *
+ * Two axes decide the order. The **semantic** axis is the base preference:
+ * role+name, label, test id, text, then CSS — how meaningful each is to a user.
+ * The **stability** axis then partitions them: any candidate whose matched value
+ * looks dynamic ({@link looksVolatile}) sinks below every stable one, keeping its
+ * semantic rank only within its group. So a stable role+name leads, but a
+ * dynamic name — *or a dynamic label, judged on its own value* — drops beneath a
+ * stable anchor like `#id` or a test id. Volatile candidates are demoted, never
+ * dropped: the agent that saw the live page may know the number is stable.
+ *
+ * A value's stability is judged per candidate — a label reading "Seats
+ * remaining 3" is exactly as brittle as a name reading the same, so it cannot
+ * ride to the top just because it is a label.
+ */
+export function propose(e: Evidence): Array<Omit<LocatorCandidate, 'status' | 'matches'>> {
+  type Candidate = Omit<LocatorCandidate, 'status' | 'matches'>;
+  const stable: Candidate[] = [];
+  const volatile: Candidate[] = [];
+  const add = (candidate: Candidate, isVolatile: boolean): void => {
+    (isVolatile ? volatile : stable).push(candidate);
+  };
 
-  // 1. Role + accessible name — survives restyling and DOM reshuffles.
-  //
-  // Never truncate a value destined for an exact-match locator: an
-  // ellipsis guarantees it resolves to nothing. Skip instead, and let a
-  // later candidate carry the element. `]` would also break the
+  // Role + accessible name — survives restyling and DOM reshuffles, and states
+  // what a user perceives. Never truncate a value destined for an exact-match
+  // locator: an ellipsis guarantees it resolves to nothing. Skip instead, and
+  // let a later candidate carry the element. `]` would also break the
   // `role=x[name=y]` grammar, which has no escape for it.
   if (e.role && e.name && usableAsExactMatch(e.name) && !e.name.includes(']')) {
-    out.push({
-      kind: 'role',
-      selector: `role=${e.role}[name=${e.name}]`,
-      code: `By.role(${JSON.stringify(e.role)}, { name: ${JSON.stringify(e.name)} })`,
-    });
+    add(
+      {
+        kind: 'role',
+        selector: `role=${e.role}[name=${e.name}]`,
+        code: `By.role(${JSON.stringify(e.role)}, { name: ${JSON.stringify(e.name)} })`,
+      },
+      looksVolatile(e.name),
+    );
   }
 
-  // 2. Associated label — the thing a user actually reads for form fields.
+  // Associated label — the thing a user reads for a form field. Usually stable
+  // as the field's *value* changes, but the label text itself can be dynamic
+  // ("Seats remaining 3"), so it is judged on its own value, not assumed stable.
   if (e.label && usableAsExactMatch(e.label)) {
-    out.push({
-      kind: 'label',
-      selector: `label=${e.label}`,
-      code: `By.labelText(${JSON.stringify(e.label)})`,
-    });
+    add(
+      { kind: 'label', selector: `label=${e.label}`, code: `By.labelText(${JSON.stringify(e.label)})` },
+      looksVolatile(e.label),
+    );
   }
 
-  // 3. Test id — durable by contract when the app ships one.
+  // Test id — durable by contract, but only when the app already ships one.
   if (e.testid) {
-    out.push({
-      kind: 'testid',
-      selector: `testid=${e.testid}`,
-      code: `By.testId(${JSON.stringify(e.testid)})`,
-    });
+    add({ kind: 'testid', selector: `testid=${e.testid}`, code: `By.testId(${JSON.stringify(e.testid)})` }, false);
   }
 
-  // 4. Text — durable only where it is unique, which validation decides.
+  // Text — durable only where it is unique, which validation decides. Shares the
+  // dynamic fate of the name: a button reading "Count is 0" has volatile text.
   if (e.text && usableAsExactMatch(e.text)) {
-    out.push({
-      kind: 'text',
-      selector: `text=${e.text}`,
-      code: `By.text(${JSON.stringify(e.text)})`,
-    });
+    add(
+      { kind: 'text', selector: `text=${e.text}`, code: `By.text(${JSON.stringify(e.text)})` },
+      looksVolatile(e.text),
+    );
   }
 
-  // 5. Minimal CSS, last, and only when it is not obviously generated.
-  //
-  // The id also has to survive being written bare into a selector: `.`,
-  // `:` and friends are CSS syntax, so `#user.email` silently means
-  // "id user AND class email", and a quote breaks the generated code.
+  // Minimal CSS from an existing, non-generated id or name attribute — a stable
+  // anchor that is not test-only markup. The id has to survive being written
+  // bare into a selector: `.`, `:` and friends are CSS syntax, so `#user.email`
+  // silently means "id user AND class email", and a quote breaks the code.
+  // `looksGenerated` already strips build-hashed ids, so what remains is stable.
   if (e.id && !looksGenerated(e.id) && /^[A-Za-z][A-Za-z0-9_-]*$/.test(e.id)) {
-    out.push({
-      kind: 'css',
-      selector: `#${e.id}`,
-      code: `By.css(${JSON.stringify('#' + e.id)})`,
-    });
+    add({ kind: 'css', selector: `#${e.id}`, code: `By.css(${JSON.stringify('#' + e.id)})` }, false);
   }
   if (e.nameAttr && !looksGenerated(e.nameAttr)) {
     const css = `${e.tag}[name=${JSON.stringify(e.nameAttr)}]`;
-    out.push({ kind: 'css', selector: `css=${css}`, code: `By.css(${JSON.stringify(css)})` });
+    add({ kind: 'css', selector: `css=${css}`, code: `By.css(${JSON.stringify(css)})` }, false);
   }
 
-  return out;
+  return [...stable, ...volatile];
 }
 
 /**

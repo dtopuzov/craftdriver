@@ -1,3 +1,5 @@
+import { CraftdriverError, ErrorCode } from './errors.js';
+
 export type Locator = { using: string; value: string };
 
 export interface RoleLocatorOptions {
@@ -102,6 +104,7 @@ export class By {
     if (opts?.exact === false) {
       return By.partialText(text, opts);
     }
+    requireStringValue(text, 'By.text text');
     const cs = opts?.caseSensitive !== false; // default true
     const trim = opts?.trim !== false; // default true
     const nodeExpr = trim ? 'normalize-space(.)' : 'string(.)';
@@ -123,6 +126,7 @@ export class By {
     substring: string,
     opts?: Omit<TextLocatorOptions, 'exact'>
   ): By {
+    requireStringValue(substring, 'By.partialText substring');
     const cs = opts?.caseSensitive !== false; // default true
     const trim = opts?.trim !== false; // default true
     const nodeExpr = trim ? 'normalize-space(.)' : 'string(.)';
@@ -174,32 +178,40 @@ export class By {
     const visibleGuard = opts?.includeHidden
       ? ''
       : ' and not(ancestor-or-self::*[@hidden]) and not(ancestor-or-self::*[@aria-hidden="true"])';
-    if (opts?.name) {
-      const nameLit = normalizeSpaceLiteral(opts.name);
-      const eq = opts.exact !== false; // default exact
-      // Approximate accessible-name sources, widest-first. This deliberately
-      // covers common cases without trying to implement the full AccName spec.
-      const candidates = [
-        'normalize-space(@aria-label)',
-        'normalize-space(.)',
-        'normalize-space(@value)',
-        'normalize-space(@alt)',
-        'normalize-space(@placeholder)',
-        'normalize-space(@title)',
-      ];
-      const stringPred = candidates
-        .map((c) => (eq ? `${c} = ${nameLit}` : `contains(${c}, ${nameLit})`))
-        .join(' or ');
-      const labelMatch = eq
-        ? `normalize-space(.) = ${nameLit}`
-        : `contains(normalize-space(.), ${nameLit})`;
-      const formControl = 'self::input or self::textarea or self::select';
-      const labelPred = [
-        `@aria-labelledby = //*[${labelMatch}]/@id`,
-        `((${formControl}) and @id = //label[${labelMatch}]/@for)`,
-        `((${formControl}) and ancestor::label[${labelMatch}])`,
-      ].join(' or ');
-      conditions.push(`(${stringPred} or ${labelPred})`);
+    // Validate on `!== undefined`, not truthiness: a non-string name (null,
+    // false, 0, a RegExp) must fail loudly with INVALID_ARGUMENT rather than
+    // silently degrade to a role-only locator. An empty string is a valid
+    // "no name filter" and keeps the role-only behaviour, since an empty-name
+    // predicate would match nearly every element of the role.
+    if (opts?.name !== undefined) {
+      const name = requireStringValue(opts.name, 'By.role name');
+      if (name !== '') {
+        const nameLit = normalizeSpaceLiteral(name);
+        const eq = opts.exact !== false; // default exact
+        // Approximate accessible-name sources, widest-first. This deliberately
+        // covers common cases without trying to implement the full AccName spec.
+        const candidates = [
+          'normalize-space(@aria-label)',
+          'normalize-space(.)',
+          'normalize-space(@value)',
+          'normalize-space(@alt)',
+          'normalize-space(@placeholder)',
+          'normalize-space(@title)',
+        ];
+        const stringPred = candidates
+          .map((c) => (eq ? `${c} = ${nameLit}` : `contains(${c}, ${nameLit})`))
+          .join(' or ');
+        const labelMatch = eq
+          ? `normalize-space(.) = ${nameLit}`
+          : `contains(normalize-space(.), ${nameLit})`;
+        const formControl = 'self::input or self::textarea or self::select';
+        const labelPred = [
+          `@aria-labelledby = //*[${labelMatch}]/@id`,
+          `((${formControl}) and @id = //label[${labelMatch}]/@for)`,
+          `((${formControl}) and ancestor::label[${labelMatch}])`,
+        ].join(' or ');
+        conditions.push(`(${stringPred} or ${labelPred})`);
+      }
     }
     // Leading `.//` (not `//`) so this stays scoped when used as a child of
     // another Locator/element — a bare `//` is document-root-anchored in XPath
@@ -211,6 +223,7 @@ export class By {
   }
 
   static labelText(text: string, opts?: ExactLocatorOptions): By {
+    requireStringValue(text, 'By.labelText text');
     const eq = opts?.exact !== false; // default exact
     const lit = normalizeSpaceLiteral(text);
     const labelMatch = eq ? `normalize-space(.) = ${lit}` : `contains(normalize-space(.), ${lit})`;
@@ -232,6 +245,7 @@ export class By {
   }
 
   static placeholder(text: string, opts?: ExactLocatorOptions): By {
+    requireStringValue(text, 'By.placeholder text');
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@placeholder = ${lit}` : `contains(@placeholder, ${lit})`;
@@ -243,6 +257,7 @@ export class By {
   }
 
   static altText(text: string, opts?: ExactLocatorOptions): By {
+    requireStringValue(text, 'By.altText text');
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@alt = ${lit}` : `contains(@alt, ${lit})`;
@@ -254,6 +269,7 @@ export class By {
   }
 
   static title(text: string, opts?: ExactLocatorOptions): By {
+    requireStringValue(text, 'By.title text');
     const eq = opts?.exact !== false;
     const lit = xpStringLiteral(text);
     const pred = eq ? `@title = ${lit}` : `contains(@title, ${lit})`;
@@ -338,6 +354,35 @@ const IMPLICIT_ROLE_XPATH: Record<string, string[]> = {
 };
 
 // Helpers
+
+// Guard the text/name arguments that get compiled into XPath string literals.
+// Passing a RegExp is the common mistake — role/name and the text family match
+// via XPath, which has no regex operator, so a RegExp would otherwise blow up
+// deep inside the literal builder with an opaque "s.indexOf is not a function".
+// Fail early at the public entry point with a stable code and a real fix.
+function requireStringValue(value: unknown, context: string): string {
+  if (typeof value === 'string') return value;
+  const received =
+    value instanceof RegExp
+      ? 'a RegExp'
+      : value === null
+        ? 'null'
+        : Array.isArray(value)
+          ? 'an array'
+          : `a ${typeof value}`;
+  const hint =
+    value instanceof RegExp
+      ? `${context} matches text through XPath, which has no regular-expression ` +
+        `operator. Use { exact: false } for a substring match, or a data-testid ` +
+        `for dynamic or localized text.`
+      : undefined;
+  throw new CraftdriverError(
+    ErrorCode.INVALID_ARGUMENT,
+    `${context} must be a string, but received ${received}.`,
+    hint ? { detail: { context }, hint } : { detail: { context } }
+  );
+}
+
 function cssEscape(s: string): string {
   // Minimal escape for quotes and backslashes in our usage
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
