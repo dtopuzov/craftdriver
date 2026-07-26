@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 /** Agents whose project-skill directory this installer knows how to fill. */
 export const AGENT_TARGETS = ['claude', 'codex', 'copilot', 'all'] as const;
 export type AgentTarget = (typeof AGENT_TARGETS)[number];
+export const SKILL_READERS = ['Claude Code', 'Copilot', 'Codex'] as const;
+export type SkillReader = (typeof SKILL_READERS)[number];
 
 /**
  * Where each agent looks for a committed project skill, as of July 2026.
@@ -39,7 +41,7 @@ const SKILL_ROOTS = {
 type SkillRoot = keyof typeof SKILL_ROOTS;
 
 /** Agents that discover a skill installed under each root. */
-const ROOT_READERS: Record<SkillRoot, readonly string[]> = {
+const ROOT_READERS: Record<SkillRoot, readonly SkillReader[]> = {
   claude: ['Claude Code', 'Copilot'],
   agents: ['Codex', 'Copilot'],
   github: ['Copilot'],
@@ -133,7 +135,7 @@ export interface SkillInstall {
   /** Same path relative to the project root, for readable output. */
   relativePath: string;
   /** Agents that discover a skill at this path. */
-  readers: readonly string[];
+  readers: readonly SkillReader[];
   status: 'installed' | 'updated' | 'unchanged' | 'would-install' | 'would-update';
 }
 
@@ -177,7 +179,7 @@ export function runInit(options: InitOptions): InitResult {
 
   const manifest = createManifest(version, sourceFiles);
   const dryRun = options.dryRun === true;
-  const roots = TARGET_ROOTS[agent];
+  const roots = rootsForInstall(agent, projectRoot);
 
   // Inspect every destination before writing any of them, so a conflict in the
   // second directory refuses the whole command instead of leaving one agent
@@ -217,6 +219,25 @@ export function runInit(options: InitOptions): InitResult {
     dryRun,
     ...(options.mcp ? { mcp: TARGET_MCP[agent].map((host) => MCP_SNIPPETS[host]) } : {}),
   };
+}
+
+/**
+ * The default covering set is two directories, but a previous Copilot-only
+ * install may have created a third copy in `.github/skills`, which Copilot CLI
+ * checks first. Reconcile any known destination that already exists so a stale
+ * duplicate cannot shadow the copies this run updates. Explicit single-agent
+ * targets remain narrow and touch only their documented destination.
+ */
+function rootsForInstall(agent: AgentTarget, projectRoot: string): SkillRoot[] {
+  const roots = [...TARGET_ROOTS[agent]];
+  if (agent !== 'all') return roots;
+
+  for (const root of Object.keys(SKILL_ROOTS) as SkillRoot[]) {
+    if (roots.includes(root)) continue;
+    const destination = join(projectRoot, ...SKILL_ROOTS[root], 'craftdriver');
+    if (existsSync(destination)) roots.push(root);
+  }
+  return roots;
 }
 
 function findProjectRoot(cwd: string): string {

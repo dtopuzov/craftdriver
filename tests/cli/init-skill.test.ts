@@ -233,6 +233,31 @@ describe('safe project-local skill installer', () => {
     ]);
   });
 
+  it('reconciles an existing Copilot-native copy during a default install', () => {
+    const root = project();
+    init(root);
+    init(root, { agent: 'copilot' });
+
+    // Copilot CLI resolves duplicate skill names in .github, .agents, .claude
+    // order. A copy created by --agent copilot must therefore remain part of
+    // later default runs instead of silently shadowing their updated copies.
+    const dryRun = init(root, { dryRun: true });
+    expect(paths(dryRun)).toEqual([CLAUDE_SKILL, AGENTS_SKILL, COPILOT_SKILL]);
+    expect(dryRun.installs.map((entry) => entry.status)).toEqual([
+      'unchanged',
+      'unchanged',
+      'unchanged',
+    ]);
+
+    downgrade(root, COPILOT_SKILL);
+    const reconciled = init(root);
+    expect(reconciled.installs.map((entry) => [entry.relativePath, entry.status])).toEqual([
+      [CLAUDE_SKILL, 'unchanged'],
+      [AGENTS_SKILL, 'unchanged'],
+      [COPILOT_SKILL, 'updated'],
+    ]);
+  });
+
   it('updates an older untouched owned installation', () => {
     const root = project();
     init(root);
@@ -296,6 +321,16 @@ describe('safe project-local skill installer', () => {
     expect(() => init(root)).toThrow(/unowned|manifest/i);
     expect(existsSync(join(root, CLAUDE_SKILL))).toBe(false);
     expect(readFileSync(join(root, AGENTS_SKILL, 'SKILL.md'), 'utf8')).toBe('mine\n');
+  });
+
+  it('refuses a Copilot-native shadow before writing the default destinations', () => {
+    const root = project();
+    write(root, `${COPILOT_SKILL}/SKILL.md`, 'mine\n');
+
+    expect(() => init(root)).toThrow(/unowned|manifest/i);
+    expect(existsSync(join(root, CLAUDE_SKILL))).toBe(false);
+    expect(existsSync(join(root, AGENTS_SKILL))).toBe(false);
+    expect(readFileSync(join(root, COPILOT_SKILL, 'SKILL.md'), 'utf8')).toBe('mine\n');
   });
 
   it('refuses an unowned destination and an extra file', () => {

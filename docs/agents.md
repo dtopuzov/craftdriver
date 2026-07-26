@@ -52,8 +52,11 @@ hosts disagree about where a project skill lives:
 
 Two directories are the smallest default set that covers all three. A targeted
 `--agent copilot` install uses Copilot's own `.github/skills/` location instead.
-Commit the installed skill, or add it to `.gitignore` and let each developer run
-`npx craftdriver init` — both work.
+If that third CraftDriver directory already exists, later default `init` runs
+also report and update it so a Copilot surface cannot load a stale duplicate;
+Copilot CLI checks `.github/skills/` first. Commit the installed skill, or add
+it to `.gitignore` and let each developer run `npx craftdriver init` — both
+work.
 
 ### What it will not touch
 
@@ -64,8 +67,8 @@ Cursor rules, `GEMINI.md`, `.codex/config.toml`, `.mcp.json`, or
 
 It refuses rather than overwriting: user-edited files, unowned destinations,
 extra files, and symlinked paths all stop the install with a message naming the
-file in the way. A conflict in either directory refuses the whole command, so
-you never end up with one agent configured and another not.
+file in the way. A conflict in any destination being reconciled refuses the
+whole command, so you never end up with one agent configured and another not.
 
 ## Verify it loaded
 

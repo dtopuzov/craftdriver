@@ -148,9 +148,18 @@ describe('packed CLI and skill', () => {
 
     run(['init']);
 
+    // A later targeted Copilot install creates its native location, which
+    // Copilot CLI checks first. Default init must continue reporting and
+    // reconciling that copy so it cannot silently become stale on the next
+    // package update.
+    run(['init', '--agent', 'copilot']);
+    const dryRun = run(['init', '--dry-run']);
+    expect(dryRun).toContain('unchanged .github/skills/craftdriver');
+
     const skillDirs = [
       join(consumer, '.claude', 'skills', 'craftdriver'),
       join(consumer, '.agents', 'skills', 'craftdriver'),
+      join(consumer, '.github', 'skills', 'craftdriver'),
     ];
     for (const skillDir of skillDirs) {
       expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(true);

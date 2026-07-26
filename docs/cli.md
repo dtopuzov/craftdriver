@@ -563,9 +563,15 @@ row. `--agent copilot` uses Copilot's own `.github/skills/craftdriver/`
 location. `--agent all` is the default. `init codex` is the pre-1.10 spelling
 of `--agent codex` and still works, with a deprecation notice.
 
+If `.github/skills/craftdriver/` already exists from a targeted Copilot
+install, a later default `init` also reports and updates that owned copy. This
+prevents Copilot CLI's first-choice project location from silently remaining
+on an older CraftDriver version.
+
 An ownership manifest makes repeat installation deterministic and prevents
-updates from overwriting user edits or unowned files. A conflict in either
-destination refuses the whole command. There is no destructive `--force` mode.
+updates from overwriting user edits or unowned files. A conflict in any
+destination being reconciled refuses the whole command. There is no destructive
+`--force` mode.
 
 The installer never reads or changes `AGENTS.md`, `CLAUDE.md`, Copilot
 instructions, Cursor rules, `GEMINI.md`, `.codex/config.toml`, `.mcp.json`, or

@@ -21,7 +21,13 @@ import { DaemonClient } from './client.js';
 import { runDaemon, toWireError } from './daemon.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
 import { MAX_STDIN_BYTES } from './bounds.js';
-import { AGENT_TARGETS, runInit, type AgentTarget, type SkillInstall } from './init.js';
+import {
+  AGENT_TARGETS,
+  runInit,
+  type AgentTarget,
+  type SkillInstall,
+  type SkillReader,
+} from './init.js';
 import { runMcpServer } from './mcp/server.js';
 import { validateSessionName } from './sessionRegistry.js';
 import type { LaunchOptions } from '../lib/browser.js';
@@ -372,7 +378,7 @@ function successExitCode(parsed: ParsedCommand, result: unknown): number {
  * its project-trust gate applies to the `.codex/` config layer, not to
  * `.agents/skills`, so it does not belong here.
  */
-const VERIFY_HINTS: Record<string, string> = {
+const VERIFY_HINTS: Record<SkillReader, string> = {
   'Claude Code': 'type /craftdriver  (restart Claude Code if .claude/ was just created)',
   Copilot: 'VS Code: /skills; CLI: /skills list or /craftdriver',
   Codex: 'type /skills or $craftdriver  (restart Codex if it does not appear)',
@@ -419,7 +425,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     process.stdout.write('\nVerify the skill loaded:\n');
     for (const reader of readers) {
       const hint = VERIFY_HINTS[reader];
-      if (hint) process.stdout.write(`  ${reader.padEnd(12)} ${hint}\n`);
+      process.stdout.write(`  ${reader.padEnd(12)} ${hint}\n`);
     }
 
     if (result.mcp) {

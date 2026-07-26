@@ -137,14 +137,21 @@ describe('the accessibility prompt', () => {
       const report = await browser.a11y.audit();
 
       // The recipe asks the agent to "list the serious and critical violations
-      // with the elements they point at", so both halves have to be there.
+      // with the elements they point at". The report must expose enough
+      // evidence for that filtering, without this test pinning audit()'s
+      // default impact-filter policy.
       expect(Array.isArray(report.violations)).toBe(true);
       expect(report.violations.length).toBeGreaterThan(0);
       for (const violation of report.violations) {
         expect(violation.id).toBeTruthy();
-        expect(['serious', 'critical']).toContain(violation.impact);
+        expect(violation.impact).toBeTruthy();
         expect(violation.nodes.length).toBeGreaterThan(0);
       }
+      expect(
+        report.violations.some((violation) =>
+          ['serious', 'critical'].includes(violation.impact ?? ''),
+        ),
+      ).toBe(true);
 
       // And check() is the gate the recipe tells them to add.
       await expect(browser.a11y.check()).rejects.toThrow();

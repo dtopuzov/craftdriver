@@ -17,7 +17,8 @@ narrows to one of those directories; `--agent copilot` uses
 `.github/skills/craftdriver/`. It never reads or changes `AGENTS.md`,
 `CLAUDE.md`, other assistant instructions, or any host's MCP configuration.
 `--dry-run` previews the installation. `--mcp` only prints an optional
-project-pinned MCP snippet.
+project-pinned MCP snippet. A later default `init` also reconciles an existing
+CraftDriver-owned `.github/skills/craftdriver/` copy so it cannot become stale.
 
 ## Persistent browser
 
