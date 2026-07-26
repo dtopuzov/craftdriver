@@ -146,20 +146,34 @@ describe('packed CLI and skill', () => {
       Object.keys(PREEXISTING).map((rel) => [rel, hashOf(join(consumer, rel))]),
     );
 
-    run(['init', 'codex']);
+    run(['init']);
 
-    const skillDir = join(consumer, '.agents', 'skills', 'craftdriver');
-    expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(skillDir, 'workflow.md'))).toBe(true);
+    const skillDirs = [
+      join(consumer, '.claude', 'skills', 'craftdriver'),
+      join(consumer, '.agents', 'skills', 'craftdriver'),
+    ];
+    for (const skillDir of skillDirs) {
+      expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(skillDir, 'workflow.md'))).toBe(true);
 
-    // The manifest must describe exactly what was written.
-    const manifest = JSON.parse(
-      readFileSync(join(skillDir, '.craftdriver-manifest.json'), 'utf8'),
-    ) as { files: Record<string, string> };
-    for (const [rel, digest] of Object.entries(manifest.files)) {
-      const written = createHash('sha256').update(readFileSync(join(skillDir, rel))).digest('hex');
-      expect(written).toBe(digest);
+      // Each manifest must describe exactly what was written.
+      const manifest = JSON.parse(
+        readFileSync(join(skillDir, '.craftdriver-manifest.json'), 'utf8'),
+      ) as { files: Record<string, string> };
+      for (const [rel, digest] of Object.entries(manifest.files)) {
+        const written = createHash('sha256')
+          .update(readFileSync(join(skillDir, rel)))
+          .digest('hex');
+        expect(written).toBe(digest);
+      }
     }
+
+    // The default command installs one byte-identical skill for both host
+    // conventions; divergence would make the agent's behavior depend on which
+    // product happened to discover it.
+    expect(readFileSync(join(skillDirs[0], 'SKILL.md'))).toEqual(
+      readFileSync(join(skillDirs[1], 'SKILL.md')),
+    );
 
     // The whole point of the installer's contract.
     for (const [rel, digest] of Object.entries(before)) {
@@ -169,11 +183,14 @@ describe('packed CLI and skill', () => {
 
   it('refuses to overwrite skill content a user has edited', () => {
     const skillFile = join(consumer, '.agents', 'skills', 'craftdriver', 'workflow.md');
+    const siblingFile = join(consumer, '.claude', 'skills', 'craftdriver', 'workflow.md');
+    const siblingBefore = readFileSync(siblingFile);
     const mine = '# mine now\n';
     writeFileSync(skillFile, mine);
 
-    const output = run(['init', 'codex'], { allowFailure: true });
+    const output = run(['init'], { allowFailure: true });
     expect(readFileSync(skillFile, 'utf8')).toBe(mine);
+    expect(readFileSync(siblingFile)).toEqual(siblingBefore);
     expect(output).toMatch(/edit|modif|refus/i);
   }, 120_000);
 

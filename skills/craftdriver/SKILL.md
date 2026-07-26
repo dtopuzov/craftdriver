@@ -16,7 +16,7 @@ start app → navigate → snapshot → inspect → act → validate selector
           → write test → run focused test → debug from fresh evidence
 ```
 
-Actions and `expect(locator).to…()` auto-wait. Do not add sleeps or hand-written
+Actions and `locator.expect().to…()` auto-wait. Do not add sleeps or hand-written
 polling loops.
 
 ## Selector order
@@ -74,7 +74,8 @@ instead of committing a positional selector.
 1. Inspect the repository's existing tests and package scripts before choosing
    a test location or command.
 2. Import only from `craftdriver`, never from `craftdriver/src/...`.
-3. Use public locators and `expect(locator)` assertions.
+3. Use public locators and `locator.expect()` / `browser.expect(selector)`
+   assertions. There is no top-level `expect` export.
 4. Read failures by stable `CraftdriverError.code`, then gather a fresh
    snapshot and focused page evidence.
 5. Make ordinary reviewable source changes. Never hide a failure with runtime

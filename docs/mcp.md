@@ -19,14 +19,75 @@ bytes); oversized frames return a parse error and are discarded.
 
 ## Manual project-pinned setup
 
-Run `npx craftdriver init codex --mcp` to print the exact snippet. The installer
-does not read or change MCP configuration.
+Run `npx craftdriver init --mcp` to print the Claude Code, Copilot in VS Code,
+and Codex snippets, or `npx craftdriver init --agent claude --mcp` for one. The
+installer prints; it never reads or changes MCP configuration.
 
-### Claude Code / Claude Desktop
+The three major hosts each read a different file, and two of them use different
+schemas — pasting Claude Code's shape into `.vscode/mcp.json` produces a config
+that silently does nothing.
+
+### Claude Code — `.mcp.json` at the repository root
+
+```json
+{
+  "mcpServers": {
+    "craftdriver": {
+      "command": "npx",
+      "args": ["--no-install", "craftdriver", "mcp"]
+    }
+  }
+}
+```
+
+Project-scoped `.mcp.json` is meant to be committed; Claude Code prompts for
+approval before using a server from it. The equivalent one-liner:
 
 ```bash
-claude mcp add craftdriver -- npx --no-install craftdriver mcp
+claude mcp add --scope project craftdriver -- npx --no-install craftdriver mcp
 ```
+
+### Copilot in VS Code — `.vscode/mcp.json`
+
+Note `servers` rather than `mcpServers`, and the required `type`.
+
+```json
+{
+  "servers": {
+    "craftdriver": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--no-install", "craftdriver", "mcp"]
+    }
+  }
+}
+```
+
+### Other Copilot surfaces
+
+"Copilot" is several products with different MCP configuration. The snippet
+above is VS Code only:
+
+| Surface | Where MCP is configured |
+| --- | --- |
+| Copilot in VS Code | `.vscode/mcp.json` (above) |
+| Copilot CLI | `~/.copilot/mcp-config.json`; `.mcp.json` or `.github/mcp.json` in a repository |
+| Copilot coding agent (cloud) | Repository Copilot settings on GitHub |
+
+The command and args are the same everywhere — `npx --no-install craftdriver
+mcp` — only the file and its schema change. Check your surface's own
+documentation for the exact shape.
+
+### Codex — `.codex/config.toml`
+
+```toml
+[mcp_servers.craftdriver]
+command = "npx"
+args = ["--no-install", "craftdriver", "mcp"]
+```
+
+Project-scoped Codex config is skipped entirely for an untrusted project. Either
+trust the project, or put the server in `~/.codex/config.toml` instead.
 
 ### Cursor / Windsurf / Zed (`.cursor/mcp.json` and similar)
 

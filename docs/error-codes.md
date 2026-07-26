@@ -41,7 +41,7 @@ try {
 | `TIMEOUT_WAITING_NETWORK` | A specific request / response / network-idle predicate did not resolve. | Verify the predicate matches the real traffic; widen with a regex. |
 | `TIMEOUT_WAITING_DIALOG` | `waitForDialog()` did not see a dialog of the expected type. | Confirm the action under test actually opens the dialog. |
 | `TIMEOUT` | Generic `WebDriverWait.until(...)` timeout with no more specific code. | Same as above — check the condition. |
-| `EXPECT_MISMATCH` | An `expect(locator).to…()` assertion failed after auto-waiting. | Inspect `error.detail` for the selector and observed value. |
+| `EXPECT_MISMATCH` | A `locator.expect().to…()` assertion failed after auto-waiting. | Inspect `error.detail` for the selector and observed value. |
 | `A11Y_VIOLATIONS` | `browser.a11y.check()` (or scoped variants) found axe-core violations. | Iterate over `error.violations` — each has an `id`, `impact`, and `helpUrl`. |
 | `EVAL_THREW` | The function passed to `evaluate()` threw inside the page. Also fires for `browser.clock` methods (`tick()`, `setSystemTime()`, `runFor()`) called before `install()` — they run as in-page scripts under the hood. | The page-side exception text is in `error.detail.exception`. |
 | `EVAL_BAD_ARG` | `evaluate()` / `addInitScript()` received a non-JSON-serializable argument (function, Symbol, DOM node…). | Pass plain JSON values. |

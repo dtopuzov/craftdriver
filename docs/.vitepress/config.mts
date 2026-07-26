@@ -102,6 +102,12 @@ export default defineConfig({
             ],
           },
           {
+            text: 'AI Agents',
+            items: [
+              { text: 'Ask An Agent To Write A Test', link: '/recipes/ask-an-agent-to-write-a-test' },
+            ],
+          },
+          {
             text: 'Quality Gates & Debugging',
             items: [
               { text: 'Accessibility Gates', link: '/recipes/accessibility-gate' },

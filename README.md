@@ -27,7 +27,7 @@ CraftDriver is for writing boringly reliable automation against real browsers, w
 - 🧾 **Trace evidence** - capture actions, console output, errors, network events, and screenshots.
 - ☁️ **Remote WebDriver** - use the Browser API with a self-hosted Selenium Grid or a cloud provider like [BrowserStack](https://www.browserstack.com/).
 - ⚛️ **Electron apps** - drive packaged Electron desktop apps and mock native OS dialogs (open/save, message boxes).
-- 🤖 **Agent-friendly** - CLI, a project-local skill, and optional MCP when coding agents need the browser.
+- 🤖 **Agent-friendly** - one command sets up Claude Code, Codex, and Copilot with a CLI, a project-local skill, and optional MCP.
 
 ## Choose Your Path
 
@@ -60,18 +60,29 @@ No separate chromedriver or geckodriver setup for normal use. CraftDriver resolv
 
 ## AI Agent Bonus
 
-If your coding agent can use a shell, CraftDriver can give it a real browser
-for exploring the app before it writes tests. Install the project-local skill;
-it never changes repository instruction files.
+Your coding agent can write tests, but it can't see your app — so it guesses
+selectors and hands you a test that fails on first run. CraftDriver gives it a
+real browser to look at the page first.
 
 ```bash
-npx craftdriver init codex
+npm install --save-dev craftdriver
+npx craftdriver init
 ```
 
-MCP is optional. `npx craftdriver init codex --mcp` prints a project-pinned
-manual configuration snippet without reading or changing Codex config.
+`init` installs a project-local skill that makes the CraftDriver CLI
+discoverable to Claude Code, Codex, and Copilot. It never touches `AGENTS.md`,
+`CLAUDE.md`, Copilot instructions, or any host's MCP configuration. Then ask:
 
-See the [AI agent guide](https://dtopuzov.github.io/craftdriver/agents) when you need the full setup.
+> Use the CraftDriver skill. Explore `http://localhost:3000/login` and add a
+> browser test for a failed sign-in, following this repository's existing test
+> conventions. Verify every locator against the live page, run the focused test,
+> and tell me what you changed.
+
+The agent reads the accessibility tree, checks which locators actually resolve,
+and writes the test against what it found. Start with
+[Ask Your Agent To Write A Browser Test](https://dtopuzov.github.io/craftdriver/recipes/ask-an-agent-to-write-a-test).
+The same prompt works over optional MCP when the host has no shell; full setup
+is in the [AI agent guide](https://dtopuzov.github.io/craftdriver/agents).
 
 ## What It Can Do
 
@@ -131,7 +142,7 @@ explicit single-active-origin fallback after navigation; see
 | Electron apps        | Drive packaged Electron renderers with a version-pinned chromedriver               | [Electron apps](https://dtopuzov.github.io/craftdriver/electron)                                                                            |
 | Safari (macOS)       | Real desktop Safari via WebDriver Classic — enable once with `safaridriver --enable` | [Safari](https://dtopuzov.github.io/craftdriver/safari)                                                                                     |
 | Remote WebDriver     | Run on a self-hosted Selenium Grid or a cloud provider like BrowserStack           | [Remote WebDriver](https://dtopuzov.github.io/craftdriver/remote-webdriver)                                                                |
-| AI agents            | CLI, MCP server, assistant bootstrap, packaged skill files                         | [AI agent guide](https://dtopuzov.github.io/craftdriver/agents)                                                                            |
+| AI agents            | One-command skill install for Claude Code, Codex, and Copilot; CLI and MCP surfaces | [AI agent guide](https://dtopuzov.github.io/craftdriver/agents)                                                                            |
 
 ## Links
 

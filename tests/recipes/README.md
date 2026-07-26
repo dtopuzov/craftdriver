@@ -29,6 +29,28 @@ snippet.** The only differences are:
 
 When you edit a recipe, edit both files and keep the cores in sync.
 
+## Exception: the AI agent recipe
+
+[`ask-an-agent-to-write-a-test`](../../docs/recipes/ask-an-agent-to-write-a-test.md)
+is **prompt-first**: its main artifact is a prompt you give Claude Code, Codex,
+or Copilot. Prompts and model behavior are not deterministically testable, and
+[`ask-an-agent.test.ts`](./ask-an-agent.test.ts) does not pretend otherwise —
+**the mirror rule does not apply to it.**
+
+What it does verify is every product capability behind the recipe, because
+those are what make an agent's output better than a guess:
+
+- `snapshot` returns role + accessible name per element — the block the shell
+  recipe prints verbatim;
+- `locators` returns candidates re-checked against the live page, ranked, never
+  a ref;
+- the console and network journal explain a failure the DOM does not;
+- `a11y.audit()` reports violations with the elements they point at, and
+  `a11y.check()` gates.
+
+Prompt quality itself stays a manual review concern. Green CI here means the
+tool does what the recipes say it does — not that the prompts are good.
+
 ## Exception: Electron recipes
 
 The Electron recipes in [`docs/recipes/`](../../docs/recipes/)
