@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/dtopuzov/craftdriver/compare/v1.9.1...v1.10.0) (2026-07-27)
+
+
+### Features
+
+* polish AI agent onboarding ([#55](https://github.com/dtopuzov/craftdriver/issues/55)) ([ef43498](https://github.com/dtopuzov/craftdriver/commit/ef434988d8f59fdb79e5400f316aeb4d86697be2))
+
 ## [1.9.1](https://github.com/dtopuzov/craftdriver/compare/v1.9.0...v1.9.1) (2026-07-25)
 
 
