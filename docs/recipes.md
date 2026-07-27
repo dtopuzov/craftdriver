@@ -50,6 +50,15 @@ For exact signatures, use the linked feature docs and the
 | Mobile-specific behavior     | Mobile layout depends on viewport, device headers, API config, or logs.   | [Test A Mobile Flow With API Mocks And Logs](./recipes/mobile-flow-with-network-and-logs.md)  |
 | File upload and download     | A flow uploads a file, exports a report, or verifies downloaded content.  | [Test File Uploads And Downloads](./recipes/file-upload-download.md)                          |
 
+## AI Agents
+
+Give your coding agent a real browser so it writes tests against what your app
+actually renders, instead of guessing selectors from source.
+
+| Scenario             | Use when                                                                 | Recipe                                                                             |
+| -------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| AI-generated testing | Claude Code, Codex, or Copilot should explore the live app and add a test. | [Ask Your Agent To Write A Browser Test](./recipes/ask-an-agent-to-write-a-test.md) |
+
 ## Quality Gates And Debugging
 
 | Scenario                      | Use when                                                                        | Recipe                                                                   |

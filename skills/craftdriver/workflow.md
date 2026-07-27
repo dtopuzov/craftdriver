@@ -83,7 +83,7 @@ what the page happens to render.
 Follow the repository's style. A direct test may look like:
 
 ```ts
-import { Browser, By, expect } from 'craftdriver';
+import { Browser, By } from 'craftdriver';
 
 const browser = await Browser.launch({ browserName: 'chrome' });
 try {
@@ -91,11 +91,14 @@ try {
   await browser.locator(By.labelText('Email')).fill('alice@example.test');
   await browser.locator(By.labelText('Password')).fill('secret');
   await browser.locator(By.role('button', { name: 'Sign in' })).click();
-  await expect(browser.locator(By.testId('welcome'))).toHaveText(/welcome/i);
+  await browser.locator(By.testId('welcome')).expect().toHaveText(/welcome/i);
 } finally {
   await browser.quit();
 }
 ```
+
+Assertions hang off the locator — `locator.expect().to…()`, or
+`browser.expect(selector).to…()`. There is no top-level `expect` export.
 
 Use the exact public API patterns already present in the repository when they
 differ from this standalone example.

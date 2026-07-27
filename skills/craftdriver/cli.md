@@ -7,14 +7,18 @@ library for committed tests.
 
 ```bash
 npm install --save-dev craftdriver
-npx craftdriver init codex
+npx craftdriver init
 npx craftdriver --help
 ```
 
-The init command installs `.agents/skills/craftdriver/`. It never reads or
-changes `AGENTS.md`, `CLAUDE.md`, other assistant instructions, or
-`.codex/config.toml`. `--dry-run` previews the installation. `--mcp` only prints
-an optional project-pinned MCP snippet.
+The init command installs `.claude/skills/craftdriver/` (Claude Code, Copilot)
+and `.agents/skills/craftdriver/` (Codex, Copilot). `--agent claude|codex`
+narrows to one of those directories; `--agent copilot` uses
+`.github/skills/craftdriver/`. It never reads or changes `AGENTS.md`,
+`CLAUDE.md`, other assistant instructions, or any host's MCP configuration.
+`--dry-run` previews the installation. `--mcp` only prints an optional
+project-pinned MCP snippet. A later default `init` also reconciles an existing
+CraftDriver-owned `.github/skills/craftdriver/` copy so it cannot become stale.
 
 ## Persistent browser
 
@@ -28,9 +32,10 @@ npx craftdriver daemon stop
 The first ordinary command auto-starts the daemon when needed. State, cookies,
 and the active page survive between commands.
 
-The daemon uses a Unix socket and is not available on Windows. On Windows, use
-the configured MCP server for a persistent agent session, or send the whole
-flow in one `--ephemeral` script.
+The daemon uses a Unix socket and is not available on Windows. On Windows, or in
+a sandbox that cannot keep a background process, use the configured MCP server
+for a persistent agent session, or send the whole flow in one `--ephemeral`
+script.
 
 ## Current commands
 

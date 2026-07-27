@@ -96,12 +96,13 @@ craftdriver screenshot [-o file.png] [--full-page] [--selector S]
 craftdriver eval <js>                  # last resort
 craftdriver back | forward | reload | status | quit
 
-craftdriver logs [list]                # console + network history
-craftdriver logs wait --contains <text>
+craftdriver logs [list] [--kind console,error,request,response] [--level error]
+                       [--contains text] [--since N] [--limit N]
+craftdriver logs wait --contains <text> [--kind k] [--timeout ms]
 craftdriver logs clear
-craftdriver mock add <pattern> [--status N] [--body S]
+craftdriver mock add <pattern> [--status N] [--body S] [--content-type T]
 craftdriver mock block <pattern>
-craftdriver mock list | remove <id> | clear
+craftdriver mock list | craftdriver mock remove <id> | craftdriver mock clear
 craftdriver trace start [name] [--no-screenshots]
 craftdriver trace stop [--zip]         # then open the NDJSON or zip
 craftdriver trace status
@@ -110,7 +111,27 @@ craftdriver state load <name>          # load before navigation on BiDi
 craftdriver state list
 
 craftdriver daemon start|status|stop
+craftdriver session list               # open sessions and the limit
+craftdriver session close [name]       # quit one session's browser
+
+craftdriver init [--agent claude|codex|copilot|all] [--dry-run] [--mcp]
+craftdriver mcp                        # speak MCP on stdio
 ```
+
+That is every command. Global flags are:
+
+```text
+--browser chrome|chromium|firefox|safari   which browser to launch
+--headless | --headed                      override the default
+--session <name>                           route to a named browser
+--ephemeral                                one browser for one script on stdin
+--timeout <ms>                             per-command wait (default 5000)
+--json | --pretty                          force output format
+--help | --version
+```
+
+`--limit` and `--offset` are command-specific pagination flags where shown
+above; they are rejected by commands that do not return lists.
 
 Run `craftdriver --help` for the full list.
 
@@ -524,20 +545,41 @@ findings transfer directly between the two.
 Install the package-shipped CraftDriver skill in the nearest project root:
 
 ```bash
-npx craftdriver init codex
-npx craftdriver init codex --dry-run
+npx craftdriver init                    # Claude Code, Codex, and Copilot
+npx craftdriver init --dry-run
+npx craftdriver init --agent claude     # one agent only
 ```
 
-The destination is `.agents/skills/craftdriver/`. An ownership manifest makes
-repeat installation deterministic and prevents updates from overwriting user
-edits or unowned files. There is no destructive `--force` mode.
+Hosts disagree about where a project skill lives, so `init` writes the smallest
+set that covers all three:
+
+| Destination | Agents that read it |
+| --- | --- |
+| `.claude/skills/craftdriver/` | Claude Code, Copilot |
+| `.agents/skills/craftdriver/` | Codex, Copilot |
+
+`--agent claude` and `--agent codex` narrow the install to the corresponding
+row. `--agent copilot` uses Copilot's own `.github/skills/craftdriver/`
+location. `--agent all` is the default. `init codex` is the pre-1.10 spelling
+of `--agent codex` and still works, with a deprecation notice.
+
+If `.github/skills/craftdriver/` already exists from a targeted Copilot
+install, a later default `init` also reports and updates that owned copy. This
+prevents Copilot CLI's first-choice project location from silently remaining
+on an older CraftDriver version.
+
+An ownership manifest makes repeat installation deterministic and prevents
+updates from overwriting user edits or unowned files. A conflict in any
+destination being reconciled refuses the whole command. There is no destructive
+`--force` mode.
 
 The installer never reads or changes `AGENTS.md`, `CLAUDE.md`, Copilot
-instructions, Cursor rules, `GEMINI.md`, or `.codex/config.toml`. Legacy init
-flavors return a migration error and write nothing.
+instructions, Cursor rules, `GEMINI.md`, `.codex/config.toml`, `.mcp.json`, or
+`.vscode/mcp.json`.
 
-To use optional MCP, run `npx craftdriver init codex --mcp`. It prints a
-project-pinned snippet for manual configuration; it does not configure MCP.
+To use optional MCP, run `npx craftdriver init --mcp`. It prints a
+project-pinned snippet per host for manual configuration; it does not configure
+MCP. See the [AI agent guide](./agents.md) for the full walkthrough.
 
 ## Skill pack
 
@@ -545,12 +587,16 @@ For agents that load skills explicitly (Claude Code's Skills system,
 Copilot agent customization, custom orchestrators), the npm tarball
 ships a tiered skill pack under `skills/craftdriver/`:
 
+`SKILL.md` is the entry point. The remaining files are linked from it and
+loaded only when needed, keeping the initial context small.
+
 | File                                                                                                  | Purpose                                                               |
 | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`SKILL.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/SKILL.md)           | Always-on, ≤ 500 tokens. Selector order, error-code-first, auto-wait. |
-| [`cheatsheet.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cheatsheet.md) | Command-by-command reference for writing tests.                       |
+| [`SKILL.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/SKILL.md)           | Entry point. Selector order, error-code-first, auto-wait, routing.    |
+| [`workflow.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/workflow.md)     | Explore → validate selectors → write test → debug from evidence.      |
+| [`cheatsheet.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cheatsheet.md) | Public TypeScript API reference for writing tests.                    |
 | [`patterns.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/patterns.md)     | Worked recipes (login, upload, network-wait, a11y, tracing, clock).   |
 | [`cli.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cli.md)               | Agent-facing CLI reference.                                           |
 
-Use `npx craftdriver init codex` to install these files safely. The other files
+Use `npx craftdriver init` to install these files safely. The other files
 are referenced from `SKILL.md` and loaded on demand.

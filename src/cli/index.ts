@@ -21,7 +21,13 @@ import { DaemonClient } from './client.js';
 import { runDaemon, toWireError } from './daemon.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
 import { MAX_STDIN_BYTES } from './bounds.js';
-import { LEGACY_FLAVORS, runInit, SUPPORTED_FLAVORS, type Flavor } from './init.js';
+import {
+  AGENT_TARGETS,
+  runInit,
+  type AgentTarget,
+  type SkillInstall,
+  type SkillReader,
+} from './init.js';
 import { runMcpServer } from './mcp/server.js';
 import { validateSessionName } from './sessionRegistry.js';
 import type { LaunchOptions } from '../lib/browser.js';
@@ -53,6 +59,13 @@ const VERSION = (() => {
  * on Windows and the two socket-free modes are named instead. Both genuinely
  * work there: `--ephemeral` owns one browser for the run, and `mcp` speaks
  * over stdio.
+ *
+ * Moving to a named pipe is not a drop-in: a pipe created with a NULL security
+ * descriptor grants read access to Everyone and to the anonymous account, so it
+ * would not carry the `0600` guarantee the Unix socket has, and the pipe name
+ * is a predictable machine-wide string another principal can create first.
+ * Windows persistence needs its own peer-authentication design and real
+ * `windows-latest` coverage before it can be claimed.
  */
 function daemonSupported(): boolean {
   return process.platform !== 'win32';
@@ -111,7 +124,7 @@ export async function main(argv: string[]): Promise<number> {
   applyHeadless(parsed.flags);
 
   // ------------------------------------------------------------------
-  // `init codex` — no browser, no daemon. Installs the project skill.
+  // `init` — no browser, no daemon. Installs the project skill.
   // ------------------------------------------------------------------
   if (parsed.cmd === 'init') return runInitCommand(parsed);
 
@@ -356,37 +369,74 @@ function successExitCode(parsed: ParsedCommand, result: unknown): number {
 // ---------------------------------------------------------------------------
 // init
 // ---------------------------------------------------------------------------
+/**
+ * How a user confirms the skill actually loaded, per agent.
+ *
+ * Only claim what each host documents. Claude Code documents that a skills
+ * directory which did not exist at session start is not watched, so the restart
+ * is real. Codex documents automatic detection with a restart as the fallback —
+ * its project-trust gate applies to the `.codex/` config layer, not to
+ * `.agents/skills`, so it does not belong here.
+ */
+const VERIFY_HINTS: Record<SkillReader, string> = {
+  'Claude Code': 'type /craftdriver  (restart Claude Code if .claude/ was just created)',
+  Copilot: 'VS Code: /skills; CLI: /skills list or /craftdriver',
+  Codex: 'type /skills or $craftdriver  (restart Codex if it does not appear)',
+};
+
 function runInitCommand(parsed: ParsedCommand): number {
-  const flavor = String(parsed.args.flavor ?? '').toLowerCase();
-  const allowed = new Set<string>([...SUPPORTED_FLAVORS, ...LEGACY_FLAVORS]);
-  if (!allowed.has(flavor)) {
+  const agent = String(parsed.args.agent ?? 'all').toLowerCase();
+  if (!(AGENT_TARGETS as readonly string[]).includes(agent)) {
     process.stderr.write(
-      'error: init requires the codex flavor\n' +
-      `code:  INVALID_ARGUMENT\n` +
-      `hint:  run: craftdriver init codex\n`,
+      `error: init: unknown agent ${JSON.stringify(agent)}\n` +
+        `code:  INVALID_ARGUMENT\n` +
+        `hint:  run: craftdriver init --agent ${AGENT_TARGETS.join('|')}\n`,
     );
     return 2;
   }
   const force = parsed.args.force === true;
   const dryRun = parsed.args['dry-run'] === true || parsed.args.dryRun === true;
   const mcp = parsed.args.mcp === true;
+  if (parsed.args.deprecatedFlavor === true) {
+    process.stderr.write(
+      'warning: `craftdriver init codex` is deprecated; ' +
+        'run `craftdriver init` to cover Claude Code, Codex, and Copilot, ' +
+        'or `craftdriver init --agent codex` for Codex alone\n',
+    );
+  }
   try {
-    const result = runInit({ flavor: flavor as Flavor, cwd: process.cwd(), force, dryRun, mcp });
+    const result = runInit({ agent: agent as AgentTarget, cwd: process.cwd(), force, dryRun, mcp });
     process.stdout.write(`project root: ${result.projectRoot}\n`);
-    if (result.status === 'installed') process.stdout.write(`installed ${result.destination}\n`);
-    else if (result.status === 'updated') process.stdout.write(`updated ${result.destination}\n`);
-    else if (result.status === 'unchanged') process.stdout.write(`unchanged ${result.destination}\n`);
-    else if (result.status === 'would-install') {
-      process.stdout.write(`[dry-run] would install ${result.destination}\n`);
-    } else {
-      process.stdout.write(`[dry-run] would update ${result.destination}\n`);
-    }
-    if (result.mcpSnippet) {
+    const verb: Record<SkillInstall['status'], string> = {
+      installed: 'installed',
+      updated: 'updated',
+      unchanged: 'unchanged',
+      'would-install': '[dry-run] would install',
+      'would-update': '[dry-run] would update',
+    };
+    const width = Math.max(...result.installs.map((i) => i.relativePath.length));
+    for (const install of result.installs) {
       process.stdout.write(
-        '\nAdd this project-pinned MCP configuration manually; no config file was read or changed:\n\n' +
-          result.mcpSnippet +
-          '\n',
+        `${verb[install.status]} ${install.relativePath.padEnd(width)}  (${install.readers.join(', ')})\n`,
       );
+    }
+
+    const readers = [...new Set(result.installs.flatMap((install) => install.readers))];
+    process.stdout.write('\nVerify the skill loaded:\n');
+    for (const reader of readers) {
+      const hint = VERIFY_HINTS[reader];
+      process.stdout.write(`  ${reader.padEnd(12)} ${hint}\n`);
+    }
+
+    if (result.mcp) {
+      process.stdout.write(
+        '\nMCP is optional. Add it manually if your host prefers structured tool calls;\n' +
+          'no host configuration was read or changed:\n',
+      );
+      for (const entry of result.mcp) {
+        process.stdout.write(`\n# ${entry.host} — ${entry.file}\n${entry.snippet}\n`);
+        if (entry.note) process.stdout.write(`# ${entry.note}\n`);
+      }
     }
     return 0;
   } catch (error) {

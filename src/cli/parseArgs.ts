@@ -129,15 +129,20 @@ NAMED SESSIONS
   --ephemeral, which is a single browser that exits with the command.
 
 INIT (safe project-local skill)
-  init codex [--dry-run] [--mcp]
-    installs .agents/skills/craftdriver without reading or changing
-    AGENTS.md, CLAUDE.md, other repository instructions, or Codex config
-    --mcp prints a project-pinned config snippet for manual installation
+  init [--agent claude|codex|copilot|all] [--dry-run] [--mcp]
+    installs the CraftDriver skill into the directories your agent reads:
+      .claude/skills/craftdriver   Claude Code, Copilot
+      .agents/skills/craftdriver   Codex, Copilot
+    default --agent all writes both, which covers all three platforms
+    --agent copilot writes .github/skills/craftdriver instead
+    never reads or changes AGENTS.md, CLAUDE.md, repository instructions,
+    or any host's MCP configuration
+    --mcp prints project-pinned MCP snippets for manual installation
 
 MCP SERVER (for hosted / sandboxed AI agents)
   mcp                                speak Model Context Protocol on stdio
     install snippet (Claude Code):
-      claude mcp add craftdriver -- npx --no-install craftdriver mcp
+      claude mcp add --scope project craftdriver -- npx --no-install craftdriver mcp
     install snippet (Cursor / Windsurf / Zed):
       { "mcpServers": { "craftdriver": {
           "command": "npx", "args": ["--no-install", "craftdriver", "mcp"] } } }
@@ -245,7 +250,12 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
   quit: { min: 0, max: 0, usage: 'quit' },
   daemon: { min: 0, max: 1, usage: 'daemon start|status|stop' },
   session: { min: 0, max: 2, usage: 'session list|close [name]' },
-  init: { min: 1, max: 1, usage: 'init codex', options: ['dry-run', 'mcp', 'force'] },
+  init: {
+    min: 0,
+    max: 1,
+    usage: 'init [--agent claude|codex|copilot|all]',
+    options: ['agent', 'dry-run', 'mcp', 'force'],
+  },
   mcp: { min: 0, max: 0, usage: 'mcp' },
 };
 
@@ -563,6 +573,15 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       opts[a.slice(2)] = value;
       i += 1;
     }
+    else if (a === '--agent') {
+      const value = takeValue(a, i);
+      if (typeof value !== 'string') return value;
+      if (!['claude', 'codex', 'copilot', 'all'].includes(value.toLowerCase())) {
+        return usageError(flags, `--agent: unknown agent ${JSON.stringify(value)}`);
+      }
+      opts.agent = value.toLowerCase();
+      i += 1;
+    }
     else if (a === '--since') {
       const value = takeNumber(a, i, { integer: true, min: 0 });
       if (typeof value !== 'number') return value;
@@ -702,8 +721,22 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     }
   }
 
-  if (canonical === 'init' && rest[0].toLowerCase() !== 'codex') {
-    return usageError(flags, `init: unknown target ${JSON.stringify(rest[0])}`, COMMAND_SYNTAX.init.usage);
+  // `init codex` is the pre-1.10 spelling of `init --agent codex`. It stays
+  // working so existing setup scripts don't break; the command warns.
+  if (canonical === 'init' && rest.length > 0) {
+    if (rest[0].toLowerCase() !== 'codex') {
+      return usageError(flags, `init: unknown target ${JSON.stringify(rest[0])}`, COMMAND_SYNTAX.init.usage);
+    }
+    // Two ways of naming the target in one command line. Even when they agree,
+    // silently letting one win is worse than saying they conflict — the losing
+    // spelling is what the caller believed they asked for.
+    if (opts.agent !== undefined) {
+      return usageError(
+        flags,
+        'init: `init codex` and `--agent` cannot be combined; use `--agent` alone',
+        COMMAND_SYNTAX.init.usage,
+      );
+    }
   }
 
   // Map surface command → dispatcher command + collect args.
@@ -942,9 +975,16 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     }
 
     case 'init': {
-      // craftdriver init codex [--dry-run] [--mcp]
-      const flavor = (rest[0] ?? '').toLowerCase();
-      return { cmd: 'init', args: { flavor, ...opts }, flags };
+      // craftdriver init [--agent claude|codex|copilot|all] [--dry-run] [--mcp]
+      const deprecatedFlavor = rest[0]?.toLowerCase() === 'codex';
+      return {
+        cmd: 'init',
+        args: {
+          ...(deprecatedFlavor ? { agent: 'codex', deprecatedFlavor: true } : {}),
+          ...opts,
+        },
+        flags,
+      };
     }
 
     case 'mcp':

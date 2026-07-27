@@ -14,22 +14,105 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const LEGACY_FLAVORS = [
-  'agents',
-  'copilot',
-  'claude',
-  'cursor',
-  'gemini',
-  'all',
-] as const;
-export const SUPPORTED_FLAVORS = ['codex'] as const;
+/** Agents whose project-skill directory this installer knows how to fill. */
+export const AGENT_TARGETS = ['claude', 'codex', 'copilot', 'all'] as const;
+export type AgentTarget = (typeof AGENT_TARGETS)[number];
+export const SKILL_READERS = ['Claude Code', 'Copilot', 'Codex'] as const;
+export type SkillReader = (typeof SKILL_READERS)[number];
 
-type LegacyFlavor = (typeof LEGACY_FLAVORS)[number];
-export type Flavor = (typeof SUPPORTED_FLAVORS)[number] | LegacyFlavor;
+/**
+ * Where each agent looks for a committed project skill, as of July 2026.
+ *
+ * - Claude Code reads `.claude/skills/` only.
+ * - Codex reads `.agents/skills/` only.
+ * - GitHub Copilot reads `.github/skills/`, `.claude/skills/`, and
+ *   `.agents/skills/` on surfaces that support agent skills.
+ *
+ * So two directories cover all three for the default install. A Copilot-only
+ * install uses Copilot's own `.github/skills/` location instead of creating a
+ * directory named for another host.
+ */
+const SKILL_ROOTS = {
+  claude: ['.claude', 'skills'],
+  agents: ['.agents', 'skills'],
+  github: ['.github', 'skills'],
+} as const;
 
-export const MCP_CONFIG_SNIPPET = `[mcp_servers.craftdriver]
+type SkillRoot = keyof typeof SKILL_ROOTS;
+
+/** Agents that discover a skill installed under each root. */
+const ROOT_READERS: Record<SkillRoot, readonly SkillReader[]> = {
+  claude: ['Claude Code', 'Copilot'],
+  agents: ['Codex', 'Copilot'],
+  github: ['Copilot'],
+};
+
+const TARGET_ROOTS: Record<AgentTarget, readonly SkillRoot[]> = {
+  claude: ['claude'],
+  copilot: ['github'],
+  codex: ['agents'],
+  all: ['claude', 'agents'],
+};
+
+/** Project-scoped MCP configuration, per host. Printed, never written. */
+export interface McpSnippet {
+  /** Host label for the printed heading. Names one surface, not a family. */
+  host: string;
+  /** Project-relative file the user pastes it into. */
+  file: string;
+  snippet: string;
+  /** Caveat printed under the snippet, when the host has sibling surfaces. */
+  note?: string;
+}
+
+type McpTarget = Exclude<SkillRoot, 'github'> | 'copilot';
+
+const MCP_SNIPPETS: Record<McpTarget, McpSnippet> = {
+  claude: {
+    host: 'Claude Code',
+    file: '.mcp.json',
+    snippet: `{
+  "mcpServers": {
+    "craftdriver": {
+      "command": "npx",
+      "args": ["--no-install", "craftdriver", "mcp"]
+    }
+  }
+}`,
+  },
+  // VS Code only. Copilot CLI reads `~/.copilot/mcp-config.json` and
+  // `.github/mcp.json`; the cloud agent is configured in repository settings.
+  // Rather than ship three half-checked snippets, name the surface this one is
+  // for and point at the others.
+  copilot: {
+    host: 'Copilot in VS Code',
+    file: '.vscode/mcp.json',
+    snippet: `{
+  "servers": {
+    "craftdriver": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--no-install", "craftdriver", "mcp"]
+    }
+  }
+}`,
+    note: 'Copilot CLI and the cloud agent use different files — see docs/mcp.md.',
+  },
+  agents: {
+    host: 'Codex',
+    file: '.codex/config.toml',
+    snippet: `[mcp_servers.craftdriver]
 command = "npx"
-args = ["--no-install", "craftdriver", "mcp"]`;
+args = ["--no-install", "craftdriver", "mcp"]`,
+  },
+};
+
+const TARGET_MCP: Record<AgentTarget, readonly McpTarget[]> = {
+  claude: ['claude'],
+  copilot: ['copilot'],
+  codex: ['agents'],
+  all: ['claude', 'copilot', 'agents'],
+};
 
 const MANIFEST_NAME = '.craftdriver-manifest.json';
 const MANIFEST_SCHEMA_VERSION = 1;
@@ -46,17 +129,28 @@ interface SourceFile {
   hash: string;
 }
 
+export interface SkillInstall {
+  /** Absolute path of the installed skill directory. */
+  destination: string;
+  /** Same path relative to the project root, for readable output. */
+  relativePath: string;
+  /** Agents that discover a skill at this path. */
+  readers: readonly SkillReader[];
+  status: 'installed' | 'updated' | 'unchanged' | 'would-install' | 'would-update';
+}
+
 export interface InitResult {
   projectRoot: string;
-  destination: string;
-  status: 'installed' | 'updated' | 'unchanged' | 'would-install' | 'would-update';
+  agent: AgentTarget;
+  installs: SkillInstall[];
   files: string[];
   dryRun: boolean;
-  mcpSnippet?: string;
+  mcp?: McpSnippet[];
 }
 
 export interface InitOptions {
-  flavor: Flavor;
+  /** Which agent to install for. Defaults to `all` — the two-directory set. */
+  agent?: AgentTarget;
   cwd: string;
   force?: boolean;
   dryRun?: boolean;
@@ -65,18 +159,15 @@ export interface InitOptions {
 
 /** Install the package-shipped project skill without inspecting user config. */
 export function runInit(options: InitOptions): InitResult {
-  if (isLegacyFlavor(options.flavor)) {
-    throw new Error(
-      `init ${options.flavor} no longer writes repository instruction files; ` +
-        'use `craftdriver init codex` to install the project-local skill',
-    );
-  }
   if (options.force) {
     throw new Error('--force is not supported because CraftDriver never overwrites user content');
   }
+  const agent = options.agent ?? 'all';
+  if (!(AGENT_TARGETS as readonly string[]).includes(agent)) {
+    throw new Error(`unknown agent ${JSON.stringify(agent)}; expected ${AGENT_TARGETS.join(', ')}`);
+  }
 
   const projectRoot = findProjectRoot(options.cwd);
-  const destination = join(projectRoot, '.agents', 'skills', 'craftdriver');
   const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
   const packageJson = readJsonFile(join(packageRoot, 'package.json'), 'CraftDriver package.json');
   const version = readVersion(packageJson);
@@ -86,30 +177,67 @@ export function runInit(options: InitOptions): InitResult {
     throw new Error(`CraftDriver skill source is missing SKILL.md at ${sourceRoot}`);
   }
 
-  assertSafeDestinationAncestors(projectRoot);
   const manifest = createManifest(version, sourceFiles);
-  const state = inspectDestination(destination, manifest);
   const dryRun = options.dryRun === true;
-  const files = sourceFiles.map((file) => file.relativePath);
-  const common = {
+  const roots = rootsForInstall(agent, projectRoot);
+
+  // Inspect every destination before writing any of them, so a conflict in the
+  // second directory refuses the whole command instead of leaving one agent
+  // configured and the other not.
+  const planned = roots.map((root) => {
+    const segments = SKILL_ROOTS[root];
+    assertSafeDestinationAncestors(projectRoot, segments);
+    const destination = join(projectRoot, ...segments, 'craftdriver');
+    return {
+      root,
+      destination,
+      relativePath: [...segments, 'craftdriver'].join('/'),
+      readers: ROOT_READERS[root],
+      state: inspectDestination(destination, manifest),
+    };
+  });
+
+  const installs = planned.map((entry): SkillInstall => {
+    const common = {
+      destination: entry.destination,
+      relativePath: entry.relativePath,
+      readers: entry.readers,
+    };
+    if (entry.state === 'unchanged') return { ...common, status: 'unchanged' };
+    if (dryRun) {
+      return { ...common, status: entry.state === 'missing' ? 'would-install' : 'would-update' };
+    }
+    installAtomically(entry.destination, sourceFiles, manifest, entry.state === 'owned');
+    return { ...common, status: entry.state === 'missing' ? 'installed' : 'updated' };
+  });
+
+  return {
     projectRoot,
-    destination,
-    files,
+    agent,
+    installs,
+    files: sourceFiles.map((file) => file.relativePath),
     dryRun,
-    ...(options.mcp ? { mcpSnippet: MCP_CONFIG_SNIPPET } : {}),
+    ...(options.mcp ? { mcp: TARGET_MCP[agent].map((host) => MCP_SNIPPETS[host]) } : {}),
   };
-
-  if (state === 'unchanged') return { ...common, status: 'unchanged' };
-  if (dryRun) {
-    return { ...common, status: state === 'missing' ? 'would-install' : 'would-update' };
-  }
-
-  installAtomically(destination, sourceFiles, manifest, state === 'owned');
-  return { ...common, status: state === 'missing' ? 'installed' : 'updated' };
 }
 
-function isLegacyFlavor(flavor: Flavor): flavor is LegacyFlavor {
-  return (LEGACY_FLAVORS as readonly string[]).includes(flavor);
+/**
+ * The default covering set is two directories, but a previous Copilot-only
+ * install may have created a third copy in `.github/skills`, which Copilot CLI
+ * checks first. Reconcile any known destination that already exists so a stale
+ * duplicate cannot shadow the copies this run updates. Explicit single-agent
+ * targets remain narrow and touch only their documented destination.
+ */
+function rootsForInstall(agent: AgentTarget, projectRoot: string): SkillRoot[] {
+  const roots = [...TARGET_ROOTS[agent]];
+  if (agent !== 'all') return roots;
+
+  for (const root of Object.keys(SKILL_ROOTS) as SkillRoot[]) {
+    if (roots.includes(root)) continue;
+    const destination = join(projectRoot, ...SKILL_ROOTS[root], 'craftdriver');
+    if (existsSync(destination)) roots.push(root);
+  }
+  return roots;
 }
 
 function findProjectRoot(cwd: string): string {
@@ -131,7 +259,7 @@ function findProjectRoot(cwd: string): string {
     }
     const parent = dirname(current);
     if (parent === current) {
-      throw new Error('no project root found; run `craftdriver init codex` below a package.json');
+      throw new Error('no project root found; run `craftdriver init` below a package.json');
     }
     current = parent;
   }
@@ -200,9 +328,12 @@ function createManifest(version: string, sourceFiles: SourceFile[]): SkillManife
   };
 }
 
-function assertSafeDestinationAncestors(projectRoot: string): void {
+function assertSafeDestinationAncestors(
+  projectRoot: string,
+  segments: readonly string[],
+): void {
   let current = projectRoot;
-  for (const segment of ['.agents', 'skills']) {
+  for (const segment of segments) {
     current = join(current, segment);
     if (!existsSync(current)) continue;
     const stat = lstatSync(current);
