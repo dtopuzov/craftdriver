@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/dtopuzov/craftdriver/compare/v1.10.0...v1.11.0) (2026-08-01)
+
+
+### Features
+
+* **ai:** ship snapshot-driven agent workflow for skills, CLI, and MCP ([0340ed1](https://github.com/dtopuzov/craftdriver/commit/0340ed1a82a7470d820050e1f110e682a35901ee)), closes [#56](https://github.com/dtopuzov/craftdriver/issues/56)
+
 # [1.10.0](https://github.com/dtopuzov/craftdriver/compare/v1.9.1...v1.10.0) (2026-07-27)
 
 
