@@ -12,7 +12,12 @@
  */
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { Browser, INTERNAL_FILL_AND_SUBMIT, type LaunchOptions } from '../lib/browser.js';
+import {
+  Browser,
+  INTERNAL_EVALUATE_CLASSIC,
+  INTERNAL_FILL_AND_SUBMIT,
+  type LaunchOptions,
+} from '../lib/browser.js';
 import type { By } from '../lib/by.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { parseSelector, describeSelector } from './selector.js';
@@ -669,9 +674,17 @@ export async function dispatch(
         ctx.viewport = { ...viewport };
       }
       await b.navigateTo(url);
-      return b._evaluateClassic<{ url: string; title: string }>(
-        'return { url: location.href, title: document.title };'
-      );
+      try {
+        return await b[INTERNAL_EVALUATE_CLASSIC]<{ url: string; title: string }>(
+          'return { url: location.href, title: document.title };'
+        );
+      } catch {
+        // A meta refresh or immediate redirect can replace the Classic script
+        // realm after navigateTo() returns. Preserve the one-probe fast path,
+        // but recover through Page's context-aware URL/title reads.
+        const page = await b.activePage();
+        return { url: await page.url(), title: await page.title() };
+      }
     }
 
     case 'back': {

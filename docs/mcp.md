@@ -264,6 +264,14 @@ a sibling submit ref. Do not apply this to textareas, multi-step wizards, or
 flows requiring a specific secondary action. When a separate sibling action is
 required, use the fresh ref from the fill's post-action delta.
 
+Observed Enter submissions use a bounded navigation fence: they detect
+navigation that starts within about 140 ms after the input command returns and
+wait at most 500 ms for its load. The bound is intentionally independent of a
+tool timeout, so same-page validation remains fast. If application code waits
+longer before navigating, wait for a destination-specific selector. Clicks
+rely on WebDriver's own navigation wait and do not add this extra fence, so an
+asynchronously scheduled post-click navigation needs the same explicit wait.
+
 A bare token such as `e7` is also accepted after this session has issued that
 ref. Unknown bare ref-shaped tokens fail immediately with `BARE_REF`; use
 `css=e7` when selecting a literal `<e7>` element.

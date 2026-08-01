@@ -550,6 +550,7 @@ interface BidiContextInfo {
  */
 export const INTERNAL_RUN_WITH_NAVIGATION_FENCE = Symbol('runWithNavigationFence');
 export const INTERNAL_FILL_AND_SUBMIT = Symbol('fillAndSubmit');
+export const INTERNAL_EVALUATE_CLASSIC = Symbol('evaluateClassic');
 
 // Includes a small pre-action identity probe; measured no-navigation fence
 // cost remains ~150 ms in a persistent session.
@@ -2040,7 +2041,10 @@ export class Browser {
    * callers should use {@link evaluate}, which preserves the documented BiDi
    * serialization and exception semantics.
    */
-  async _evaluateClassic<T = unknown>(script: string, ...args: unknown[]): Promise<T> {
+  async [INTERNAL_EVALUATE_CLASSIC]<T = unknown>(
+    script: string,
+    ...args: unknown[]
+  ): Promise<T> {
     return this.driver.executeScript<T>(script, args);
   }
 

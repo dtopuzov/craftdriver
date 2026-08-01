@@ -32,7 +32,7 @@
  * inside open shadow trees and cannot be confused by authored or cloned
  * marker attributes.
  */
-import type { Browser } from '../lib/browser.js';
+import { INTERNAL_EVALUATE_CLASSIC, type Browser } from '../lib/browser.js';
 import { PAGE_SEMANTICS_JS } from './pageSemantics.js';
 
 const MAX_NODES = 80;
@@ -94,7 +94,7 @@ export async function takeSnapshot(browser: Browser, minRef = 0): Promise<Snapsh
     // The snapshot is a synchronous, JSON-safe DOM probe. Running it through
     // Classic avoids paying for a fresh BiDi realm after every navigation
     // (measured in seconds on Chrome) without changing public evaluate().
-    const raw = await browser._evaluateClassic(jsSnapshot(minRef));
+    const raw = await browser[INTERNAL_EVALUATE_CLASSIC](jsSnapshot(minRef));
     if (!raw || typeof raw !== 'object') return null;
     const shaped = raw as {
       url?: unknown;
@@ -149,7 +149,7 @@ export async function probeRef(
   if (!/^e\d+$/.test(ref)) return { status: 'unknown-ref', documentId: null };
   try {
     const js = jsProbeRef(ref, expectedDocumentId);
-    const raw = await browser._evaluateClassic(js);
+    const raw = await browser[INTERNAL_EVALUATE_CLASSIC](js);
     if (!raw || typeof raw !== 'object') return { status: 'no-registry', documentId: null };
     const shaped = raw as { status?: unknown; documentId?: unknown; count?: unknown };
     return {

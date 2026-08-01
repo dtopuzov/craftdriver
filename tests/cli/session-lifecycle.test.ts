@@ -10,12 +10,12 @@
  * These drive the dispatcher against a stub browser: the contract is about
  * session bookkeeping, not about anything a real browser does.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createBrowserHandle, dispatch, resetBrowserOwnedState } from '../../src/cli/dispatcher';
 import type { DispatchContext } from '../../src/cli/dispatcher';
 import { SnapshotTracker } from '../../src/cli/snapshot';
 import { SessionJournal } from '../../src/cli/journal';
-import type { Browser } from '../../src/lib/browser';
+import { INTERNAL_EVALUATE_CLASSIC, type Browser } from '../../src/lib/browser';
 
 type LogListener = (message: Record<string, unknown>) => void;
 
@@ -91,6 +91,32 @@ describe('browser handle recovery', () => {
     const handle = createBrowserHandle(async () => { throw new Error('nope'); });
     await expect(handle.get()).rejects.toThrow();
     expect(handle.peek()).toBeNull();
+  });
+});
+
+describe('go result recovery', () => {
+  it('falls back to context-aware page reads when the Classic probe loses its realm', async () => {
+    const page = {
+      url: vi.fn().mockResolvedValue('https://example.test/destination'),
+      title: vi.fn().mockResolvedValue('Destination'),
+    };
+    const browser = {
+      navigateTo: vi.fn().mockResolvedValue(undefined),
+      [INTERNAL_EVALUATE_CLASSIC]: vi
+        .fn()
+        .mockRejectedValue(new Error('execution context was destroyed')),
+      activePage: vi.fn().mockResolvedValue(page),
+    } as unknown as Browser;
+    const ctx = context({ handle: createBrowserHandle(async () => browser) });
+
+    await expect(dispatch(ctx, 'go', { url: 'https://example.test/start' })).resolves.toEqual({
+      url: 'https://example.test/destination',
+      title: 'Destination',
+    });
+    expect(browser.navigateTo).toHaveBeenCalledWith('https://example.test/start');
+    expect(browser[INTERNAL_EVALUATE_CLASSIC]).toHaveBeenCalledOnce();
+    expect(page.url).toHaveBeenCalledOnce();
+    expect(page.title).toHaveBeenCalledOnce();
   });
 });
 

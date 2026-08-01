@@ -154,6 +154,17 @@ resulting validation message or state determines the next step. Do not use this
 pattern for textareas, multi-step wizards, or flows that require a specific
 secondary action.
 
+Observed `fill --submit` and `press Enter` actions use a bounded navigation
+fence: they detect navigation that starts within about 140 ms after the input
+command returns, then wait at most 500 ms for its load. These bounds are
+independent of `--timeout`, so a same-page validation does not add seconds to
+every Enter. Navigation started later by application code can therefore land
+after the observation; wait for a destination-specific selector when a flow
+performs asynchronous validation before navigating. Ordinary `click` relies on
+WebDriver's own navigation wait and does not add this extra fence, so the same
+explicit wait applies to navigation scheduled only after the click command has
+already completed.
+
 After a predictable navigation, `--observe=page` plus targeted `text`, `attr`,
 or `value` reads is usually the smallest evidence path. Use `--observe=delta`
 when the next action depends on discovering what changed.
