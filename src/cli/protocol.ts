@@ -38,6 +38,7 @@ export interface ErrResponse {
     message: string;
     hint?: string;
     detail?: Record<string, unknown>;
+    recoverySnapshot?: string;
   };
 }
 

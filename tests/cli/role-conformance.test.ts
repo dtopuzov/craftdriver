@@ -63,6 +63,8 @@ const FIXTURE = `<!doctype html>
 <footer id="r-contentinfo" aria-label="Footer Name"></footer>
 <section><header id="r-nested-header" aria-label="Nested Header">h</header></section>
 <input id="r-hidden" type="text" aria-label="Hidden Name" hidden />
+<main id="r-unnamed-main"><span>Visible main text</span><span hidden>Hidden main text</span></main>
+<div aria-hidden="true"><button id="r-aria-hidden">ARIA Hidden Button</button></div>
 `;
 
 /** `eN: role "name" hint` -> [role, name] for lines that carry a name. */
@@ -162,5 +164,14 @@ describe('role/name conformance across snapshot, locators and By.role', () => {
   it('omits hidden elements from the snapshot', async () => {
     const snap = await takeSnapshot(browser, 0);
     expect(snap.lines.some((l) => /Hidden Name/.test(l))).toBe(false);
+    expect(snap.lines.some((l) => /ARIA Hidden Button/.test(l))).toBe(false);
+  });
+
+  it('does not name structural containers from descendant text', async () => {
+    const snap = await takeSnapshot(browser, 0);
+    const main = snap.lines.find((l) => l.includes('#r-unnamed-main'));
+    expect(main).toMatch(/main \(container\) #r-unnamed-main$/);
+    expect(main).not.toContain('Visible main text');
+    expect(main).not.toContain('Hidden main text');
   });
 });

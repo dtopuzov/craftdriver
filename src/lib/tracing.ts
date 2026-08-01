@@ -18,6 +18,8 @@ import type { Browser } from './browser.js';
 import type { BiDiConnection } from './bidi/connection.js';
 import { writeVibiumTraceZip } from './vibiumTrace.js';
 
+const TRACE_EVENT_DRAIN_MS = 300;
+
 /** Screenshot mode for tracing. */
 export type TraceScreenshotMode = boolean | 'auto' | 'off';
 
@@ -55,10 +57,31 @@ export type TraceEvent =
   | { t: number; type: 'console'; level: string; text: string }
   | { t: number; type: 'error'; text: string }
   | { t: number; type: 'request'; url: string; method: string; requestId?: string }
-  | { t: number; type: 'response'; url: string; status: number; mimeType?: string; fromCache?: true; requestId?: string }
+  | {
+      t: number;
+      type: 'response';
+      url: string;
+      status: number;
+      mimeType?: string;
+      fromCache?: true;
+      requestId?: string;
+    }
   | { t: number; type: 'navigation'; url: string; context?: string }
-  | { t: number; type: 'screenshot'; file: string; actionIndex?: number; reason: 'action' | 'error' | 'final' }
-  | { t: number; type: 'action'; actionIndex?: number; name: string; args?: unknown[]; selector?: string }
+  | {
+      t: number;
+      type: 'screenshot';
+      file: string;
+      actionIndex?: number;
+      reason: 'action' | 'error' | 'final';
+    }
+  | {
+      t: number;
+      type: 'action';
+      actionIndex?: number;
+      name: string;
+      args?: unknown[];
+      selector?: string;
+    }
   | { t: number; type: 'action-end'; actionIndex: number; error?: string };
 
 export class Tracer {
@@ -83,7 +106,7 @@ export class Tracer {
     browser: Browser,
     conn: BiDiConnection,
     private browserName: string,
-    private isInternalContext: (context: string | null | undefined) => boolean = () => false,
+    private isInternalContext: (context: string | null | undefined) => boolean = () => false
   ) {
     this.browser = browser;
     this.conn = conn;
@@ -137,63 +160,73 @@ export class Tracer {
     if (consoleOn) wantedSubs.push('log.entryAdded');
     if (networkOn) wantedSubs.push('network.beforeRequestSent', 'network.responseCompleted');
     // BiDi accepts duplicate subscribes (LogMonitor / NetworkInterceptor may already be subscribed).
-    await this.conn.subscribe(wantedSubs).catch(() => { /* already subscribed */ });
+    await this.conn.subscribe(wantedSubs).catch(() => {
+      /* already subscribed */
+    });
 
     if (consoleOn) {
-      this.unsubs.push(this.conn.on('log.entryAdded', (params) => {
-        const p = params as Record<string, unknown>;
-        const source = (p.source ?? {}) as Record<string, unknown>;
-        if (this.isInternalContext(source.context as string | undefined)) return;
-        const text = String(p.text ?? '');
-        if (p.type === 'console') {
-          this.push({ type: 'console', level: String(p.level ?? 'info'), text });
-        } else {
-          this.push({ type: 'error', text });
-          if (this.screenshotMode === 'auto') this.scheduleScreenshot('error');
-        }
-      }));
+      this.unsubs.push(
+        this.conn.on('log.entryAdded', (params) => {
+          const p = params as Record<string, unknown>;
+          const source = (p.source ?? {}) as Record<string, unknown>;
+          if (this.isInternalContext(source.context as string | undefined)) return;
+          const text = String(p.text ?? '');
+          if (p.type === 'console') {
+            this.push({ type: 'console', level: String(p.level ?? 'info'), text });
+          } else {
+            this.push({ type: 'error', text });
+            if (this.screenshotMode === 'auto') this.scheduleScreenshot('error');
+          }
+        })
+      );
     }
 
     if (networkOn) {
-      this.unsubs.push(this.conn.on('network.beforeRequestSent', (params) => {
-        const p = params as Record<string, unknown>;
-        if (this.isInternalContext(p.context as string | undefined)) return;
-        const req = (p.request ?? {}) as Record<string, unknown>;
-        this.push({
-          type: 'request',
-          url: String(req.url ?? ''),
-          method: String(req.method ?? ''),
-          requestId: req.request as string | undefined,
-        });
-      }));
+      this.unsubs.push(
+        this.conn.on('network.beforeRequestSent', (params) => {
+          const p = params as Record<string, unknown>;
+          if (this.isInternalContext(p.context as string | undefined)) return;
+          const req = (p.request ?? {}) as Record<string, unknown>;
+          this.push({
+            type: 'request',
+            url: String(req.url ?? ''),
+            method: String(req.method ?? ''),
+            requestId: req.request as string | undefined,
+          });
+        })
+      );
 
-      this.unsubs.push(this.conn.on('network.responseCompleted', (params) => {
-        const p = params as Record<string, unknown>;
-        if (this.isInternalContext(p.context as string | undefined)) return;
-        const req = (p.request ?? {}) as Record<string, unknown>;
-        const res = (p.response ?? {}) as Record<string, unknown>;
-        const ev: Record<string, unknown> = {
-          type: 'response',
-          url: String(req.url ?? res.url ?? ''),
-          status: Number(res.status ?? 0),
-          requestId: req.request as string | undefined,
-        };
-        const mime = res.mimeType;
-        if (typeof mime === 'string' && mime.length > 0) ev.mimeType = mime;
-        if (res.fromCache === true) ev.fromCache = true;
-        this.push(ev as { type: TraceEvent['type'] } & Record<string, unknown>);
-      }));
+      this.unsubs.push(
+        this.conn.on('network.responseCompleted', (params) => {
+          const p = params as Record<string, unknown>;
+          if (this.isInternalContext(p.context as string | undefined)) return;
+          const req = (p.request ?? {}) as Record<string, unknown>;
+          const res = (p.response ?? {}) as Record<string, unknown>;
+          const ev: Record<string, unknown> = {
+            type: 'response',
+            url: String(req.url ?? res.url ?? ''),
+            status: Number(res.status ?? 0),
+            requestId: req.request as string | undefined,
+          };
+          const mime = res.mimeType;
+          if (typeof mime === 'string' && mime.length > 0) ev.mimeType = mime;
+          if (res.fromCache === true) ev.fromCache = true;
+          this.push(ev as { type: TraceEvent['type'] } & Record<string, unknown>);
+        })
+      );
     }
 
-    this.unsubs.push(this.conn.on('browsingContext.navigationStarted', (params) => {
-      const p = params as Record<string, unknown>;
-      if (this.isInternalContext(p.context as string | undefined)) return;
-      this.push({
-        type: 'navigation',
-        url: String(p.url ?? ''),
-        context: p.context as string | undefined,
-      });
-    }));
+    this.unsubs.push(
+      this.conn.on('browsingContext.navigationStarted', (params) => {
+        const p = params as Record<string, unknown>;
+        if (this.isInternalContext(p.context as string | undefined)) return;
+        this.push({
+          type: 'navigation',
+          url: String(p.url ?? ''),
+          context: p.context as string | undefined,
+        });
+      })
+    );
   }
 
   /**
@@ -259,7 +292,9 @@ export class Tracer {
         if (actionIndex !== undefined) ev.actionIndex = actionIndex;
         this.writeLine(ev);
       },
-      () => { /* browser may be navigating or quitting; skip silently */ }
+      () => {
+        /* browser may be navigating or quitting; skip silently */
+      }
     );
     this.pendingCaptures.push(p);
   }
@@ -279,13 +314,20 @@ export class Tracer {
     // create a magic `final.png` file themselves.
     if (this.screenshotMode === 'auto') this.scheduleScreenshot('final');
 
-    for (const un of this.unsubs) un();
-    this.unsubs = [];
+    // Classic navigation can return before the remote has generated its BiDi
+    // navigation/error events. The status round-trip flushes events already on
+    // the socket; the bounded drain covers events generated just afterward.
+    // Keep listeners installed throughout so stop() really drains the trace.
+    await this.conn.send('session.status').catch(() => {});
+    await new Promise<void>((resolve) => setTimeout(resolve, TRACE_EVENT_DRAIN_MS));
 
     if (this.pendingCaptures.length > 0) {
       await Promise.allSettled(this.pendingCaptures);
       this.pendingCaptures = [];
     }
+
+    for (const un of this.unsubs) un();
+    this.unsubs = [];
 
     this.writeLine({
       t: Date.now() - this.startedAtMs,
@@ -294,7 +336,11 @@ export class Tracer {
     });
 
     if (this.fd !== null) {
-      try { closeSync(this.fd); } catch { /* ignore */ }
+      try {
+        closeSync(this.fd);
+      } catch {
+        /* ignore */
+      }
       this.fd = null;
     }
     this.running = false;
@@ -314,7 +360,11 @@ export class Tracer {
     for (const un of this.unsubs) un();
     this.unsubs = [];
     if (this.fd !== null) {
-      try { closeSync(this.fd); } catch { /* ignore */ }
+      try {
+        closeSync(this.fd);
+      } catch {
+        /* ignore */
+      }
       this.fd = null;
     }
     this.running = false;
@@ -335,7 +385,6 @@ export class Tracer {
       // throw from inside a hot action method.
     }
   }
-
 }
 
 function normalizeScreenshotMode(v: TraceScreenshotMode | undefined): 'auto' | 'off' {

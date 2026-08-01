@@ -27,7 +27,7 @@ import type { AgentSessionRunner } from '../../src/cli/agentSession.js';
 function fakeSession(): AgentSessionRunner & { name?: string } {
   return {
     run: vi.fn(async (command) => ({ cmd: command.cmd, args: command.args ?? {} })),
-    runDetailed: vi.fn(async (command) => ({ value: { cmd: command.cmd } })),
+    runDetailed: vi.fn(async (command) => ({ value: { cmd: command.cmd, args: command.args ?? {} } })),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -157,10 +157,10 @@ describe('daemon session routing', () => {
     });
 
     expect(created).toEqual([DEFAULT_SESSION]);
-    const run = sessions.get(DEFAULT_SESSION)!.run as ReturnType<typeof vi.fn>;
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[0][0]).toEqual({ cmd: 'status', args: {} });
-    expect(run.mock.calls[1][0]).toEqual({ cmd: 'go', args: { url: 'https://example.test' } });
+    const runDetailed = sessions.get(DEFAULT_SESSION)!.runDetailed as ReturnType<typeof vi.fn>;
+    expect(runDetailed).toHaveBeenCalledTimes(2);
+    expect(runDetailed.mock.calls[0][0]).toEqual({ cmd: 'status', args: {} });
+    expect(runDetailed.mock.calls[1][0]).toEqual({ cmd: 'go', args: { url: 'https://example.test' } });
   });
 
   it('routes named requests to their own session and never to another', async () => {
@@ -169,16 +169,100 @@ describe('daemon session routing', () => {
     await handleDaemonRequest(registry, { id: 1, cmd: 'go', session: 'checkout', args: { url: 'https://a.test' } });
     await handleDaemonRequest(registry, { id: 2, cmd: 'go', session: 'admin', args: { url: 'https://b.test' } });
 
-    expect(sessions.get('checkout')!.run).toHaveBeenCalledTimes(1);
-    expect(sessions.get('checkout')!.run).toHaveBeenCalledWith({
+    expect(sessions.get('checkout')!.runDetailed).toHaveBeenCalledTimes(1);
+    expect(sessions.get('checkout')!.runDetailed).toHaveBeenCalledWith({
       cmd: 'go',
       args: { url: 'https://a.test' },
     });
-    expect(sessions.get('admin')!.run).toHaveBeenCalledTimes(1);
-    expect(sessions.get('admin')!.run).toHaveBeenCalledWith({
+    expect(sessions.get('admin')!.runDetailed).toHaveBeenCalledTimes(1);
+    expect(sessions.get('admin')!.runDetailed).toHaveBeenCalledWith({
       cmd: 'go',
       args: { url: 'https://b.test' },
     });
+    expect(sessions.has(DEFAULT_SESSION)).toBe(false);
+  });
+
+  it('returns a requested atomic page observation without changing normal results', async () => {
+    const runDetailed = vi.fn().mockResolvedValue({
+      value: { ok: true, selector: 'ref=e7' },
+      delta: 'page: Done — https://example.test/done',
+      page: {
+        url: 'https://example.test/done',
+        title: 'Done',
+        documentId: 'd2',
+        revision: 4,
+        documentChange: 'changed',
+      },
+    });
+    const registry = createSessionRegistry({
+      create: () => ({ run: vi.fn(), runDetailed, close: vi.fn().mockResolvedValue(undefined) }),
+    });
+
+    await expect(handleDaemonRequest(registry, {
+      id: 1,
+      cmd: 'click',
+      args: { selector: 'ref=e7', observe: 'page' },
+    })).resolves.toEqual({
+      id: 1,
+      ok: true,
+      result: {
+        ok: true,
+        selector: 'ref=e7',
+        page: {
+          url: 'https://example.test/done',
+          title: 'Done',
+          documentId: 'd2',
+          revision: 4,
+          documentChange: 'changed',
+        },
+      },
+    });
+    expect(runDetailed).toHaveBeenCalledWith({
+      cmd: 'click', args: { selector: 'ref=e7' }, observe: 'page',
+    });
+
+    await expect(handleDaemonRequest(registry, {
+      id: 2,
+      cmd: 'click',
+      args: { selector: 'ref=e7', observe: 'delta' },
+    })).resolves.toMatchObject({
+      id: 2,
+      ok: true,
+      result: { ok: true, selector: 'ref=e7', delta: 'page: Done — https://example.test/done' },
+    });
+  });
+
+  it('returns an observation warning when page state is unavailable', async () => {
+    const runDetailed = vi.fn().mockResolvedValue({
+      value: { ok: true, selector: '#show-alert' },
+      delta: 'dialog open: Hello from alert',
+    });
+    const registry = createSessionRegistry({
+      create: () => ({ run: vi.fn(), runDetailed, close: vi.fn().mockResolvedValue(undefined) }),
+    });
+
+    await expect(handleDaemonRequest(registry, {
+      id: 1,
+      cmd: 'click',
+      args: { selector: '#show-alert', observe: 'page' },
+    })).resolves.toMatchObject({
+      id: 1,
+      ok: true,
+      result: {
+        ok: true,
+        selector: '#show-alert',
+        warning: 'dialog open: Hello from alert',
+      },
+    });
+  });
+
+  it('rejects an invalid daemon observation before dispatching it', async () => {
+    const { registry, sessions } = registryWithFakes();
+    await expect(handleDaemonRequest(registry, {
+      id: 1,
+      cmd: 'click',
+      args: { selector: '#save', observe: 'all' },
+    })).resolves.toMatchObject({ id: 1, ok: false, error: { code: ErrorCode.INVALID_ARGUMENT } });
     expect(sessions.has(DEFAULT_SESSION)).toBe(false);
   });
 
@@ -202,7 +286,10 @@ describe('daemon session routing', () => {
           if (name === 'slow') await slowPromise;
           return { cmd: command.cmd, session: name };
         }),
-        runDetailed: vi.fn(async (command) => ({ value: { cmd: command.cmd } })),
+        runDetailed: vi.fn(async (command) => {
+          if (name === 'slow') await slowPromise;
+          return { value: { cmd: command.cmd, session: name } };
+        }),
         close: vi.fn().mockResolvedValue(undefined),
       }),
     });
@@ -244,9 +331,9 @@ describe('daemon session routing', () => {
     const runs: Array<ReturnType<typeof vi.fn>> = [];
     const registry = createSessionRegistry({
       create: () => {
-        const run = vi.fn().mockRejectedValue(new Error('dispatch failed'));
-        runs.push(run);
-        return { run, runDetailed: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
+        const runDetailed = vi.fn().mockRejectedValue(new Error('dispatch failed'));
+        runs.push(runDetailed);
+        return { run: vi.fn(), runDetailed, close: vi.fn().mockResolvedValue(undefined) };
       },
     });
     const onStop = vi.fn();

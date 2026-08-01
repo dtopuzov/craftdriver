@@ -1,92 +1,82 @@
 ---
 name: craftdriver
-description: Explore live web applications with the CraftDriver CLI, validate durable selectors, and write, run, and debug CraftDriver tests. Use when a coding agent needs to inspect a page, drive browser flows, choose locators, author browser automation, or diagnose a failing CraftDriver test.
+description: Explore a live web application or write a durable CraftDriver test. Use for browser actions, page inspection, selector validation, and CraftDriver test debugging.
 ---
 
-# CraftDriver browser workflow
+# CraftDriver
 
-Use CraftDriver's CLI to inspect and exercise the running application, then use
-the public TypeScript API to write and run durable tests. Chrome is the default
-agent workflow.
+For live page exploration, this entry is complete. On a syntax error, use the
+closest example below; load [cli.md](cli.md) only when the needed command is not
+shown. Do not dump global `--help` into the conversation.
 
-## Core loop
+## Fast live-browser loop
 
-```text
-start app → navigate → snapshot → inspect → act → validate selector
-          → write test → run focused test → debug from fresh evidence
-```
-
-Actions and `locator.expect().to…()` auto-wait. Do not add sleeps or hand-written
-polling loops.
-
-## Selector order
-
-There is no universal best selector. Prefer the one that is at once the most
-**stable** and the most **meaningful** — a semantic locator reads like intent
-and doubles as an accessibility check, but only while the value it matches is
-stable. From live-page evidence:
-
-```text
-1. By.role({ name }) / By.labelText / By.text   — when the name is a STABLE label
-2. name is dynamic or the app is translated     → drop the name; anchor on a
-   stable id/attribute (By.testId only if the app already has one)
-3. By.role (no name) / By.labelText              — stable even as values change
-4. stable By.css (real id / semantic class)
-5. By.text                                       — mostly for assertions
-6. By.xpath                                      — last resort
-```
-
-**Never hardcode a localized or dynamic accessible name.** `By.role('button',
-{ name: 'Count is 0' })` breaks on the next click; `{ name: 'Save' }` breaks when
-the page renders in another language. `name` is a string, not a RegExp — for
-fuzzy matching use `{ exact: false }`; for dynamic/localized text use a stable id
-or test id. `data-testid` is an escape hatch, not a default: use it when the app
-already ships test ids, not ahead of a stable semantic locator.
-
-Confirm a selector against the live page with `craftdriver exists` or
-`craftdriver find` before putting it in a test.
-
-## Snapshot refs are exploration-only
-
-CLI snapshots show `ref=eN`. A ref binds to one element for as long as that
-element lives, and is never reassigned to another one: if the element is removed
-or duplicated, or the page navigates or reloads, the command fails with
-`STALE_REF`. Take a fresh snapshot when that happens — CraftDriver will not
-guess a replacement.
-
-A ref still means nothing outside the current session, so never copy one into
-test source. Convert the element into a durable locator and let CraftDriver
-check it against the live page:
+Launch, navigate, and receive the initial bounded semantic snapshot atomically:
 
 ```bash
-npx craftdriver locators ref=e7
+npx craftdriver go http://127.0.0.1:3000 --browser chrome --headless --observe=delta
 ```
 
-Use the candidate reported `best` (the first `unique` one, ordered by the
-stability rule above). The ranker demotes a role/name whose accessible name
-looks dynamic below a stable anchor and adds a `note` — heed it: if you also
-watched the name change while exploring, treat it as dynamic and pick the stable
-candidate. If nothing resolves uniquely, add a `data-testid` to the application
-instead of committing a positional selector.
+`go` auto-starts the daemon; do not start it separately. Use the default session
+for one flow. Add the same `--session NAME` to every command only when concurrent
+flows need isolation. Agent sessions use a 1280x800 desktop viewport; override a
+responsive-layout task with `go URL --viewport WIDTHxHEIGHT`.
 
-## Test rules
+Act with the returned `ref=eN` targets. A bare snapshot token such as `e7` is
+also accepted when that live ref was issued by this session; use `css=e7` only
+when you literally mean the CSS type selector. Refs retain element identity
+while the element lives and fail `STALE_REF` after navigation, reload, removal,
+or ambiguity; they never move to a different element.
 
-1. Inspect the repository's existing tests and package scripts before choosing
-   a test location or command.
-2. Import only from `craftdriver`, never from `craftdriver/src/...`.
-3. Use public locators and `locator.expect()` / `browser.expect(selector)`
-   assertions. There is no top-level `expect` export.
-4. Read failures by stable `CraftdriverError.code`, then gather a fresh
-   snapshot and focused page evidence.
-5. Make ordinary reviewable source changes. Never hide a failure with runtime
-   locator repair.
-6. Always close the browser in `finally` or the repository's existing fixture.
+`search`, `form`, `navigation`, and `main` lines marked `(container)` group the
+indented controls below them; do not fill or click the container. If the desired
+field is absent, use its same-purpose link/button to reveal it, then observe the
+delta. Use `fill TARGET VALUE` for a field, `press Enter` for a key, and `type`
+only for text sent to the already-focused element. For a searchbox or other
+single-field form, submit without carrying a sibling ref across the reactive
+fill:
 
-## Focused references
+```bash
+npx craftdriver fill ref=e5 "Telerik" --submit --observe=page
+npx craftdriver text h1
+npx craftdriver attr 'link[rel="canonical"]' href
+```
 
-- Explore and write a test: [workflow.md](workflow.md)
-- Shell commands: [cli.md](cli.md)
-- TypeScript API cheatsheet: [cheatsheet.md](cheatsheet.md)
-- Worked library recipes: [patterns.md](patterns.md)
-- Full installed package docs: `node_modules/craftdriver/docs/`
-- Optional MCP adapter: `node_modules/craftdriver/docs/mcp.md`
+For a conventional multi-field form, fill earlier fields normally, then submit
+from the final single-line field. Use `--observe=delta` when the resulting
+validation message or state determines the next step:
+
+```bash
+npx craftdriver fill ref=e7 USER --observe=delta
+npx craftdriver fill ref=e9 PASSWORD --submit --observe=delta
+```
+
+Do not apply this pattern to textareas, multi-step wizards, or forms whose task
+requires a specific secondary action instead of ordinary Enter submission.
+
+A reactive fill can replace neighbouring controls. When a separate sibling
+action is genuinely needed, use `fill TARGET VALUE --observe=delta` and act on
+the fresh ref it returns. After a predictable navigation, prefer
+`--observe=page` plus targeted `text`, `attr`, or `value` reads for evidence you
+already know you need. Use `--observe=delta` when the next action depends on
+discovering what changed. A navigation delta is the new page's full bounded
+snapshot, so do not follow it with another snapshot.
+
+`--observe=page` reports URL, title, document identity, and `documentChange`:
+`same`, `changed`, or `unknown`. `unknown` means there was no preceding observed
+document and must not be treated as `same`.
+
+On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
+only when recovery context is unavailable or more context is genuinely needed.
+Actions auto-wait; use `wait` only for a specific asynchronous selector or load
+state. Do not call `status` merely to get URL or title.
+
+For required visual evidence, run `screenshot -o final.png`. When finished, run
+`daemon stop`; it already closes every session, so do not call `session close`
+first.
+
+## Writing or debugging committed tests
+
+Only when the request asks for test source, inspect the repository's existing
+tests and scripts, then read [workflow.md](workflow.md). Convert an explored
+element with `craftdriver locators ref=eN`; never put a ref in committed source.

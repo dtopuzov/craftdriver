@@ -55,6 +55,7 @@ describe('argument validation precedes any browser launch', () => {
     ['state: path-shaped name', 'state', { action: 'save', name: '../escape' }],
     ['state: unknown action', 'state', { action: 'destroy', name: 'a' }],
     ['trace: path-shaped name', 'trace', { action: 'start', name: '../escape' }],
+    ['go: invalid viewport', 'go', { url: 'http://x.test', viewport: { width: 0, height: 800 } }],
   ])('%s', async (_label, cmd, args) => {
     await rejectsBeforeLaunch(cmd, args as Record<string, unknown>, ErrorCode.INVALID_ARGUMENT);
   });

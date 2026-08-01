@@ -84,6 +84,39 @@ describe('agent snapshot refs bind to element identity', () => {
     expect(value.text).toContain('Pay now');
   });
 
+  it('accepts a bare live ref and reports its canonical selector', async () => {
+    const snap = (await session.run({ cmd: 'snapshot' })) as SnapshotResult;
+    const couponRef = refFor(snap.lines, '#coupon');
+
+    const result = await session.run({
+      cmd: 'fill',
+      args: { selector: couponRef, value: 'SAVE10' },
+    });
+    expect(result).toEqual({ ok: true, selector: `ref=${couponRef}` });
+    await expect(
+      session.run({
+        cmd: 'value',
+        args: { selector: `ref=${couponRef}` },
+      })
+    ).resolves.toMatchObject({ value: 'SAVE10' });
+  });
+
+  it('preserves explicit CSS access to a literal ref-shaped element', async () => {
+    await session.run({
+      cmd: 'eval',
+      args: {
+        js: `(() => { const el = document.createElement('e7'); el.textContent = 'literal e7 element'; document.body.appendChild(el); })()`,
+      },
+    });
+
+    await expect(
+      session.run({
+        cmd: 'text',
+        args: { selector: 'css=e7' },
+      })
+    ).resolves.toMatchObject({ text: 'literal e7 element' });
+  });
+
   it('gives a newly inserted element a fresh ref, never a recycled one', async () => {
     const first = (await session.run({ cmd: 'snapshot' })) as SnapshotResult;
     const before = new Set(refsByBody(first.lines).values());
@@ -103,9 +136,14 @@ describe('agent snapshot refs bind to element identity', () => {
     await session.run({ cmd: 'click', args: { selector: '#remove-pay' } });
 
     const error = await session
-      .run({ cmd: 'click', args: { selector: `ref=${payRef}` } })
+      .run({ cmd: 'click', args: { selector: payRef } })
       .catch((e: unknown) => e);
     expect((error as { code?: string }).code).toBe(ErrorCode.STALE_REF);
+    expect((error as { hint?: string }).hint).toContain('recoverySnapshot');
+    const recovery = (error as { recoverySnapshot?: string }).recoverySnapshot;
+    expect(recovery).toContain('page: Shift repro');
+    expect(recovery).not.toContain('#pay');
+    expect(Buffer.byteLength(recovery!, 'utf8')).toBeLessThanOrEqual(12 * 1024);
   });
 
   it('fails STALE_REF for a ref issued against a previous document', async () => {
@@ -140,7 +178,7 @@ describe('agent snapshot refs bind to element identity', () => {
         .run({ cmd: 'click', args: { selector } })
         .catch((e: unknown) => e);
       expect((error as { code?: string }).code).toBe(ErrorCode.STALE_REF);
-    },
+    }
   );
 
   it('changes document identity on navigation to the same URL', async () => {
@@ -158,8 +196,9 @@ describe('agent snapshot refs bind to element identity', () => {
     // The primary card contributes two nested boundaries; the asynchronously
     // inserted card may already exist by the time the snapshot runs and add two
     // more. Either way, every traversed open boundary is explicit.
-    expect(snap.lines.filter((line) => line.includes('#shadow-root (open)')).length)
-      .toBeGreaterThanOrEqual(2);
+    expect(
+      snap.lines.filter((line) => line.includes('#shadow-root (open)')).length
+    ).toBeGreaterThanOrEqual(2);
     expect(snap.lines.some((line) => line.includes('closed-false-positive'))).toBe(false);
     expect(snap.lines.filter((line) => line.includes('#slotted-summary'))).toHaveLength(1);
     expect(snap.lines.filter((line) => line.includes('#slotted-image'))).toHaveLength(1);
@@ -192,6 +231,32 @@ describe('agent snapshot refs bind to element identity', () => {
       args: { selector: `ref=${payRef}` },
     })) as { text: string };
     expect(value.text).toContain('Pay now');
+  });
+});
+
+describe('bare ref diagnostics', () => {
+  it('rejects an unknown bare ref before launching a browser', async () => {
+    let launched = false;
+    const session = new AgentSession({
+      launchOptions: { browserName: BROWSER_NAME },
+      launch: async () => {
+        launched = true;
+        throw new Error('browser must not launch');
+      },
+    });
+    try {
+      const error = await session
+        .run({ cmd: 'click', args: { selector: 'e9999' } })
+        .catch((e: unknown) => e);
+      expect(error).toMatchObject({
+        code: ErrorCode.BARE_REF,
+        detail: { ref: 'e9999' },
+      });
+      expect((error as { hint?: string }).hint).toContain('css=e9999');
+      expect(launched).toBe(false);
+    } finally {
+      await session.close();
+    }
   });
 });
 

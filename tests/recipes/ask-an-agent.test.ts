@@ -27,8 +27,12 @@ const LOGIN = `${EXAMPLES_BASE_URL}/login.html`;
 const CHECKOUT = `${EXAMPLES_BASE_URL}/agent-debug.html`;
 const A11Y = `${EXAMPLES_BASE_URL}/a11y.html`;
 
-interface SnapshotResult { lines: string[] }
-interface LogsPage { entries: JournalEntry[] }
+interface SnapshotResult {
+  lines: string[];
+}
+interface LogsPage {
+  entries: JournalEntry[];
+}
 
 describe('what an agent can actually learn about a page', () => {
   let session: AgentSession;
@@ -48,13 +52,13 @@ describe('what an agent can actually learn about a page', () => {
     // The recipe prints this block. Role + accessible name is what lets an
     // agent write a semantic locator instead of a structural guess.
     expect(snapshot.lines).toEqual([
-      'e1: heading "Login"',
-      'e2: form "Username Password Sign in" #login-form',
-      'e3: label "Username"',
-      'e4: textbox "Username" #username',
-      'e5: label "Password"',
-      'e6: input "Password" #password',
-      'e7: button "Sign in" #submit',
+      'e1: heading "Login" [level=1]',
+      'e2: form (container) #login-form',
+      '  e3: label "Username"',
+      '  e4: textbox "Username" #username',
+      '  e5: label "Password"',
+      '  e6: input "Password" #password',
+      '  e7: button "Sign in" #submit',
     ]);
   }, 120_000);
 
@@ -65,7 +69,10 @@ describe('what an agent can actually learn about a page', () => {
     // Read the ref out of the snapshot the way an agent does. Hardcoding `e7`
     // would pass only on a first navigation: refs are never reused, so the
     // second visit to the same URL numbers the same button differently.
-    const ref = snapshot.lines.find((line) => line.includes('button "Sign in"'))?.split(':')[0];
+    const ref = snapshot.lines
+      .find((line) => line.includes('button "Sign in"'))
+      ?.trimStart()
+      .split(':')[0];
     expect(ref).toMatch(/^e\d+$/);
 
     const report = (await session.run({
@@ -82,6 +89,29 @@ describe('what an agent can actually learn about a page', () => {
       expect(candidate.matches).toBe(1);
       expect(candidate.selector).not.toContain('ref=');
     }
+  }, 120_000);
+
+  it('submits a conventional form atomically and returns validation evidence', async () => {
+    await session.run({ cmd: 'go', args: { url: LOGIN } });
+    const snapshot = (await session.run({ cmd: 'snapshot', args: {} })) as SnapshotResult;
+    const refFor = (hint: string): string => {
+      const line = snapshot.lines.find((candidate) => candidate.includes(hint));
+      expect(line).toBeTruthy();
+      return /^(e\d+):/.exec(line!.trimStart())![1];
+    };
+
+    await session.run({
+      cmd: 'fill',
+      args: { selector: refFor('#username'), value: 'invalid@example.test' },
+    });
+    const result = await session.runDetailed({
+      cmd: 'fill',
+      args: { selector: refFor('#password'), value: 'wrong-password', submit: true },
+      observe: 'delta',
+    });
+
+    expect(result.page?.url).toBe(`${LOGIN}?failed=1`);
+    expect(result.delta).toContain('alert "Invalid email or password"');
   }, 120_000);
 
   it('the journal explains a failure the DOM does not', async () => {
@@ -121,9 +151,7 @@ describe('what an agent can actually learn about a page', () => {
       args: { action: 'list', kind: 'response', contains: '/api/checkout' },
     })) as LogsPage;
     expect(
-      responses.entries.some(
-        (entry) => entry.kind === 'response' && (entry.status ?? 0) >= 400,
-      ),
+      responses.entries.some((entry) => entry.kind === 'response' && (entry.status ?? 0) >= 400)
     ).toBe(true);
   }, 120_000);
 });
@@ -149,8 +177,8 @@ describe('the accessibility prompt', () => {
       }
       expect(
         report.violations.some((violation) =>
-          ['serious', 'critical'].includes(violation.impact ?? ''),
-        ),
+          ['serious', 'critical'].includes(violation.impact ?? '')
+        )
       ).toBe(true);
 
       // And check() is the gate the recipe tells them to add.

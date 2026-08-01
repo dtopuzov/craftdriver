@@ -15,19 +15,13 @@ defaults for **fast, fail-fast probing** instead of stable test runs.
 
 ## Quick start
 
-Two-terminal workflow:
+One-terminal browser workflow (run the application separately if needed):
 
 ```bash
-# terminal 1 — keep a long-lived browser around
-npx craftdriver daemon start
-
-# terminal 2 — drive it
-npx craftdriver go http://127.0.0.1:8080/login.html
-npx craftdriver fill '#username' alice
-npx craftdriver fill '#password' hunter2
-npx craftdriver click 'button[type=submit]'
-npx craftdriver wait '#result' --state visible
-npx craftdriver text '#result'
+# the first command starts the daemon and returns refs in its snapshot
+npx craftdriver go http://127.0.0.1:8080/login.html --browser chrome --headless --observe=delta
+npx craftdriver fill ref=e4 alice
+npx craftdriver fill ref=e6 hunter2 --submit --observe=delta
 
 npx craftdriver daemon stop
 ```
@@ -43,8 +37,7 @@ browser for the whole script:
 ```bash
 printf 'go http://127.0.0.1:8080/login.html
 fill "#username" alice
-fill "#password" hunter2
-click "button[type=submit]"
+fill "#password" hunter2 --submit --observe=delta
 text "#result"
 ' | npx craftdriver --ephemeral
 ```
@@ -52,11 +45,12 @@ text "#result"
 ## Commands
 
 ```
-craftdriver go <url>
+craftdriver go|open <url> [--observe=page|delta]
 craftdriver find <selector> [--all] [--limit N] [--offset M]
-craftdriver click <selector>
+craftdriver click <selector> [--observe=page|delta]
 craftdriver dblclick <selector>
-craftdriver fill <selector> <value>    # clear, then enter the value
+craftdriver fill <selector> <value> [--submit] [--observe=page|delta]
+                                       # clear, enter, optionally press Enter
 craftdriver type <text>                # type into the focused element
 craftdriver clear <selector>
 craftdriver check <selector> | craftdriver uncheck <selector>
@@ -93,7 +87,7 @@ craftdriver screenshot [-o file.png] [--full-page] [--selector S]
                                        # without -o, lands in
                                        # .craftdriver/screenshots as
                                        # screenshot-<session>.png (overwritten)
-craftdriver eval <js>                  # last resort
+craftdriver eval <js> [--observe=page|delta]  # last resort
 craftdriver back | forward | reload | status | quit
 
 craftdriver logs [list] [--kind console,error,request,response] [--level error]
@@ -133,6 +127,48 @@ That is every command. Global flags are:
 `--limit` and `--offset` are command-specific pagination flags where shown
 above; they are rejected by commands that do not return lists.
 
+CLI agent sessions start at a 1280x800 desktop layout so responsive pages expose
+their primary controls. `go URL --viewport WIDTHxHEIGHT` overrides it before
+that navigation when the task intentionally targets another responsive size.
+
+`--observe=page` returns URL, title, document identity, revision, and
+`documentChange` after a mutation. The state is `same`, `changed`, or `unknown`;
+`unknown` means there was no preceding observed document and must not be treated
+as `same`. `--observe=delta` returns the bounded semantic change since the last
+observation. If intervening actions intentionally skipped observation, their
+visible changes can appear in that delta too. The equivalent space-separated
+forms are also accepted. Both capture the action and observation in one session
+queue slot; without the flag, action results stay compact and no post-action
+snapshot is taken.
+
+For searchboxes and single-field forms, `fill TARGET VALUE --submit` fills and
+presses Enter through the focused field without resolving `TARGET` again. This
+keeps submission atomic when a reactive fill replaces the input or its sibling
+button. If the flow genuinely needs a separate sibling action, use
+`fill TARGET VALUE --observe=delta` and take the sibling's fresh ref from that
+delta.
+
+For a conventional multi-field form, fill the earlier fields normally and add
+`--submit` to the final single-line field. Use `--observe=delta` when the
+resulting validation message or state determines the next step. Do not use this
+pattern for textareas, multi-step wizards, or flows that require a specific
+secondary action.
+
+Observed `fill --submit` and `press Enter` actions use a bounded navigation
+fence: they detect navigation that starts within about 140 ms after the input
+command returns, then wait at most 500 ms for its load. These bounds are
+independent of `--timeout`, so a same-page validation does not add seconds to
+every Enter. Navigation started later by application code can therefore land
+after the observation; wait for a destination-specific selector when a flow
+performs asynchronous validation before navigating. Ordinary `click` relies on
+WebDriver's own navigation wait and does not add this extra fence, so the same
+explicit wait applies to navigation scheduled only after the click command has
+already completed.
+
+After a predictable navigation, `--observe=page` plus targeted `text`, `attr`,
+or `value` reads is usually the smallest evidence path. Use `--observe=delta`
+when the next action depends on discovering what changed.
+
 Run `craftdriver --help` for the full list.
 
 ## Selector syntax
@@ -155,8 +191,9 @@ CSS is the default. Switch kind with a `prefix=value` form:
 | `name=`        | `By.name`                               | `'name=email'`                   |
 | `ref=`         | snapshot ref (`craftdriver snapshot`)   | `'ref=e5'`                       |
 
-Anything else is treated as a CSS selector, so attribute selectors with
-`=` inside (e.g. `'button[type=submit]'`) work as expected.
+Except for a bare live snapshot ref described below, anything else is treated
+as a CSS selector, so attribute selectors with `=` inside (e.g.
+`'button[type=submit]'`) work as expected.
 
 ## Snapshot — sanitized DOM with refs
 
@@ -167,19 +204,48 @@ command. Open Shadow DOM is traversed recursively and shown with indented
 
 ```bash
 $ craftdriver snapshot
-page: Login — http://127.0.0.1:8080/login.html
-e1: heading "Login"
-e2: form "Username Password Sign in" #login-form
-e3: label "Username"
-e4: textbox "Username" #username
-e5: label "Password"
-e6: textbox "Password" #password
-e7: button "Sign in" #submit
+page: Craftdriver Login Example — http://127.0.0.1:8080/login.html
+e1: heading "Login" [level=1]
+e2: form (container) #login-form
+  e3: label "Username"
+  e4: textbox "Username" #username
+  e5: label "Password"
+  e6: input "Password" #password
+  e7: button "Sign in" #submit
 
 $ craftdriver fill ref=e4 alice
-$ craftdriver fill ref=e6 hunter2
-$ craftdriver click ref=e7
+$ craftdriver fill ref=e6 hunter2 --submit --observe=delta
 ```
+
+Each line is `ref: role "accessible name"`, then whatever helps you pick the
+next step: `[level=N]` on headings, `href="…"` on links, `value="…"` on filled
+fields, a locator hint (`#id`, `[data-testid=…]`, `tag[name=…]`), and state
+flags — `(disabled)`, `(checked)`, `(selected)`, `(expanded=…)`,
+`(pressed=…)`, `(current=…)`.
+
+Structural containers (`form`, `main`, `navigation`, `region`, `list`, `table`, …)
+are marked `(container)`, and their semantic descendants are indented. They are
+named only from an explicit `aria-label`/`aria-labelledby`, never from their
+descendants' text — so `e2` above is `form (container) #login-form`, not a form
+named `"Username Password Sign in"`.
+
+Status and result text appears too, as `text` lines: `<output>`, `aria-live`
+regions, `<caption>`/`<figcaption>`, and short `<p>` elements whose
+`id`/`data-testid` reads like evidence (`status`, `result`, `error`,
+`message`, `success`, `log`, …). Long prose is left out — read it with
+`craftdriver text` when you actually need it.
+
+Anything hidden from assistive technology is hidden here too: an element under
+an `aria-hidden="true"` or `inert` ancestor never appears, even when it is
+on screen and clickable.
+
+Output is bounded independently at 80 semantic nodes, 7 ordinary text nodes,
+and 10 status/result evidence nodes, with 80 characters per name, value, and
+link destination, so page prose or a generated URL cannot crowd out the
+controls or validation evidence. Read a complete link with `attr TARGET href`.
+
+In a terminal this prints as shown; piped or redirected it emits JSON
+(`--json` and `--pretty` force either form).
 
 ### Refs bind to an element, not to a position
 
@@ -193,9 +259,15 @@ A ref names one specific element for as long as that element lives:
   whatever now sits in that position.
 
 That last point is the reason to trust them. Take a fresh `snapshot`
-when you see `STALE_REF`; craftdriver will not guess a replacement.
+when you see `STALE_REF` without an attached `recoverySnapshot`; craftdriver
+will not guess a replacement or retry the action.
 `error.detail.reason` says which case fired (`detached`,
 `document-changed`, `unknown-ref`, `ambiguous`, `no-snapshot`).
+
+For copy-paste convenience, a bare token such as `e9` resolves as that ref when
+the current session previously issued it. An unknown bare ref-shaped token
+fails immediately with `BARE_REF` instead of waiting on CSS. Use `css=e9` to
+select a literal `<e9>` element.
 
 Internally `ref=eN` returns the exact element from the page's identity registry,
 including elements inside open shadow roots. The diagnostic
@@ -203,10 +275,29 @@ including elements inside open shadow roots. The diagnostic
 authored or cloned marker cannot redirect or invalidate a ref. Auto-waiting and
 native WebDriver actions work unchanged after identity resolution.
 
+### Field values in snapshots
+
+Snapshots print `value="…"` for ordinary text fields so you can confirm what
+was typed without a second command. Never printed:
+
+- `password`, `hidden` and `file` inputs;
+- `checkbox`, `radio`, `submit`, `button`, `reset` and `image` inputs, whose
+  `value` is a constant like `"on"` or a copy of the button label;
+- fields whose `autocomplete` is `one-time-code`, `current-password`,
+  `new-password`, or any `cc-*` token;
+- fields whose id, name, placeholder, `aria-label`, or accessible name reads
+  like a secret — `password`, `otp`, `token`, `secret`, `api key`,
+  `access key`, `credit card`, `card number`, `cvv`, `cvc`, `security code`.
+
+This is **best-effort noise and exposure reduction, not a classifier**. It
+recognises conventional naming; it cannot know that `#field7` holds a session
+key. Use test credentials, and don't point an agent-driven browser at an
+account whose secrets you would not want in a transcript.
+
 ## Tabs
 
 Commands act on one tab — the active one. A tab that opens on its own
-(`window.open`, `target=_blank`) is listed but is *not* selected, so nothing
+(`window.open`, `target=_blank`) is listed but is _not_ selected, so nothing
 switches under you:
 
 ```bash
@@ -331,7 +422,7 @@ Worth knowing:
 
 ## Console and network history
 
-What the page logged and requested, asked for *after* the fact:
+What the page logged and requested, asked for _after_ the fact:
 
 ```bash
 npx craftdriver go http://127.0.0.1:8080/checkout.html
@@ -530,6 +621,9 @@ the timing (or to choose a non-default browser):
 npx craftdriver daemon start --browser firefox
 ```
 
+`open <url>` is an alias for `go <url>`, included for agents and users familiar
+with other browser CLIs.
+
 ## When to use the CLI vs. the library
 
 - **Library** — write a test suite. Stable, 30 s auto-waits, full TS
@@ -553,10 +647,10 @@ npx craftdriver init --agent claude     # one agent only
 Hosts disagree about where a project skill lives, so `init` writes the smallest
 set that covers all three:
 
-| Destination | Agents that read it |
-| --- | --- |
+| Destination                   | Agents that read it  |
+| ----------------------------- | -------------------- |
 | `.claude/skills/craftdriver/` | Claude Code, Copilot |
-| `.agents/skills/craftdriver/` | Codex, Copilot |
+| `.agents/skills/craftdriver/` | Codex, Copilot       |
 
 `--agent claude` and `--agent codex` narrow the install to the corresponding
 row. `--agent copilot` uses Copilot's own `.github/skills/craftdriver/`
@@ -590,13 +684,13 @@ ships a tiered skill pack under `skills/craftdriver/`:
 `SKILL.md` is the entry point. The remaining files are linked from it and
 loaded only when needed, keeping the initial context small.
 
-| File                                                                                                  | Purpose                                                               |
-| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [`SKILL.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/SKILL.md)           | Entry point. Selector order, error-code-first, auto-wait, routing.    |
-| [`workflow.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/workflow.md)     | Explore → validate selectors → write test → debug from evidence.      |
-| [`cheatsheet.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cheatsheet.md) | Public TypeScript API reference for writing tests.                    |
-| [`patterns.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/patterns.md)     | Worked recipes (login, upload, network-wait, a11y, tracing, clock).   |
-| [`cli.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cli.md)               | Agent-facing CLI reference.                                           |
+| File                                                                                                  | Purpose                                                             |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`SKILL.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/SKILL.md)           | Entry point. Selector order, error-code-first, auto-wait, routing.  |
+| [`workflow.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/workflow.md)     | Explore → validate selectors → write test → debug from evidence.    |
+| [`cheatsheet.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cheatsheet.md) | Public TypeScript API reference for writing tests.                  |
+| [`patterns.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/patterns.md)     | Worked recipes (login, upload, network-wait, a11y, tracing, clock). |
+| [`cli.md`](https://github.com/dtopuzov/craftdriver/blob/main/skills/craftdriver/cli.md)               | Agent-facing CLI reference.                                         |
 
 Use `npx craftdriver init` to install these files safely. The other files
 are referenced from `SKILL.md` and loaded on demand.

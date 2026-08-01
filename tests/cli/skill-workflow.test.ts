@@ -149,7 +149,10 @@ describe('exploration-to-test workflow', () => {
 
     await session.run({ cmd: 'go', args: { url: FIXTURE } });
     await session.run({ cmd: 'click', args: { selector: 'role=button[name=Place order]' } });
-    await session.run({ cmd: 'wait', args: { target: '#status', kind: 'selector' } });
+    await session.run({
+      cmd: 'logs',
+      args: { action: 'wait', kind: 'response', contains: '/api/checkout', timeout: 10_000 },
+    });
 
     // Same page, same click: only the endpoint's answer changed, which is what
     // proves the endpoint was the cause.
@@ -178,7 +181,10 @@ describe('exploration-to-test workflow', () => {
     await session.run({ cmd: 'fill', args: { selector: 'label=Email', value: 'alice@example.test' } });
     await session.run({ cmd: 'fill', args: { selector: 'label=Card number', value: '4242' } });
     await session.run({ cmd: 'click', args: { selector: 'role=button[name=Place order]' } });
-    await session.run({ cmd: 'wait', args: { target: '#status', kind: 'selector' } });
+    await session.run({
+      cmd: 'logs',
+      args: { action: 'wait', kind: 'response', contains: '/api/checkout', timeout: 10_000 },
+    });
 
     const status = (await session.run({ cmd: 'text', args: { selector: '#status' } })) as TextResult;
     expect(status.text).toContain('A-1001');

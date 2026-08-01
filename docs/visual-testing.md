@@ -18,7 +18,7 @@ Baselines are managed for you, so the first run of a new test just works:
 
 Behaviour is identical on your laptop and in CI — there is no "CI mode" that
 does something different. One tradeoff comes with the convenience: if a
-committed baseline is *deleted*, the next run recreates it and passes. Every
+committed baseline is _deleted_, the next run recreates it and passes. Every
 create and update is printed to stderr (`[craftdriver] Created visual
 baseline: …`) so it shows up in your logs, but the real guard is committing your
 baselines and reviewing the diff whenever one changes.
@@ -45,16 +45,22 @@ the file on disk this run.
 `browser.screenshot()`. The three forms mirror that method and are mutually
 exclusive:
 
-| `screenshot`                 | Captures                        | Notes                                  |
-| ---------------------------- | ------------------------------- | -------------------------------------- |
-| omitted                      | the visible viewport            | Classic or BiDi.                       |
-| `{ fullPage: true }`         | the full scrollable document    | Requires BiDi (`enableBiDi: true`, the default). |
-| `{ selector: '#chart' }`     | one element                     | Auto-waits for the element like `find()`. |
+| `screenshot`             | Captures                     | Notes                                            |
+| ------------------------ | ---------------------------- | ------------------------------------------------ |
+| omitted                  | the visible viewport         | BiDi viewport capture; Classic fallback.         |
+| `{ fullPage: true }`     | the full scrollable document | Requires BiDi (`enableBiDi: true`, the default). |
+| `{ selector: '#chart' }` | one element                  | Auto-waits for the element like `find()`.        |
 
 `fullPage` and `selector` together are rejected — by the TypeScript types and,
 for JavaScript callers, at runtime with `INVALID_ARGUMENT`. Always baseline and
 assert with the same scope; a full-page baseline compared against a viewport
 capture is just a dimension mismatch.
+
+When BiDi is connected, viewport capture uses the layout viewport directly, so
+its dimensions match `document.documentElement.clientWidth/clientHeight` times
+the device pixel ratio. This deliberately excludes the classic scrollbar from
+the captured content width. Classic-only sessions fall back to the browser's
+WebDriver screenshot command.
 
 ## Thresholds
 
@@ -63,9 +69,9 @@ three independent policies.
 
 ```typescript
 await browser.expectScreenshot('baselines/home.png', {
-  pixelTolerance: 5,       // per-channel RGB slack, 0..255 (default 0)
-  maxDiffPixels: 100,      // allow up to 100 differing pixels
-  maxDiffPercentage: 0.1,  // …and no more than 0.1% of all pixels
+  pixelTolerance: 5, // per-channel RGB slack, 0..255 (default 0)
+  maxDiffPixels: 100, // allow up to 100 differing pixels
+  maxDiffPercentage: 0.1, // …and no more than 0.1% of all pixels
 });
 ```
 
@@ -149,7 +155,7 @@ While it is set:
 - A **matching** baseline passes untouched.
 - A **differing** baseline is captured until the deadline, then overwritten with
   the final screenshot; the assertion passes with `result.baseline === 'updated'`.
-  A page that settles back into a match passes *without* rewriting, so you don't
+  A page that settles back into a match passes _without_ rewriting, so you don't
   get spurious baseline churn.
 
 Every rewrite is printed — `[craftdriver] Updated visual baseline: <path> (<n>

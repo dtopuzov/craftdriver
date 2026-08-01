@@ -8,12 +8,12 @@ craftdriver exposes a single options-bag `screenshot()` method on both
 
 ### `browser.screenshot(opts?)`
 
-| Option     | Type                | Default      | Notes                                            |
-| ---------- | ------------------- | ------------ | ------------------------------------------------ |
-| `path`     | `string`            | —            | Write the PNG to this file path.                 |
-| `selector` | `string \| By`      | full viewport| If set, capture only the matching element.       |
-| `fullPage` | `boolean`           | `false`      | Capture the entire scrollable document. Requires BiDi. |
-| `timeout`  | `number` (ms)       | default      | Wait timeout when locating `selector`.           |
+| Option     | Type           | Default       | Notes                                                  |
+| ---------- | -------------- | ------------- | ------------------------------------------------------ |
+| `path`     | `string`       | —             | Write the PNG to this file path.                       |
+| `selector` | `string \| By` | full viewport | If set, capture only the matching element.             |
+| `fullPage` | `boolean`      | `false`       | Capture the entire scrollable document. Requires BiDi. |
+| `timeout`  | `number` (ms)  | default       | Wait timeout when locating `selector`.                 |
 
 `fullPage` and `selector` are mutually exclusive.
 
@@ -44,22 +44,26 @@ await browser.screenshot({
 
 #### Full-page vs viewport
 
-Viewport capture (`fullPage: false`, the default) uses the W3C Classic
-`Take Screenshot` endpoint and is bounded by the visible viewport.
-Full-page capture uses BiDi `browsingContext.captureScreenshot` with
-`origin: "document"` and produces a PNG sized to the full scrollable
-content — useful for visual diffs of long pages and for archiving the
-complete rendered output. Full-page capture requires `enableBiDi: true`
-(the default); on Classic-only sessions it throws.
+Viewport capture (`fullPage: false`, the default) uses BiDi
+`browsingContext.captureScreenshot` with `origin: "viewport"` when BiDi is
+connected. Its dimensions match `document.documentElement.clientWidth` and
+`clientHeight` times the device pixel ratio, excluding the classic scrollbar
+from the content width. Classic-only sessions fall back to the W3C WebDriver
+`Take Screenshot` endpoint.
+
+Full-page capture uses the same BiDi command with `origin: "document"` and
+produces a PNG sized to the full scrollable content — useful for visual diffs of
+long pages and for archiving the complete rendered output. Full-page capture
+requires `enableBiDi: true` (the default); on Classic-only sessions it throws.
 
 ## Element screenshots
 
 ### `element.screenshot(opts?)`
 
-| Option    | Type        | Default | Notes                              |
-| --------- | ----------- | ------- | ---------------------------------- |
-| `path`    | `string`    | —       | Write the PNG to this file path.   |
-| `timeout` | `number`    | default | Element resolution timeout.        |
+| Option    | Type     | Default | Notes                            |
+| --------- | -------- | ------- | -------------------------------- |
+| `path`    | `string` | —       | Write the PNG to this file path. |
+| `timeout` | `number` | default | Element resolution timeout.      |
 
 ```typescript
 const buffer = await browser.find('#product-image').screenshot();
@@ -99,9 +103,9 @@ anti-aliasing, updating baselines, and making CI deterministic.
 ### Component screenshots
 
 ```typescript
-await browser.screenshot({ selector: 'header',   path: 'components/header.png' });
+await browser.screenshot({ selector: 'header', path: 'components/header.png' });
 await browser.screenshot({ selector: '.sidebar', path: 'components/sidebar.png' });
-await browser.screenshot({ selector: 'footer',   path: 'components/footer.png' });
+await browser.screenshot({ selector: 'footer', path: 'components/footer.png' });
 ```
 
 ### Before / after an action

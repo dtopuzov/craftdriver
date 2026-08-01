@@ -10,10 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type { LaunchOptions } from '../../lib/browser.js';
 import { assertLocalOnlyLaunch } from '../../lib/launchTarget.js';
 import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
-import {
-  AgentSession,
-  type AgentSessionRunner,
-} from '../agentSession.js';
+import { AgentSession, type AgentSessionRunner } from '../agentSession.js';
 import {
   TOOLS,
   getTool,
@@ -25,12 +22,7 @@ import {
 import { renderFull, type SnapshotShape } from '../snapshot.js';
 import { BoundedLineReader, MAX_FRAME_BYTES } from '../lineReader.js';
 import { boundToolResult, resolveMaxResponseBytes, truncateUtf8 } from './bounds.js';
-import {
-  ArtifactStore,
-  ArtifactQuotaError,
-  resolveSpillBytes,
-  spillPreview,
-} from './artifacts.js';
+import { ArtifactStore, ArtifactQuotaError, resolveSpillBytes, spillPreview } from './artifacts.js';
 
 /**
  * Protocol versions this server has actually been tested against, newest
@@ -53,7 +45,7 @@ function readServerVersion(): string {
     // dist/cli/mcp/server.js and src/cli/mcp/server.ts are both three levels
     // below the package root.
     const pkg = JSON.parse(
-      readFileSync(resolvePath(here, '..', '..', '..', 'package.json'), 'utf8'),
+      readFileSync(resolvePath(here, '..', '..', '..', 'package.json'), 'utf8')
     ) as { version?: string };
     return typeof pkg.version === 'string' && pkg.version.length > 0 ? pkg.version : '0.0.0';
   } catch {
@@ -153,9 +145,7 @@ export function decodeJsonLine(line: string): unknown {
 export function classifyJsonRpcMessage(value: unknown): ClassifiedJsonRpcMessage {
   const message = value as JsonRpcRequest;
   return {
-    kind: Object.prototype.hasOwnProperty.call(message, 'id')
-      ? 'request'
-      : 'notification',
+    kind: Object.prototype.hasOwnProperty.call(message, 'id') ? 'request' : 'notification',
     message,
   };
 }
@@ -166,7 +156,7 @@ export function serializeJsonRpcResponse(response: JsonRpcResponse): string {
 
 export function sendJsonRpcResponse(
   output: NodeJS.WritableStream,
-  response: JsonRpcResponse,
+  response: JsonRpcResponse
 ): void {
   output.write(serializeJsonRpcResponse(response));
 }
@@ -197,10 +187,12 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
   const signalSource = opts.signalSource ?? process;
-  const session = opts.sessionFactory?.() ?? new AgentSession({
-    launchOptions: opts.launch,
-    autoSnapshot: opts.snapshot !== 'none',
-  });
+  const session =
+    opts.sessionFactory?.() ??
+    new AgentSession({
+      launchOptions: opts.launch,
+      autoSnapshot: opts.snapshot !== 'none',
+    });
   const router: RouterContext = {
     session,
     snapshotState: {
@@ -226,7 +218,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
     pending.add(task);
     void task.then(
       () => pending.delete(task),
-      () => pending.delete(task),
+      () => pending.delete(task)
     );
   };
 
@@ -234,11 +226,10 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
     if (!accepting) return;
     for (const event of reader.push(chunk)) {
       if (event.kind === 'oversized') {
-        sendJsonRpcResponse(output, rpcError(
-          null,
-          -32700,
-          `input frame exceeds ${MCP_MAX_FRAME_BYTES}-byte limit`,
-        ));
+        sendJsonRpcResponse(
+          output,
+          rpcError(null, -32700, `input frame exceeds ${MCP_MAX_FRAME_BYTES}-byte limit`)
+        );
         continue;
       }
 
@@ -287,7 +278,7 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
 
 export async function routeJsonRpcMethod(
   classified: ClassifiedJsonRpcMessage,
-  ctx: RouterContext,
+  ctx: RouterContext
 ): Promise<JsonRpcResponse | null> {
   const req = classified.message;
   const id = req.id ?? null;
@@ -349,12 +340,15 @@ export async function routeJsonRpcMethod(
 
         try {
           const invocation = await invokeTool(ctx.session, tool, validated, ctx.snapshotState);
-          return ok(id, await serializeToolSuccess(tool, invocation.value, {
-            artifacts: ctx.snapshotState.artifacts,
-            spillBytes: ctx.snapshotState.spillBytes,
-            delta: invocation.delta,
-            maxResponseBytes: ctx.snapshotState.maxResponseBytes,
-          }));
+          return ok(
+            id,
+            await serializeToolSuccess(tool, invocation.value, {
+              artifacts: ctx.snapshotState.artifacts,
+              spillBytes: ctx.snapshotState.spillBytes,
+              delta: invocation.delta,
+              maxResponseBytes: ctx.snapshotState.maxResponseBytes,
+            })
+          );
         } catch (error) {
           return ok(id, serializeToolFailure(error, ctx.snapshotState.maxResponseBytes));
         }
@@ -375,7 +369,7 @@ async function invokeTool(
   session: AgentSessionRunner,
   tool: ToolDef,
   inputArgs: Record<string, unknown>,
-  snapshotState: SnapshotState,
+  snapshotState: SnapshotState
 ): Promise<ToolInvocation> {
   let args = inputArgs;
   let screenshotPath: string | undefined;
@@ -416,21 +410,16 @@ interface ToolResultContext {
 export async function serializeToolSuccess(
   tool: ToolDef,
   value: unknown,
-  ctx: ToolResultContext,
+  ctx: ToolResultContext
 ): Promise<ToolCallResult> {
   const content: ContentBlock[] = [];
   let primaryText: string;
-  if (
-    tool.name === 'browser_snapshot' &&
-    value &&
-    typeof value === 'object' &&
-    'lines' in value
-  ) {
+  if (tool.name === 'browser_snapshot' && value && typeof value === 'object' && 'lines' in value) {
     primaryText = await maybeSpill(
       renderFull(value as SnapshotShape),
       'snapshot.txt',
       ctx.artifacts,
-      ctx.spillBytes,
+      ctx.spillBytes
     );
   } else {
     primaryText = await summariseValue(tool.name, value, ctx.artifacts, ctx.spillBytes);
@@ -440,12 +429,7 @@ export async function serializeToolSuccess(
   if (ctx.delta) {
     content.push({
       type: 'text',
-      text: await maybeSpill(
-        ctx.delta,
-        'snapshot.txt',
-        ctx.artifacts,
-        ctx.spillBytes,
-      ),
+      text: await maybeSpill(ctx.delta, 'snapshot.txt', ctx.artifacts, ctx.spillBytes),
     });
   }
 
@@ -454,7 +438,7 @@ export async function serializeToolSuccess(
   // structuredContent left a 50 KB eval on the wire behind a 514-byte preview.
   return boundToolResult(
     { content, structuredContent: { result: value } },
-    ctx.maxResponseBytes ?? resolveMaxResponseBytes(),
+    ctx.maxResponseBytes ?? resolveMaxResponseBytes()
   );
 }
 
@@ -468,11 +452,18 @@ export async function serializeToolSuccess(
  */
 export function serializeToolFailure(
   error: unknown,
-  maxResponseBytes: number = resolveMaxResponseBytes(),
+  maxResponseBytes: number = resolveMaxResponseBytes()
 ): ToolCallResult {
-  const result = error instanceof CraftdriverError
-    ? toolError(error.message, error.code, error.hint, compactErrorDetail(error.detail))
-    : toolError((error as Error)?.message ?? String(error), ErrorCode.DRIVER_ERROR);
+  const result =
+    error instanceof CraftdriverError
+      ? toolError(
+          error.message,
+          error.code,
+          error.hint,
+          compactErrorDetail(error.detail),
+          error.recoverySnapshot
+        )
+      : toolError((error as Error)?.message ?? String(error), ErrorCode.DRIVER_ERROR);
   return boundToolResult(result, maxResponseBytes);
 }
 
@@ -480,7 +471,7 @@ async function summariseValue(
   toolName: string,
   value: unknown,
   artifacts: ArtifactStore,
-  spillBytes: number,
+  spillBytes: number
 ): Promise<string> {
   if (value === null || value === undefined) return `${toolName}: ok`;
   const text = typeof value === 'string' ? value : safeJson(value);
@@ -491,7 +482,7 @@ async function maybeSpill(
   text: string,
   nameHint: string,
   artifacts: ArtifactStore,
-  spillBytes: number,
+  spillBytes: number
 ): Promise<string> {
   const size = Buffer.byteLength(text, 'utf8');
   if (size <= spillBytes) return text;
@@ -514,12 +505,22 @@ function safeJson(value: unknown): string {
   }
 }
 
-function compactErrorDetail(
-  detail?: Record<string, unknown>,
-): Record<string, unknown> | undefined {
+function compactErrorDetail(detail?: Record<string, unknown>): Record<string, unknown> | undefined {
   if (!detail) return undefined;
-  const compact = { ...detail };
-  delete compact.stacktrace;
+  const seen = new WeakSet<object>();
+  const strip = (value: unknown): unknown => {
+    if (value === null || typeof value !== 'object') return value;
+    if (seen.has(value)) return '[circular]';
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(strip);
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (key.toLowerCase() === 'stacktrace' || key.toLowerCase() === 'stack') continue;
+      result[key] = strip(child);
+    }
+    return result;
+  };
+  const compact = strip(detail) as Record<string, unknown>;
   return Object.keys(compact).length > 0 ? compact : undefined;
 }
 
@@ -528,14 +529,17 @@ function toolError(
   code: string,
   hint?: string,
   detail?: Record<string, unknown>,
+  recoverySnapshot?: string
 ): ToolCallResult {
   const lines = [`error: ${message}`, `code:  ${code}`];
   if (hint) lines.push(`hint:  ${hint}`);
+  if (recoverySnapshot) lines.push(`recovery snapshot:\n${recoverySnapshot}`);
   const error = {
     code,
     message,
     ...(hint ? { hint } : {}),
     ...(detail ? { detail } : {}),
+    ...(recoverySnapshot ? { recoverySnapshot } : {}),
   };
   return {
     isError: true,
@@ -552,7 +556,7 @@ function rpcError(
   id: number | string | null,
   code: number,
   message: string,
-  extra?: { detail?: unknown },
+  extra?: { detail?: unknown }
 ): JsonRpcError {
   return {
     jsonrpc: '2.0',

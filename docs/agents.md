@@ -44,10 +44,10 @@ npx craftdriver init --agent copilot   # .github/skills/craftdriver
 Skills follow the [Agent Skills](https://agentskills.io) open standard, but the
 hosts disagree about where a project skill lives:
 
-| Agent | Project skill directories it reads |
-| --- | --- |
-| Claude Code | `.claude/skills/` |
-| Codex | `.agents/skills/` |
+| Agent          | Project skill directories it reads                      |
+| -------------- | ------------------------------------------------------- |
+| Claude Code    | `.claude/skills/`                                       |
+| Codex          | `.agents/skills/`                                       |
 | GitHub Copilot | `.github/skills/`, `.claude/skills/`, `.agents/skills/` |
 
 Two directories are the smallest default set that covers all three. A targeted
@@ -75,12 +75,12 @@ whole command, so you never end up with one agent configured and another not.
 Worth doing once. This is where skill setup usually goes wrong, and each host
 reports it differently.
 
-| Agent | Check | If it isn't there |
-| --- | --- | --- |
-| **Claude Code** | Type `/craftdriver` | Restart Claude Code. A skills directory that did not exist when the session started is not watched. |
+| Agent                  | Check                                                                  | If it isn't there                                                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Claude Code**        | Type `/craftdriver`                                                    | Restart Claude Code. A skills directory that did not exist when the session started is not watched.                                   |
 | **Copilot in VS Code** | Type `/skills` to open the Skills menu, or `/craftdriver` to invoke it | Reload the window, then check that `chat.useAgentSkills` is enabled and `chat.agentSkillsLocations` includes the installed directory. |
-| **Copilot CLI** | Type `/skills list`, or `/craftdriver` to invoke it | Start a new session from the repository root. |
-| **Codex** | Type `/skills`, or `$craftdriver` to invoke it | Codex detects skill changes automatically; restart it if a new one doesn't appear. |
+| **Copilot CLI**        | Type `/skills list`, or `/craftdriver` to invoke it                    | Start a new session from the repository root.                                                                                         |
+| **Codex**              | Type `/skills`, or `$craftdriver` to invoke it                         | Codex detects skill changes automatically; restart it if a new one doesn't appear.                                                    |
 
 Copilot cloud and other supported IDEs use the same project skill files, but do
 not share one portable verification command. Use the explicit prompt below;
@@ -98,19 +98,27 @@ matches it:
 
 ## The loop
 
-The agent's own instructions are in the installed `workflow.md`. The shape of
-it, if you want to drive the CLI yourself:
+The installed skill contains the compact live loop directly and loads
+test-authoring detail only when a durable test is requested. The shape of the
+live loop, if you want to drive the CLI yourself:
 
 ```bash
-npx craftdriver daemon start
-npx craftdriver go http://127.0.0.1:8080/login.html
-npx craftdriver snapshot
-npx craftdriver fill 'label=Username' alice
-npx craftdriver fill 'label=Password' hunter2
-npx craftdriver click 'role=button[name=Sign in]'
-npx craftdriver text '#welcome'
+npx craftdriver go http://127.0.0.1:8080/login.html --browser chrome --headless --observe=delta
+npx craftdriver fill ref=e4 alice
+npx craftdriver fill ref=e6 hunter2 --submit --observe=delta
 npx craftdriver daemon stop
 ```
+
+The first `go` auto-starts the daemon; `open` is an equivalent alias. Adding
+`--observe=delta` is what makes it return the initial semantic snapshot with
+the refs used on the next lines — without the flag, results stay compact and
+no snapshot is taken. Use `--observe` on the steps whose visible result decides
+what to do next, not on every command.
+
+For a conventional multi-field form, filling the final single-line field with
+`--submit` keeps the submit atomic and returns the validation or destination in
+the same observed action. Use a separate button when the flow requires a
+specific secondary action rather than ordinary Enter submission.
 
 The daemon keeps the page and cookies between commands, one per project. It
 binds a Unix domain socket, so it is not available on Windows — see
@@ -181,11 +189,11 @@ npx craftdriver init --agent claude --mcp     # just this one
 
 Each surface reads a different file, and the schemas differ:
 
-| Surface | File | Top-level key |
-| --- | --- | --- |
-| Claude Code | `.mcp.json` | `mcpServers` |
-| Copilot **in VS Code** | `.vscode/mcp.json` | `servers`, with `"type": "stdio"` |
-| Codex | `.codex/config.toml` | `[mcp_servers.craftdriver]` |
+| Surface                | File                 | Top-level key                     |
+| ---------------------- | -------------------- | --------------------------------- |
+| Claude Code            | `.mcp.json`          | `mcpServers`                      |
+| Copilot **in VS Code** | `.vscode/mcp.json`   | `servers`, with `"type": "stdio"` |
+| Codex                  | `.codex/config.toml` | `[mcp_servers.craftdriver]`       |
 
 These are three surfaces, not three families: Copilot CLI and the Copilot cloud
 agent are configured elsewhere, and Codex skips project `.codex/config.toml`
@@ -204,13 +212,13 @@ payload, and protocol bounds.
 
 ## Installed skill files
 
-| File | Purpose |
-| --- | --- |
-| `SKILL.md` | Short browser-to-test rules and routing. |
-| `workflow.md` | Exploration, selector validation, test authoring, and debugging loop. |
-| `cli.md` | Current shell command reference for agent exploration. |
-| `cheatsheet.md` | Public TypeScript API reference for writing tests. |
-| `patterns.md` | Focused library recipes loaded on demand. |
+| File            | Purpose                                                               |
+| --------------- | --------------------------------------------------------------------- |
+| `SKILL.md`      | Short browser-to-test rules and routing.                              |
+| `workflow.md`   | Exploration, selector validation, test authoring, and debugging loop. |
+| `cli.md`        | Current shell command reference for agent exploration.                |
+| `cheatsheet.md` | Public TypeScript API reference for writing tests.                    |
+| `patterns.md`   | Focused library recipes loaded on demand.                             |
 
 Full package docs stay available to the agent at
 `node_modules/craftdriver/docs/`.
@@ -235,7 +243,8 @@ That is the design — refs are exploration state. Have it run
 `craftdriver locators` and use a durable candidate.
 
 **`STALE_REF` mid-exploration.** The element was removed, or the page navigated
-or reloaded. Take a fresh snapshot; CraftDriver will not guess a replacement.
+or reloaded. Use the attached `recoverySnapshot`, or take a fresh snapshot when
+it is unavailable; CraftDriver will not guess a replacement or retry the action.
 
 **Selectors that pass once and fail later.** Usually a dynamic or localized
 accessible name baked into `By.role({ name })`. Anchor on a stable id or test id

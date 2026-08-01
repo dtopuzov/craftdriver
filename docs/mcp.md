@@ -68,11 +68,11 @@ Note `servers` rather than `mcpServers`, and the required `type`.
 "Copilot" is several products with different MCP configuration. The snippet
 above is VS Code only:
 
-| Surface | Where MCP is configured |
-| --- | --- |
-| Copilot in VS Code | `.vscode/mcp.json` (above) |
-| Copilot CLI | `~/.copilot/mcp-config.json`; `.mcp.json` or `.github/mcp.json` in a repository |
-| Copilot coding agent (cloud) | Repository Copilot settings on GitHub |
+| Surface                      | Where MCP is configured                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| Copilot in VS Code           | `.vscode/mcp.json` (above)                                                      |
+| Copilot CLI                  | `~/.copilot/mcp-config.json`; `.mcp.json` or `.github/mcp.json` in a repository |
+| Copilot coding agent (cloud) | Repository Copilot settings on GitHub                                           |
 
 The command and args are the same everywhere — `npx --no-install craftdriver
 mcp` — only the file and its schema change. Check your surface's own
@@ -120,33 +120,33 @@ One line each; the long help lives in the schema description, which clients
 render into the model's context once per session. Every tool dispatches a
 command the CLI also has — there are no MCP-only browser semantics.
 
-| Tool                    | Purpose                                                                |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `browser_navigate`      | Go to a URL (waits for load).                                          |
-| `browser_click`         | Click an element; set `double` for a double-click.                     |
-| `browser_fill`          | Fill an input/textarea (clears first, real key events).                |
-| `browser_type`          | Type into whatever holds focus (no selector).                          |
-| `browser_element`       | `dblclick`/`focus`/`scroll`/`clear`/`check`/`uncheck`/`select`.        |
-| `browser_press`         | Press a key (`Enter`, `Tab`, `Control+A`).                             |
-| `browser_key`           | Low-level `press`/`down`/`up` for modifier combinations.               |
-| `browser_mouse`         | `move`/`click`/`down`/`up`/`wheel`, by element or coordinate.          |
-| `browser_hover`         | Hover over an element.                                                 |
-| `browser_upload`        | Set files on a file input (bounded; paths never echoed).               |
-| `browser_dialog`        | `inspect`/`accept`/`dismiss` a native dialog.                          |
-| `browser_find`          | Locate elements without acting (tag/text/visibility).                  |
-| `browser_exists`        | **0-wait probe.** Returns `{exists, count}` in one roundtrip.          |
-| `browser_wait`          | Wait for a selector state or a load state.                             |
-| `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.      |
-| `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.       |
-| `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref.    |
-| `browser_page`          | `list`/`open`/`select`/`close` tabs.                                   |
-| `browser_logs`          | Console + network history, with cursors. See below.                    |
-| `browser_mock`          | Serve a fixed response or block matching requests.                     |
-| `browser_state`         | Save/restore cookies and local storage (a login, once).                |
-| `browser_trace`         | Record a run to an owned directory; `zip` for a Vibium archive.        |
-| `browser_screenshot`    | Capture PNG to a file under the artifact dir; never inlined.           |
-| `browser_status`        | Browser up? Which URL is active?                                       |
-| `browser_advanced_eval` | Evaluate JS in the page. Last resort.                                  |
+| Tool                    | Purpose                                                             |
+| ----------------------- | ------------------------------------------------------------------- |
+| `browser_navigate`      | Go to a URL (waits for load).                                       |
+| `browser_click`         | Click an element; set `double` for a double-click.                  |
+| `browser_fill`          | Fill a field; set `submit` to press Enter in the same action.       |
+| `browser_type`          | Type into whatever holds focus (no selector).                       |
+| `browser_element`       | `dblclick`/`focus`/`scroll`/`clear`/`check`/`uncheck`/`select`.     |
+| `browser_press`         | Press a key (`Enter`, `Tab`, `Control+A`).                          |
+| `browser_key`           | Low-level `press`/`down`/`up` for modifier combinations.            |
+| `browser_mouse`         | `move`/`click`/`down`/`up`/`wheel`, by element or coordinate.       |
+| `browser_hover`         | Hover over an element.                                              |
+| `browser_upload`        | Set files on a file input (bounded; paths never echoed).            |
+| `browser_dialog`        | `inspect`/`accept`/`dismiss` a native dialog.                       |
+| `browser_find`          | Locate elements without acting (tag/text/visibility).               |
+| `browser_exists`        | **0-wait probe.** Returns `{exists, count}` in one roundtrip.       |
+| `browser_wait`          | Wait for a selector state or a load state.                          |
+| `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.   |
+| `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.    |
+| `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref. |
+| `browser_page`          | `list`/`open`/`select`/`close` tabs.                                |
+| `browser_logs`          | Console + network history, with cursors. See below.                 |
+| `browser_mock`          | Serve a fixed response or block matching requests.                  |
+| `browser_state`         | Save/restore cookies and local storage (a login, once).             |
+| `browser_trace`         | Record a run to an owned directory; `zip` for a Vibium archive.     |
+| `browser_screenshot`    | Capture PNG to a file under the artifact dir; never inlined.        |
+| `browser_status`        | Browser up? Which URL is active?                                    |
+| `browser_advanced_eval` | Evaluate JS in the page. Last resort.                               |
 
 Each tool carries MCP `annotations` — `title`, `readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint` — and they are accurate:
@@ -218,33 +218,71 @@ ref=e5                     (← from browser_snapshot, see below)
 
 Call `browser_snapshot` (or just navigate — the post-action diff
 carries refs too) and you get a sanitized accessibility-tree summary
-where each visible interactive element is numbered:
+where each visible semantic element is numbered:
+
+MCP browser sessions use a 1280x800 desktop layout by default so responsive
+pages expose their primary controls on the first observation.
 
 ```
-page: Login — http://…/login.html
-e1: heading "Login"
-e2: form "Username Password Sign in" #login-form
-e3: label "Username"
-e4: textbox "Username" #username
-e5: label "Password"
-e6: textbox "Password" #password
-e7: button "Sign in" #submit
+page: Craftdriver Login Example — http://…/login.html
+e1: heading "Login" [level=1]
+e2: form (container) #login-form
+  e3: label "Username"
+  e4: textbox "Username" #username
+  e5: label "Password"
+  e6: input "Password" #password
+  e7: button "Sign in" #submit
 ```
+
+A line is `ref: role "accessible name"`, followed by whatever the agent needs
+to decide its next step: `[level=N]` on headings, `href="…"` on links,
+`value="…"` on filled fields, a locator hint (`#id`, `[data-testid=…]`,
+`tag[name=…]`), and state flags — `(disabled)`, `(checked)`, `(selected)`,
+`(expanded=…)`, `(pressed=…)`, `(current=…)`.
+
+Values of password, hidden, file, checkbox, radio and button-like inputs are
+never printed, and values of conventionally named secret fields are suppressed
+— see [Field values in snapshots](#field-values-in-snapshots) below.
+
+Structural containers (`form`, `main`, `navigation`, `region`, `list`, `table`, …)
+are marked `(container)` and their semantic descendants are indented. They are
+named only from an explicit `aria-label`/`aria-labelledby`, never from their
+descendants' text — which is why `e2` above is `form (container) #login-form`
+and not a form named `"Username Password Sign in"`.
 
 Use `ref=eN` as the selector for the next call:
 
 ```jsonc
 { "name": "browser_fill",  "arguments": { "selector": "ref=e4", "value": "alice" } }
-{ "name": "browser_fill",  "arguments": { "selector": "ref=e6", "value": "hunter2" } }
-{ "name": "browser_click", "arguments": { "selector": "ref=e7" } }
+{ "name": "browser_fill",  "arguments": { "selector": "ref=e6", "value": "hunter2", "submit": true } }
 ```
+
+For a searchbox or conventional form whose final field is a single-line input,
+pass `"submit": true` to `browser_fill`. It presses Enter through the focused
+field without resolving the selector again, so a reactive rerender cannot stale
+a sibling submit ref. Do not apply this to textareas, multi-step wizards, or
+flows requiring a specific secondary action. When a separate sibling action is
+required, use the fresh ref from the fill's post-action delta.
+
+Observed Enter submissions use a bounded navigation fence: they detect
+navigation that starts within about 140 ms after the input command returns and
+wait at most 500 ms for its load. The bound is intentionally independent of a
+tool timeout, so same-page validation remains fast. If application code waits
+longer before navigating, wait for a destination-specific selector. Clicks
+rely on WebDriver's own navigation wait and do not add this extra fence, so an
+asynchronously scheduled post-click navigation needs the same explicit wait.
+
+A bare token such as `e7` is also accepted after this session has issued that
+ref. Unknown bare ref-shaped tokens fail immediately with `BARE_REF`; use
+`css=e7` when selecting a literal `<e7>` element.
 
 **Use refs only for immediate exploration**
 
 - **A ref names one element for as long as it lives.** A surviving node keeps
   its ref across snapshots, and refs are never reused — so a ref cannot drift
   onto a different element. If it is removed or the page
-  navigates, the call fails `STALE_REF`; take a fresh snapshot then.
+  navigates, the call fails `STALE_REF`; use its bounded recovery snapshot when
+  present, and take a fresh snapshot only when recovery context is unavailable.
 - **Never copy refs into test code.** Convert live role/name, label, test ID,
   text, or DOM evidence into a durable selector and validate it.
 - **Token efficient.** `ref=e7` is 5 characters; `role=button[name=Sign in]`
@@ -260,8 +298,9 @@ Use `ref=eN` as the selector for the next call:
 - New elements get fresh numbers. Refs are never reused, including after a
   navigation or reload.
 - A ref whose element was removed, or that was issued before
-  the page navigated or reloaded, fails with `STALE_REF` — take a fresh
-  snapshot. It never resolves to a different element.
+  the page navigated or reloaded, fails with `STALE_REF` and returns a bounded
+  recovery snapshot when available. It never retries or resolves to a
+  different element.
 - `error.detail.reason` distinguishes `detached`, `document-changed`,
   `unknown-ref`, `ambiguous`, and `no-snapshot`.
 - Refs are exploration state and must never appear in committed tests.
@@ -270,32 +309,76 @@ Snapshots recursively enter open Shadow DOM, mark each boundary with an
 indented `#shadow-root (open)` line, flatten slot assignment without duplicate
 entries, and never inspect closed roots.
 
+Content hidden from assistive technology is hidden from the agent too: an
+element under an `aria-hidden="true"` or `inert` ancestor never appears in a
+snapshot, even when it is still on screen and clickable.
+
+### Field values in snapshots
+
+Snapshots print `value="…"` for ordinary text fields so an agent can confirm
+what it typed without a follow-up read. This matters more over MCP than over
+the CLI, because MCP snapshots after **every** page-changing tool call — a
+value that appears once is re-sent on every later diff that touches the field.
+
+Never printed:
+
+- `password`, `hidden` and `file` inputs;
+- `checkbox`, `radio`, `submit`, `button`, `reset` and `image` inputs, whose
+  `value` is a constant like `"on"` or a duplicate of the button label;
+- fields whose `autocomplete` is `one-time-code`, `current-password`,
+  `new-password`, or any `cc-*` token;
+- fields whose id, name, placeholder, `aria-label`, or accessible name reads
+  like a secret — `password`, `otp`, `token`, `secret`, `api key`,
+  `access key`, `credit card`, `card number`, `cvv`, `cvc`, `security code`.
+
+This is **best-effort noise and exposure reduction, not a classifier**. It
+recognises conventional naming; it cannot know that `#field7` holds a session
+key. Use test credentials, and do not point an agent-driven browser at an
+account whose secrets you would not want in a transcript.
+
 ## Post-action payload
 
-Every tool returns a content array. Mutating tools (`navigate`,
-`click`, `fill`, `press`, `hover`, `advanced_eval`) additionally
-include a **compact a11y snapshot, diffed from the previous turn**:
+Every tool returns a content array. Tools that can change the page —
+`navigate`, `click`, `fill`, `type`, `element`, `press`, `key`, `mouse`,
+`hover`, `upload`, `dialog`, and `advanced_eval` — additionally include a
+**compact a11y snapshot, diffed from the previous turn**:
 
 ```jsonc
 {
   "content": [
-    { "type": "text", "text": "{\"ok\":true,\"selector\":\"css selector=button[type=submit]\"}" },
+    { "type": "text", "text": "{\"ok\":true,\"selector\":\"#submit\"}" },
     {
       "type": "text",
-      "text": "page: Login — http://…/login.html\n- form \"Username Password Sign in\" #login-form\n- textbox \"Username\" #username\n- button \"Sign in\" #submit\n+ button \"Logout\" #logout"
-    }
+      "text": "page: Craftdriver Login Example — http://…/login.html\n+ e8: div \"Missing credentials\" #result",
+    },
   ],
-  "structuredContent": { "result": { "ok": true, "selector": "css selector=button[type=submit]" } }
+  "structuredContent": { "result": { "ok": true, "selector": "#submit" } },
 }
 ```
 
-- **First call in a session** returns the full snapshot (one line per
-  visible interactive element: role + accessible name + locator hint).
+- **First call in a session** returns the full snapshot.
 - **Subsequent calls** return only the lines that appeared (`+`) or
-  disappeared (`-`).
-- **URL change** triggers a fresh full snapshot.
-- Capped at 80 nodes / 80 chars per name so the payload stays bounded
-  regardless of page complexity.
+  disappeared (`-`), or `(no a11y changes)` when nothing did.
+- **URL or document change** triggers a fresh full snapshot rather than a diff,
+  since the old lines describe a page that no longer exists.
+- **A blocking dialog** replaces the snapshot with `dialog open: <message>`,
+  because script cannot run behind a modal. Handle it with `browser_dialog`.
+- `selector` echoes back the selector you passed, not the compiled WebDriver
+  query — so `ref=e7` stays `ref=e7` and `role=button[name=Save]` stays
+  readable. Error messages still name the compiled query
+  (`no element matches css selector=#nope`), which is what you need when a
+  selector fails to match.
+- Capped independently at 80 semantic nodes, 7 ordinary text nodes, and
+  10 status/result evidence nodes, with 80 chars per name, value, and link
+  destination, so prose or generated URLs cannot hide controls or validation
+  evidence. `browser_read` with `field: "attr"` returns the complete `href`.
+
+Status and result text is captured as well as controls: `<output>`,
+`aria-live` regions, `<caption>`/`<figcaption>`, and short `<p>` elements
+whose `id`/`data-testid` reads like evidence (`status`, `result`, `error`,
+`message`, `success`, `log`, …) appear as `text` lines. That is what makes a
+validation failure or a "Saved" confirmation show up in the diff instead of
+requiring a follow-up read.
 
 This is the MCP server's "killer feature" over the CLI: the agent sees
 what changed without a follow-up `read` call, in ~50–500 text tokens
@@ -304,19 +387,23 @@ instead of 800–1500 image tokens for a screenshot.
 ## Artifact spilling (token efficiency)
 
 MCP content blocks count against the model's context window on every
-turn. To keep the per-call cost bounded, large payloads are **written
-to disk** and the inline block becomes a short preview plus the
-absolute path:
+turn. To keep the per-call cost bounded, any content block over
+`CRAFTDRIVER_MCP_SPILL_BYTES` (2048 by default) is **written to disk**, and
+the inline block becomes a short preview plus the absolute path:
 
 ```
-heading "Selectors Playground"
-textbox "by id" #by-id
-textbox "by name" #by-name
-img "Logo ALT" #by-alt
-button "Click me" #by-text
+page: Dashboard — http://…/dashboard
+e1: navigation (container)
+  e2: link "Overview" href="/section/0/overview"
+  e3: link "Billing" href="/section/1/billing"
+  e4: link "Members" href="/section/2/members"
 …
-(full output: /tmp/craftdriver-mcp-1234-abc/0001-snapshot.txt, 1872 bytes)
+(full output: /tmp/craftdriver-mcp-1234-abc/0001-snapshot.txt, 3184 bytes)
 ```
+
+Most application pages stay well under the threshold — the login example above
+renders in 276 bytes, and a link-heavy dashboard crosses 2048 at roughly a
+dozen nav links.
 
 Applies to:
 
@@ -332,11 +419,11 @@ Applies to:
 
 Configuration:
 
-| Env var                            | Default          | Effect                                            |
-| ---------------------------------- | ---------------- | ------------------------------------------------- |
-| `CRAFTDRIVER_MCP_ARTIFACTS_DIR`    | `os.tmpdir()`    | Root directory for the per-session artifact dir.  |
-| `CRAFTDRIVER_MCP_SPILL_BYTES`      | `2048` (~500 tk) | Inline content blocks larger than this spill.     |
-| `CRAFTDRIVER_MCP_MAX_RESPONSE_BYTES` | `32768`        | Maximum serialized result from one tool call.     |
+| Env var                              | Default          | Effect                                           |
+| ------------------------------------ | ---------------- | ------------------------------------------------ |
+| `CRAFTDRIVER_MCP_ARTIFACTS_DIR`      | `os.tmpdir()`    | Root directory for the per-session artifact dir. |
+| `CRAFTDRIVER_MCP_SPILL_BYTES`        | `2048` (~500 tk) | Inline content blocks larger than this spill.    |
+| `CRAFTDRIVER_MCP_MAX_RESPONSE_BYTES` | `32768`          | Maximum serialized result from one tool call.    |
 
 The per-session directory (`<root>/craftdriver-mcp-<pid>-<stamp>/`) is
 not deleted on shutdown — agents may still be reading past artifacts.
@@ -364,11 +451,14 @@ a mistake about the protocol that it should correct.
 {
   "isError": true,
   "content": [
-    { "type": "text", "text": "error: click: no element matches css selector=#nope\ncode:  NO_MATCH" }
+    {
+      "type": "text",
+      "text": "error: click: no element matches css selector=#nope\ncode:  NO_MATCH",
+    },
   ],
   "structuredContent": {
-    "error": { "code": "NO_MATCH", "message": "click: no element matches css selector=#nope" }
-  }
+    "error": { "code": "NO_MATCH", "message": "click: no element matches css selector=#nope" },
+  },
 }
 ```
 

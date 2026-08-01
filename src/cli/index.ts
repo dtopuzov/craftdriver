@@ -18,7 +18,7 @@ import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { AgentSession, type AgentSessionRunner } from './agentSession.js';
 import { parseArgv, HELP_TEXT, type ParsedCommand, type GlobalFlags } from './parseArgs.js';
 import { DaemonClient } from './client.js';
-import { runDaemon, toWireError } from './daemon.js';
+import { runDaemon, toWireError, renderObservedResult } from './daemon.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
 import { MAX_STDIN_BYTES } from './bounds.js';
 import {
@@ -41,9 +41,9 @@ import type { LaunchOptions } from '../lib/browser.js';
 const VERSION = (() => {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(
-      readFileSync(resolve(here, '..', '..', 'package.json'), 'utf8'),
-    ) as { version?: string };
+    const pkg = JSON.parse(readFileSync(resolve(here, '..', '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
     return pkg.version ?? '0.0.0';
   } catch {
     return '0.0.0';
@@ -74,9 +74,9 @@ function daemonSupported(): boolean {
 function unsupportedDaemon(): number {
   process.stderr.write(
     'error: the craftdriver daemon is not supported on Windows\n' +
-    `code:  ${ErrorCode.UNSUPPORTED}\n` +
-    'hint:  use `craftdriver --ephemeral < script.txt` for a one-shot run, ' +
-    'or `craftdriver mcp` for an agent session; both avoid the socket\n',
+      `code:  ${ErrorCode.UNSUPPORTED}\n` +
+      'hint:  use `craftdriver --ephemeral < script.txt` for a one-shot run, ' +
+      'or `craftdriver mcp` for an agent session; both avoid the socket\n'
   );
   // UNSUPPORTED is an operational/platform limitation, not malformed CLI
   // syntax. Keep it aligned with the normal error-code-to-exit-code mapping.
@@ -159,7 +159,9 @@ export async function main(argv: string[]): Promise<number> {
   if (!(await DaemonClient.isRunning())) {
     const ok = await autoStartDaemon(parsed.flags);
     if (!ok) {
-      process.stderr.write('error: could not start daemon\ncode:  DRIVER_ERROR\nhint:  try `craftdriver daemon start` to see launch errors\n');
+      process.stderr.write(
+        'error: could not start daemon\ncode:  DRIVER_ERROR\nhint:  try `craftdriver daemon start` to see launch errors\n'
+      );
       return 1;
     }
   }
@@ -169,7 +171,9 @@ export async function main(argv: string[]): Promise<number> {
     const resp = await client.send(parsed.cmd, parsed.args);
     return emitResponse(parsed, resp);
   } catch (e) {
-    process.stderr.write('error: ' + ((e as Error).message ?? String(e)) + '\ncode:  DRIVER_ERROR\n');
+    process.stderr.write(
+      'error: ' + ((e as Error).message ?? String(e)) + '\ncode:  DRIVER_ERROR\n'
+    );
     return 1;
   }
 }
@@ -215,7 +219,7 @@ function checkSessionUsage(parsed: ParsedCommand): number {
     process.stderr.write(
       `error: unknown session subcommand "${parsed.cmd.slice('session:'.length)}"\n` +
         'code:  INVALID_ARGUMENT\n' +
-        'hint:  craftdriver session list | session close <name>\n',
+        'hint:  craftdriver session list | session close <name>\n'
     );
     return 2;
   }
@@ -225,14 +229,14 @@ function checkSessionUsage(parsed: ParsedCommand): number {
       'error: --session cannot be combined with --ephemeral\n' +
         'code:  INVALID_ARGUMENT\n' +
         'hint:  an ephemeral run owns exactly one browser and exits with it; ' +
-        'use the daemon for named sessions\n',
+        'use the daemon for named sessions\n'
     );
     return 2;
   }
   if (SESSION_SUBCOMMANDS.has(parsed.cmd)) {
     process.stderr.write(
       `error: "${parsed.cmd.replace(':', ' ')}" needs the daemon and is not available with --ephemeral\n` +
-        'code:  INVALID_ARGUMENT\n',
+        'code:  INVALID_ARGUMENT\n'
     );
     return 2;
   }
@@ -293,7 +297,7 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
         if (ignoredLaunchFlag) {
           process.stderr.write(
             `error: ${ignoredLaunchFlag} cannot be set inside an ephemeral script in: ${line}\n` +
-              `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`,
+              `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`
           );
           rc = Math.max(rc, 2);
           continue;
@@ -333,10 +337,15 @@ interface DispatchOutcome {
 
 async function safeDispatch(
   session: AgentSessionRunner,
-  parsed: ParsedCommand,
+  parsed: ParsedCommand
 ): Promise<DispatchOutcome> {
   try {
-    const value = await session.run({ cmd: parsed.cmd, args: parsed.args });
+    const { observe, ...args } = parsed.args;
+    if (observe === 'page' || observe === 'delta') {
+      const detailed = await session.runDetailed({ cmd: parsed.cmd, args, observe });
+      return { ok: true, value: renderObservedResult(detailed, observe) };
+    }
+    const value = await session.run({ cmd: parsed.cmd, args });
     return { ok: true, value };
   } catch (e) {
     return { ok: false, error: toWireError(e) };
@@ -390,7 +399,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     process.stderr.write(
       `error: init: unknown agent ${JSON.stringify(agent)}\n` +
         `code:  INVALID_ARGUMENT\n` +
-        `hint:  run: craftdriver init --agent ${AGENT_TARGETS.join('|')}\n`,
+        `hint:  run: craftdriver init --agent ${AGENT_TARGETS.join('|')}\n`
     );
     return 2;
   }
@@ -401,7 +410,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     process.stderr.write(
       'warning: `craftdriver init codex` is deprecated; ' +
         'run `craftdriver init` to cover Claude Code, Codex, and Copilot, ' +
-        'or `craftdriver init --agent codex` for Codex alone\n',
+        'or `craftdriver init --agent codex` for Codex alone\n'
     );
   }
   try {
@@ -417,7 +426,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     const width = Math.max(...result.installs.map((i) => i.relativePath.length));
     for (const install of result.installs) {
       process.stdout.write(
-        `${verb[install.status]} ${install.relativePath.padEnd(width)}  (${install.readers.join(', ')})\n`,
+        `${verb[install.status]} ${install.relativePath.padEnd(width)}  (${install.readers.join(', ')})\n`
       );
     }
 
@@ -431,7 +440,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     if (result.mcp) {
       process.stdout.write(
         '\nMCP is optional. Add it manually if your host prefers structured tool calls;\n' +
-          'no host configuration was read or changed:\n',
+          'no host configuration was read or changed:\n'
       );
       for (const entry of result.mcp) {
         process.stdout.write(`\n# ${entry.host} — ${entry.file}\n${entry.snippet}\n`);
@@ -441,8 +450,7 @@ function runInitCommand(parsed: ParsedCommand): number {
     return 0;
   } catch (error) {
     process.stderr.write(
-      `error: ${(error as Error).message ?? String(error)}\n` +
-        `code:  INVALID_ARGUMENT\n`,
+      `error: ${(error as Error).message ?? String(error)}\n` + `code:  INVALID_ARGUMENT\n`
     );
     return 2;
   }
@@ -509,13 +517,19 @@ async function daemonStatus(parsed: ParsedCommand, session: string): Promise<num
     return 0;
   }
   let info: Record<string, unknown> = {
-    running: true, pid, socket: DAEMON_SOCKET_PATH, project, session,
+    running: true,
+    pid,
+    socket: DAEMON_SOCKET_PATH,
+    project,
+    session,
   };
   try {
     const client = new DaemonClient({ session });
     const resp = await client.send('status');
     if (resp.ok) info = { ...info, ...(resp.result as Record<string, unknown>) };
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   writeOk(parsed, info);
   return 0;
 }
@@ -529,7 +543,9 @@ async function daemonRun(flags: GlobalFlags): Promise<number> {
 async function autoStartDaemon(flags: GlobalFlags): Promise<boolean> {
   const self = process.argv[1] ?? fileURLToPath(import.meta.url);
   const args = ['daemon', '__run__'];
-  if (flags.launch.browserName) { args.push('--browser', flags.launch.browserName); }
+  if (flags.launch.browserName) {
+    args.push('--browser', flags.launch.browserName);
+  }
   if (flags.headless === true) args.push('--headless');
   if (flags.headless === false) args.push('--headed');
   const child = spawn(process.execPath, [self, ...args], {
@@ -565,7 +581,13 @@ function writeOk(parsed: ParsedCommand, result: unknown): void {
   process.stdout.write(prettyResult(parsed.cmd, result) + '\n');
 }
 
-function writeErr(err: { code: string; message: string; hint?: string; detail?: Record<string, unknown> }): void {
+function writeErr(err: {
+  code: string;
+  message: string;
+  hint?: string;
+  detail?: Record<string, unknown>;
+  recoverySnapshot?: string;
+}): void {
   // Strip the chromedriver/geckodriver stack-trace dump that comes through
   // on transport errors. Agents read `code` and the first line of `message`;
   // the rest is noise.
@@ -573,12 +595,20 @@ function writeErr(err: { code: string; message: string; hint?: string; detail?: 
   if (process.stdout.isTTY) {
     process.stderr.write(`error: ${cleanMessage}\ncode:  ${err.code}\n`);
     if (err.hint) process.stderr.write(`hint:  ${err.hint}\n`);
+    if (err.recoverySnapshot) {
+      process.stderr.write(`recovery snapshot:\n${err.recoverySnapshot}\n`);
+    }
     return;
   }
-  process.stdout.write(JSON.stringify({ ok: false, error: { ...err, message: cleanMessage } }) + '\n');
+  process.stdout.write(
+    JSON.stringify({ ok: false, error: { ...err, message: cleanMessage } }) + '\n'
+  );
 }
 
-function emitResponse(parsed: ParsedCommand, resp: { ok: true; result: unknown } | { ok: false; error: { code: string; message: string; hint?: string; detail?: Record<string, unknown> } }): number {
+function emitResponse(
+  parsed: ParsedCommand,
+  resp: { ok: true; result: unknown } | { ok: false; error: ReturnType<typeof toWireError> }
+): number {
   if (resp.ok) {
     writeOk(parsed, resp.result);
     return successExitCode(parsed, resp.result);
@@ -607,9 +637,10 @@ function prettyResult(cmd: string, result: unknown): string {
       return `[${idx}] <${tag}>${vis}  "${text}"`;
     });
     const header = `count=${r.count}${r.truncated ? ' (truncated)' : ''}`;
-    const trailer = r.truncated && r.total !== undefined && r.next_offset !== undefined && r.next_offset !== null
-      ? `\n... ${r.total} total; resume with --offset ${r.next_offset}`
-      : '';
+    const trailer =
+      r.truncated && r.total !== undefined && r.next_offset !== undefined && r.next_offset !== null
+        ? `\n... ${r.total} total; resume with --offset ${r.next_offset}`
+        : '';
     return [header, ...lines].join('\n') + trailer;
   }
   if (cmd === 'pages' && Array.isArray(r.pages)) {
@@ -632,8 +663,9 @@ function prettyResult(cmd: string, result: unknown): string {
   }
   if (cmd === 'session:list' && Array.isArray(r.sessions)) {
     const head = `${r.count} of ${r.limit} sessions open`;
-    const rows = (r.sessions as Array<Record<string, unknown>>)
-      .map((s) => `  ${s.name as string}  (since ${s.createdAt as string})`);
+    const rows = (r.sessions as Array<Record<string, unknown>>).map(
+      (s) => `  ${s.name as string}  (since ${s.createdAt as string})`
+    );
     return rows.length === 0 ? head : [head, ...rows].join('\n');
   }
   if (cmd === 'state' && Array.isArray(r.states)) {
@@ -672,11 +704,24 @@ function tokenize(line: string): string[] {
   let quote: string | null = null;
   for (const ch of line) {
     if (quote) {
-      if (ch === quote) { quote = null; continue; }
-      cur += ch; continue;
+      if (ch === quote) {
+        quote = null;
+        continue;
+      }
+      cur += ch;
+      continue;
     }
-    if (ch === '"' || ch === "'") { quote = ch; continue; }
-    if (ch === ' ' || ch === '\t') { if (cur) { out.push(cur); cur = ''; } continue; }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === ' ' || ch === '\t') {
+      if (cur) {
+        out.push(cur);
+        cur = '';
+      }
+      continue;
+    }
     cur += ch;
   }
   if (cur) out.push(cur);
@@ -699,11 +744,13 @@ async function readAllStdin(): Promise<string> {
       bytes += Buffer.byteLength(c, 'utf8');
       if (bytes > MAX_STDIN_BYTES) {
         process.stdin.destroy();
-        reject(new CraftdriverError(
-          ErrorCode.INVALID_ARGUMENT,
-          `stdin exceeded ${MAX_STDIN_BYTES} bytes`,
-          { hint: 'split the script, or drive the daemon one command at a time' },
-        ));
+        reject(
+          new CraftdriverError(
+            ErrorCode.INVALID_ARGUMENT,
+            `stdin exceeded ${MAX_STDIN_BYTES} bytes`,
+            { hint: 'split the script, or drive the daemon one command at a time' }
+          )
+        );
         return;
       }
       buf += c;

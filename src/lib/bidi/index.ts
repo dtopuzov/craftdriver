@@ -83,6 +83,7 @@ export class BiDiSession {
         // Load-bearing for every session: `waitForLoadState`/`onDialog`, and
         // dialogs must be BiDi-handleable since `unhandledPromptBehavior` is
         // unconditionally set to 'ignore' at launch.
+        'browsingContext.navigationStarted',
         'browsingContext.load',
         'browsingContext.domContentLoaded',
         'browsingContext.userPromptOpened',
@@ -208,6 +209,11 @@ export class BiDiSession {
     return this.connection.on('browsingContext.load', handler);
   }
 
+  /** Register a handler for top-level navigation starts. */
+  onNavigationStarted(handler: (params: Record<string, unknown>) => void): () => void {
+    return this.connection.on('browsingContext.navigationStarted', handler);
+  }
+
   /**
    * Register a handler for the next `browsingContext.domContentLoaded`
    * event on the active top-level context. Returns an unsubscribe function.
@@ -261,7 +267,12 @@ export class BiDiSession {
 
 // Export all BiDi modules
 export { BiDiConnection } from './connection.js';
-export { NetworkInterceptor, type MockResponse, type InterceptedRequest, type InterceptedResponse } from './network.js';
+export {
+  NetworkInterceptor,
+  type MockResponse,
+  type InterceptedRequest,
+  type InterceptedResponse,
+} from './network.js';
 export { LogMonitor, type ConsoleMessage, type JavaScriptError, type LogMessage } from './logs.js';
 export { SessionStateManager, type StorageStateOptions } from './storage.js';
 export * from './types.js';

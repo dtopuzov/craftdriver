@@ -17,7 +17,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -71,6 +71,35 @@ async function runCli(script: string, extraEnv: NodeJS.ProcessEnv = {}): Promise
   });
 }
 
+/** Run one command through the persistent daemon surface. */
+async function runCliOnce(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn('node', [CLI_BIN, ...args], {
+      env: { ...process.env, ...extraEnv, HEADLESS: 'true' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (b) => (stdout += b.toString('utf8')));
+    child.stderr.on('data', (b) => (stderr += b.toString('utf8')));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      const lines = stdout
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+          try {
+            return JSON.parse(l) as Line;
+          } catch {
+            return { ok: false, error: { code: 'PARSE_ERROR', message: l } };
+          }
+        });
+      resolveRun({ exitCode: code ?? 0, lines, stderr });
+    });
+  });
+}
+
 /** Assert every step succeeded, naming the first that did not. */
 function expectAllOk(run: RunResult): void {
   const failed = run.lines.findIndex((l) => !l.ok);
@@ -95,6 +124,63 @@ describe('CLI end-to-end flows', () => {
     expectAllOk(run);
     expect(run.exitCode).toBe(0);
     expect(String(run.lines.at(-1)!.result!.text)).toMatch(/welcome/i);
+  }, E2E_TIMEOUT);
+
+  it('returns an atomic page or delta observation only when requested', async () => {
+    const run = await runCli(`
+      open ${EXAMPLES_BASE_URL}/agent-actions.html --observe delta
+      click #save --observe=delta
+      click #counter --observe page
+    `);
+
+    expectAllOk(run);
+    expect(run.lines[0].result!.delta).toContain('Agent actions');
+    expect(run.lines[0].result!.delta).toContain('heading "Account settings" [level=1]');
+    expect(run.lines[0].result!.delta).toContain('value="preset"');
+    expect(run.lines[1].result).toMatchObject({
+      ok: true,
+      selector: '#save',
+      delta: expect.stringContaining('text "saved" #log'),
+    });
+    expect(run.lines[1].result!.delta).not.toContain('no a11y changes');
+    expect(run.lines[2].result).toMatchObject({
+      ok: true,
+      selector: '#counter',
+      page: {
+        url: expect.stringContaining('agent-actions.html'),
+        documentId: expect.any(String),
+        revision: expect.any(Number),
+        documentChange: 'same',
+      },
+    });
+  }, E2E_TIMEOUT);
+
+  it('returns atomic deltas through the real persistent daemon', async () => {
+    const daemonDir = mkdtempSync(join(tmpdir(), 'craftdriver-observe-daemon-'));
+    const daemonEnv = {
+      CRAFTDRIVER_SOCKET: join(daemonDir, 'sock'),
+      CRAFTDRIVER_PID: join(daemonDir, 'pid'),
+    };
+
+    try {
+      const opened = await runCliOnce([
+        'open', `${EXAMPLES_BASE_URL}/agent-actions.html`, '--observe=delta',
+        '--browser', BROWSER_NAME, '--headless',
+      ], daemonEnv);
+      expectAllOk(opened);
+
+      const clicked = await runCliOnce(['click', '#save', '--observe=delta'], daemonEnv);
+      expectAllOk(clicked);
+      expect(clicked.lines[0].result).toMatchObject({
+        ok: true,
+        selector: '#save',
+        delta: expect.stringContaining('text "saved" #log'),
+      });
+      expect(clicked.lines[0].result!.delta).not.toContain('no a11y changes');
+    } finally {
+      await runCliOnce(['daemon', 'stop'], daemonEnv).catch(() => undefined);
+      rmSync(daemonDir, { recursive: true, force: true });
+    }
   }, E2E_TIMEOUT);
 
   it('completes a settings form with every control type', async () => {
@@ -210,6 +296,28 @@ describe('CLI end-to-end flows', () => {
     expect(run.lines[3].result).toMatchObject({ open: true, message: 'Hello from alert' });
     expect(run.lines.at(-1)!.result!.text).toBe('dismissed');
     expect(Date.now() - started).toBeLessThan(60_000);
+  }, E2E_TIMEOUT);
+
+  it('keeps page observations explicit when identity is unknown or a dialog blocks snapshots', async () => {
+    const run = await runCli(`
+      go ${EXAMPLES_BASE_URL}/login.html
+      go ${EXAMPLES_BASE_URL}/dialogs.html --observe=page
+      click #show-alert --observe=page
+      dialog accept
+    `);
+
+    expectAllOk(run);
+    expect(run.lines[1].result).toMatchObject({
+      page: {
+        url: expect.stringContaining('dialogs.html'),
+        documentChange: 'unknown',
+      },
+    });
+    expect(run.lines[2].result).toMatchObject({
+      ok: true,
+      selector: '#show-alert',
+      warning: expect.stringContaining('dialog open: Hello from alert'),
+    });
   }, E2E_TIMEOUT);
 
   it('uploads a file by path without echoing its contents', async () => {

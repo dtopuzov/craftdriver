@@ -9,6 +9,7 @@
  *   --pretty                force pretty output even when piped
  *   --headless / --headed   launch option (only honoured for ephemeral / first daemon start)
  *   --browser <name>        chrome|chromium|firefox|safari
+ *   --viewport <width>x<height>  layout viewport for `go`
  *   --ephemeral             run from stdin, don't talk to daemon
  *
  * Returns `null` when the user only asked for help / version.
@@ -45,11 +46,11 @@ USAGE
   craftdriver <command> [args...] [flags]
 
 COMMON COMMANDS
-  go <url>                          navigate the active page
+  go|open <url> [--viewport WxH]    navigate the active page
   find <selector> [--all] [--limit N] [--offset M]
-  click <selector>
+  click <selector> [--observe page|delta]
   dblclick <selector>
-  fill <selector> <value>           clear, then enter the value
+  fill <selector> <value> [--submit]  clear, enter the value, optionally submit
   type <text>                       type into the focused element
   clear <selector>
   check <selector> | uncheck <selector>
@@ -92,7 +93,7 @@ COMMON COMMANDS
   state load <name>                 restore saved login state (pre-navigation on BiDi)
   state list                        saved state names
   screenshot [-o file.png] [--full-page] [--selector S]
-  eval <js>                         advanced; evaluate JS on active page
+  eval <js> [--observe page|delta]  advanced; evaluate JS on active page
   back | forward | reload | status | quit
 
 KEYBOARD / MOUSE / DIALOGS / UPLOAD
@@ -161,6 +162,7 @@ FLAGS
   --json | --pretty                 force output format
   --headless / --headed             override headless mode (first launch only)
   --browser <chrome|chromium|firefox|safari>
+  --viewport <width>x<height>       override the 1280x800 agent viewport for go
   --session <name>                  named daemon session (default: default)
   --ephemeral                       no daemon; read commands from stdin
 
@@ -174,13 +176,47 @@ EXIT CODES
  * two in step — `parse-args` covers the drift.
  */
 const KNOWN_FLAGS = [
-  '--help', '--version', '--json', '--pretty', '--ephemeral', '--headless',
-  '--headed', '--browser', '--session', '--timeout', '--limit', '--offset',
-  '--all', '--dry-run', '--mcp', '--force', '--full-page', '--session-storage',
-  '--kind', '--level', '--contains', '--since', '--no-screenshots', '--zip',
-  '--status', '--body', '--content-type', '--state', '--selector', '--output',
-  '--name', '--text', '--button', '--files', '--delta-x', '--delta-y',
-  '--x', '--y',
+  '--help',
+  '--version',
+  '--json',
+  '--pretty',
+  '--ephemeral',
+  '--headless',
+  '--headed',
+  '--browser',
+  '--session',
+  '--timeout',
+  '--limit',
+  '--offset',
+  '--all',
+  '--dry-run',
+  '--mcp',
+  '--force',
+  '--full-page',
+  '--session-storage',
+  '--kind',
+  '--level',
+  '--contains',
+  '--since',
+  '--no-screenshots',
+  '--zip',
+  '--status',
+  '--body',
+  '--content-type',
+  '--state',
+  '--selector',
+  '--output',
+  '--name',
+  '--text',
+  '--button',
+  '--files',
+  '--delta-x',
+  '--delta-y',
+  '--x',
+  '--y',
+  '--observe',
+  '--viewport',
+  '--submit',
 ] as const;
 
 interface CommandSyntax {
@@ -204,29 +240,49 @@ interface ActionCommandSyntax {
  * --all` accepted a real-but-irrelevant flag, then reported success.
  */
 const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
-  go: { min: 1, max: 1, usage: 'go <url>' },
-  click: { min: 1, max: 1, usage: 'click <selector>' },
-  dblclick: { min: 1, max: 1, usage: 'dblclick <selector>' },
-  fill: { min: 2, max: Infinity, usage: 'fill <selector> <value>' },
-  type: { min: 1, max: Infinity, usage: 'type <text>' },
-  press: { min: 1, max: 2, usage: 'press <key> [selector]' },
-  hover: { min: 1, max: 1, usage: 'hover <selector>' },
-  clear: { min: 1, max: 1, usage: 'clear <selector>' },
-  check: { min: 1, max: 1, usage: 'check <selector>' },
-  uncheck: { min: 1, max: 1, usage: 'uncheck <selector>' },
-  select: { min: 2, max: Infinity, usage: 'select <selector> <value>' },
-  focus: { min: 1, max: 1, usage: 'focus <selector>' },
-  scroll: { min: 1, max: 1, usage: 'scroll <selector>' },
+  go: { min: 1, max: 1, usage: 'go <url> [--viewport WxH]', options: ['observe', 'viewport'] },
+  click: { min: 1, max: 1, usage: 'click <selector>', options: ['observe'] },
+  dblclick: { min: 1, max: 1, usage: 'dblclick <selector>', options: ['observe'] },
+  fill: {
+    min: 2,
+    max: Infinity,
+    usage: 'fill <selector> <value> [--submit]',
+    options: ['observe', 'submit'],
+  },
+  type: { min: 1, max: Infinity, usage: 'type <text>', options: ['observe'] },
+  press: { min: 1, max: 2, usage: 'press <key> [selector]', options: ['observe'] },
+  hover: { min: 1, max: 1, usage: 'hover <selector>', options: ['observe'] },
+  clear: { min: 1, max: 1, usage: 'clear <selector>', options: ['observe'] },
+  check: { min: 1, max: 1, usage: 'check <selector>', options: ['observe'] },
+  uncheck: { min: 1, max: 1, usage: 'uncheck <selector>', options: ['observe'] },
+  select: { min: 2, max: Infinity, usage: 'select <selector> <value>', options: ['observe'] },
+  focus: { min: 1, max: 1, usage: 'focus <selector>', options: ['observe'] },
+  scroll: { min: 1, max: 1, usage: 'scroll <selector>', options: ['observe'] },
   locators: { min: 1, max: 1, usage: 'locators <selector>', options: ['limit'] },
-  upload: { min: 1, max: Infinity, usage: 'upload <selector> <file> [file...]', options: ['files'] },
-  key: { min: 2, max: Infinity, usage: 'key press|down|up <key>', options: ['selector'] },
+  upload: {
+    min: 1,
+    max: Infinity,
+    usage: 'upload <selector> <file> [file...]',
+    options: ['files', 'observe'],
+  },
+  key: {
+    min: 2,
+    max: Infinity,
+    usage: 'key press|down|up <key>',
+    options: ['selector', 'observe'],
+  },
   mouse: {
     min: 0,
     max: 2,
     usage: 'mouse move|click [selector] | mouse down|up | mouse wheel [selector]',
-    options: ['selector', 'x', 'y', 'button', 'deltaX', 'deltaY'],
+    options: ['selector', 'x', 'y', 'button', 'deltaX', 'deltaY', 'observe'],
   },
-  dialog: { min: 0, max: Infinity, usage: 'dialog inspect | accept [text] | dismiss', options: ['text'] },
+  dialog: {
+    min: 0,
+    max: Infinity,
+    usage: 'dialog inspect | accept [text] | dismiss',
+    options: ['text', 'observe'],
+  },
   find: { min: 1, max: 1, usage: 'find <selector>', options: ['all', 'limit', 'offset'] },
   exists: { min: 1, max: 1, usage: 'exists <selector>' },
   text: { min: 0, max: 1, usage: 'text [selector]', options: ['limit'] },
@@ -236,16 +292,36 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
   wait: { min: 1, max: 1, usage: 'wait <selector>|load', options: ['state'] },
   pages: { min: 0, max: 0, usage: 'pages' },
   page: { min: 0, max: 2, usage: 'page list|open|select|close [target]' },
-  logs: { min: 0, max: 1, usage: 'logs [list|wait|clear]', options: ['kind', 'level', 'contains', 'since', 'limit'] },
-  mock: { min: 0, max: 2, usage: 'mock add|block|list|remove|clear [target]', options: ['status', 'body', 'contentType'] },
-  trace: { min: 0, max: 2, usage: 'trace start|stop|status [name]', options: ['name', 'noScreenshots', 'zip'] },
+  logs: {
+    min: 0,
+    max: 1,
+    usage: 'logs [list|wait|clear]',
+    options: ['kind', 'level', 'contains', 'since', 'limit'],
+  },
+  mock: {
+    min: 0,
+    max: 2,
+    usage: 'mock add|block|list|remove|clear [target]',
+    options: ['status', 'body', 'contentType'],
+  },
+  trace: {
+    min: 0,
+    max: 2,
+    usage: 'trace start|stop|status [name]',
+    options: ['name', 'noScreenshots', 'zip'],
+  },
   state: { min: 0, max: 2, usage: 'state save|load|list [name]', options: ['sessionStorage'] },
-  screenshot: { min: 0, max: 0, usage: 'screenshot [-o file.png]', options: ['path', 'fullPage', 'selector'] },
+  screenshot: {
+    min: 0,
+    max: 0,
+    usage: 'screenshot [-o file.png]',
+    options: ['path', 'fullPage', 'selector'],
+  },
   snapshot: { min: 0, max: 0, usage: 'snapshot' },
-  eval: { min: 1, max: Infinity, usage: 'eval <javascript>' },
-  back: { min: 0, max: 0, usage: 'back' },
-  forward: { min: 0, max: 0, usage: 'forward' },
-  reload: { min: 0, max: 0, usage: 'reload' },
+  eval: { min: 1, max: Infinity, usage: 'eval <javascript>', options: ['observe'] },
+  back: { min: 0, max: 0, usage: 'back', options: ['observe'] },
+  forward: { min: 0, max: 0, usage: 'forward', options: ['observe'] },
+  reload: { min: 0, max: 0, usage: 'reload', options: ['observe'] },
   status: { min: 0, max: 0, usage: 'status' },
   quit: { min: 0, max: 0, usage: 'quit' },
   daemon: { min: 0, max: 1, usage: 'daemon start|status|stop' },
@@ -272,9 +348,9 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
   key: {
     defaultAction: '',
     actions: {
-      press: { min: 2, max: Infinity, usage: 'key press <key>', options: ['selector'] },
-      down: { min: 2, max: Infinity, usage: 'key down <key>', options: ['selector'] },
-      up: { min: 2, max: Infinity, usage: 'key up <key>', options: ['selector'] },
+      press: { min: 2, max: Infinity, usage: 'key press <key>', options: ['selector', 'observe'] },
+      down: { min: 2, max: Infinity, usage: 'key down <key>', options: ['selector', 'observe'] },
+      up: { min: 2, max: Infinity, usage: 'key up <key>', options: ['selector', 'observe'] },
       // Backward-compatible spelling; the dispatcher maps it to top-level type.
       type: { min: 2, max: Infinity, usage: 'key type <text>' },
     },
@@ -282,19 +358,39 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
   mouse: {
     defaultAction: 'move',
     actions: {
-      move: { min: 0, max: 2, usage: 'mouse move [selector]', options: ['selector', 'x', 'y'] },
-      click: { min: 1, max: 2, usage: 'mouse click [selector]', options: ['selector', 'x', 'y', 'button'] },
-      down: { min: 1, max: 1, usage: 'mouse down', options: ['button'] },
-      up: { min: 1, max: 1, usage: 'mouse up', options: ['button'] },
-      wheel: { min: 1, max: 2, usage: 'mouse wheel [selector]', options: ['selector', 'deltaX', 'deltaY'] },
+      move: {
+        min: 0,
+        max: 2,
+        usage: 'mouse move [selector]',
+        options: ['selector', 'x', 'y', 'observe'],
+      },
+      click: {
+        min: 1,
+        max: 2,
+        usage: 'mouse click [selector]',
+        options: ['selector', 'x', 'y', 'button', 'observe'],
+      },
+      down: { min: 1, max: 1, usage: 'mouse down', options: ['button', 'observe'] },
+      up: { min: 1, max: 1, usage: 'mouse up', options: ['button', 'observe'] },
+      wheel: {
+        min: 1,
+        max: 2,
+        usage: 'mouse wheel [selector]',
+        options: ['selector', 'deltaX', 'deltaY', 'observe'],
+      },
     },
   },
   dialog: {
     defaultAction: 'inspect',
     actions: {
       inspect: { min: 0, max: 1, usage: 'dialog inspect' },
-      accept: { min: 1, max: Infinity, usage: 'dialog accept [text]', options: ['text'] },
-      dismiss: { min: 1, max: 1, usage: 'dialog dismiss' },
+      accept: {
+        min: 1,
+        max: Infinity,
+        usage: 'dialog accept [text]',
+        options: ['text', 'observe'],
+      },
+      dismiss: { min: 1, max: 1, usage: 'dialog dismiss', options: ['observe'] },
     },
   },
   page: {
@@ -309,8 +405,18 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
   logs: {
     defaultAction: 'list',
     actions: {
-      list: { min: 0, max: 1, usage: 'logs [list]', options: ['kind', 'level', 'contains', 'since', 'limit'] },
-      wait: { min: 1, max: 1, usage: 'logs wait', options: ['kind', 'level', 'contains', 'since', 'limit'] },
+      list: {
+        min: 0,
+        max: 1,
+        usage: 'logs [list]',
+        options: ['kind', 'level', 'contains', 'since', 'limit'],
+      },
+      wait: {
+        min: 1,
+        max: 1,
+        usage: 'logs wait',
+        options: ['kind', 'level', 'contains', 'since', 'limit'],
+      },
       clear: { min: 1, max: 1, usage: 'logs clear' },
     },
   },
@@ -318,7 +424,12 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
     defaultAction: 'list',
     actions: {
       list: { min: 0, max: 1, usage: 'mock list' },
-      add: { min: 2, max: 2, usage: 'mock add <url-pattern>', options: ['status', 'body', 'contentType'] },
+      add: {
+        min: 2,
+        max: 2,
+        usage: 'mock add <url-pattern>',
+        options: ['status', 'body', 'contentType'],
+      },
       block: { min: 2, max: 2, usage: 'mock block <url-pattern>' },
       remove: { min: 2, max: 2, usage: 'mock remove <id>' },
       clear: { min: 1, max: 1, usage: 'mock clear' },
@@ -360,6 +471,7 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
 };
 
 const COMMAND_ALIASES: Record<string, string> = {
+  open: 'go',
   goto: 'go',
   navigate: 'go',
   doubleclick: 'dblclick',
@@ -387,12 +499,15 @@ const OPTION_FLAG: Record<string, string> = {
   name: '--name',
   noScreenshots: '--no-screenshots',
   offset: '--offset',
+  observe: '--observe',
+  viewport: '--viewport',
   path: '--output',
   selector: '--selector',
   sessionStorage: '--session-storage',
   since: '--since',
   state: '--state',
   status: '--status',
+  submit: '--submit',
   text: '--text',
   x: '--x',
   y: '--y',
@@ -411,7 +526,7 @@ function validateActionCommand(
   canonical: string,
   rest: string[],
   opts: Record<string, unknown>,
-  flags: GlobalFlags,
+  flags: GlobalFlags
 ): ParsedCommand | null {
   const command = ACTION_COMMAND_SYNTAX[canonical];
   if (!command) return null;
@@ -422,7 +537,7 @@ function validateActionCommand(
     return usageError(
       flags,
       `${canonical}: unknown action ${JSON.stringify(action)}`,
-      COMMAND_SYNTAX[canonical].usage,
+      COMMAND_SYNTAX[canonical].usage
     );
   }
 
@@ -432,7 +547,7 @@ function validateActionCommand(
     return usageError(
       flags,
       `${OPTION_FLAG[invalidOption] ?? `--${invalidOption}`} is not valid for ${canonical} ${action}`,
-      syntax.usage,
+      syntax.usage
     );
   }
   if (rest.length < syntax.min) {
@@ -442,7 +557,7 @@ function validateActionCommand(
     return usageError(
       flags,
       `${canonical} ${action}: unexpected argument ${JSON.stringify(rest[syntax.max])}`,
-      syntax.usage,
+      syntax.usage
     );
   }
   return null;
@@ -455,11 +570,7 @@ function editDistance(a: string, b: string): number {
   for (let i = 1; i <= a.length; i++) {
     cur[0] = i;
     for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(
-        prev[j] + 1,
-        cur[j - 1] + 1,
-        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
     }
     prev.splice(0, prev.length, ...cur);
   }
@@ -472,7 +583,10 @@ function suggestFlag(flag: string): { suggestion?: string } {
   let bestDistance = Infinity;
   for (const known of KNOWN_FLAGS) {
     const d = editDistance(flag, known);
-    if (d < bestDistance) { bestDistance = d; best = known; }
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = known;
+    }
   }
   // Beyond a couple of edits the "did you mean" is noise, not help.
   return best && bestDistance <= 3 ? { suggestion: best } : {};
@@ -494,7 +608,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
   const takeNumber = (
     flag: string,
     index: number,
-    limits: { integer?: boolean; min?: number; max?: number } = {},
+    limits: { integer?: boolean; min?: number; max?: number } = {}
   ): number | ParsedCommand => {
     const raw = takeValue(flag, index);
     if (typeof raw !== 'string') return raw;
@@ -505,12 +619,13 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       (limits.min !== undefined && value < limits.min) ||
       (limits.max !== undefined && value > limits.max);
     if (invalid) {
-      const range = limits.min !== undefined || limits.max !== undefined
-        ? ` (${limits.min ?? '-∞'}..${limits.max ?? '∞'})`
-        : '';
+      const range =
+        limits.min !== undefined || limits.max !== undefined
+          ? ` (${limits.min ?? '-∞'}..${limits.max ?? '∞'})`
+          : '';
       return usageError(
         flags,
-        `${flag} requires ${limits.integer ? 'an integer' : 'a number'}${range}; got ${JSON.stringify(raw)}`,
+        `${flag} requires ${limits.integer ? 'an integer' : 'a number'}${range}; got ${JSON.stringify(raw)}`
       );
     }
     return value;
@@ -541,27 +656,24 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       if (typeof value !== 'string') return value;
       flags.session = value;
       i += 1;
-    }
-    else if (a === '--timeout') {
+    } else if (a === '--timeout') {
       const value = takeNumber(a, i, { integer: true, min: 0, max: 300_000 });
       if (typeof value !== 'number') return value;
       flags.timeout = value;
       opts.timeout = value;
       i += 1;
-    }
-    else if (a === '--limit') {
+    } else if (a === '--limit') {
       const value = takeNumber(a, i, { integer: true });
       if (typeof value !== 'number') return value;
       opts.limit = value;
       i += 1;
-    }
-    else if (a === '--offset') {
+    } else if (a === '--offset') {
       const value = takeNumber(a, i, { integer: true, min: 0 });
       if (typeof value !== 'number') return value;
       opts.offset = value;
       i += 1;
-    }
-    else if (a === '--all') opts.all = true;
+    } else if (a === '--all') opts.all = true;
+    else if (a === '--submit') opts.submit = true;
     else if (a === '--dry-run') opts['dry-run'] = true;
     else if (a === '--mcp') opts.mcp = true;
     else if (a === '--force') opts.force = true;
@@ -572,8 +684,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       if (typeof value !== 'string') return value;
       opts[a.slice(2)] = value;
       i += 1;
-    }
-    else if (a === '--agent') {
+    } else if (a === '--agent') {
       const value = takeValue(a, i);
       if (typeof value !== 'string') return value;
       if (!['claude', 'codex', 'copilot', 'all'].includes(value.toLowerCase())) {
@@ -581,35 +692,60 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       }
       opts.agent = value.toLowerCase();
       i += 1;
-    }
-    else if (a === '--since') {
+    } else if (a === '--since') {
       const value = takeNumber(a, i, { integer: true, min: 0 });
       if (typeof value !== 'number') return value;
       opts.since = value;
       i += 1;
-    }
-    else if (a === '--no-screenshots' || a === '--noScreenshots') opts.noScreenshots = true;
+    } else if (a === '--observe' || a.startsWith('--observe=')) {
+      const inline = a.startsWith('--observe=');
+      const value = inline ? a.slice('--observe='.length) : takeValue(a, i);
+      if (typeof value !== 'string') return value;
+      if (value !== 'page' && value !== 'delta') {
+        return usageError(
+          flags,
+          `--observe: expected "page" or "delta", got ${JSON.stringify(value)}`
+        );
+      }
+      opts.observe = value;
+      if (!inline) i += 1;
+    } else if (a === '--viewport') {
+      const raw = takeValue(a, i);
+      if (typeof raw !== 'string') return raw;
+      const match = /^(\d{1,5})[xX](\d{1,5})$/.exec(raw);
+      const width = match ? Number(match[1]) : 0;
+      const height = match ? Number(match[2]) : 0;
+      if (!match || width < 100 || width > 10_000 || height < 100 || height > 10_000) {
+        return usageError(
+          flags,
+          `--viewport requires WIDTHxHEIGHT with each dimension in 100..10000; got ${JSON.stringify(raw)}`
+        );
+      }
+      opts.viewport = { width, height };
+      i += 1;
+    } else if (a === '--no-screenshots' || a === '--noScreenshots') opts.noScreenshots = true;
     else if (a === '--zip') opts.zip = true;
     else if (a === '--status') {
       const value = takeNumber(a, i, { integer: true, min: 100, max: 599 });
       if (typeof value !== 'number') return value;
       opts.status = value;
       i += 1;
-    }
-    else if (
-      a === '--body' || a === '--content-type' || a === '--contentType' ||
-      a === '--state' || a === '--selector' || a === '--name' ||
-      a === '--text' || a === '--button'
+    } else if (
+      a === '--body' ||
+      a === '--content-type' ||
+      a === '--contentType' ||
+      a === '--state' ||
+      a === '--selector' ||
+      a === '--name' ||
+      a === '--text' ||
+      a === '--button'
     ) {
       const value = takeValue(a, i);
       if (typeof value !== 'string') return value;
-      const key = a === '--content-type' || a === '--contentType'
-        ? 'contentType'
-        : a.slice(2);
+      const key = a === '--content-type' || a === '--contentType' ? 'contentType' : a.slice(2);
       opts[key] = value;
       i += 1;
-    }
-    else if (a === '-o' || a === '--output') {
+    } else if (a === '-o' || a === '--output') {
       const value = takeValue(a, i);
       if (typeof value !== 'string') return value;
       // Resolve in the short-lived caller process. The daemon has a different,
@@ -629,15 +765,22 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
         .filter((f) => f.length > 0)
         .map((f) => resolve(f));
       i += 1;
-    }
-    else if (a === '--delta-x' || a === '--deltaX' || a === '--delta-y' || a === '--deltaY' || a === '--x' || a === '--y') {
+    } else if (
+      a === '--delta-x' ||
+      a === '--deltaX' ||
+      a === '--delta-y' ||
+      a === '--deltaY' ||
+      a === '--x' ||
+      a === '--y'
+    ) {
       const value = takeNumber(a, i, { integer: true });
       if (typeof value !== 'number') return value;
-      const key = a === '--delta-x' || a === '--deltaX'
-        ? 'deltaX'
-        : a === '--delta-y' || a === '--deltaY'
-          ? 'deltaY'
-          : a.slice(2);
+      const key =
+        a === '--delta-x' || a === '--deltaX'
+          ? 'deltaX'
+          : a === '--delta-y' || a === '--deltaY'
+            ? 'deltaY'
+            : a.slice(2);
       opts[key] = value;
       i += 1;
     }
@@ -657,8 +800,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     // are short flags, so there is little to typo and much to break.
     else if (a.startsWith('--')) {
       return { cmd: '__unknown_flag__', args: { flag: a, ...suggestFlag(a) }, flags };
-    }
-    else positional.push(a);
+    } else positional.push(a);
   }
 
   if (flags.version) return { cmd: '__version__', args: {}, flags };
@@ -683,7 +825,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       return usageError(
         flags,
         `${OPTION_FLAG[invalidOption] ?? `--${invalidOption}`} is not valid for ${cmd0}`,
-        syntax.usage,
+        syntax.usage
       );
     }
     if (rest.length < syntax.min) {
@@ -693,7 +835,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       return usageError(
         flags,
         `${cmd0}: unexpected argument ${JSON.stringify(rest[syntax.max])}`,
-        syntax.usage,
+        syntax.usage
       );
     }
   }
@@ -704,20 +846,33 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
   if (canonical === 'upload') {
     const optionFiles = Array.isArray(opts.files) ? opts.files : [];
     if (rest.length < 2 && optionFiles.length === 0) {
-      return usageError(flags, 'upload: missing required argument "file"', COMMAND_SYNTAX.upload.usage);
+      return usageError(
+        flags,
+        'upload: missing required argument "file"',
+        COMMAND_SYNTAX.upload.usage
+      );
     }
   }
 
   if (canonical === 'is' && !['visible', 'enabled', 'checked'].includes(rest[0].toLowerCase())) {
-    return usageError(flags, `is: unknown state ${JSON.stringify(rest[0])}`, COMMAND_SYNTAX.is.usage);
+    return usageError(
+      flags,
+      `is: unknown state ${JSON.stringify(rest[0])}`,
+      COMMAND_SYNTAX.is.usage
+    );
   }
 
   if (canonical === 'wait' && typeof opts.state === 'string') {
-    const states = rest[0] === 'load'
-      ? ['load', 'domcontentloaded', 'networkidle']
-      : ['visible', 'hidden', 'attached', 'detached'];
+    const states =
+      rest[0] === 'load'
+        ? ['load', 'domcontentloaded', 'networkidle']
+        : ['visible', 'hidden', 'attached', 'detached'];
     if (!states.includes(opts.state)) {
-      return usageError(flags, `wait: unknown state ${JSON.stringify(opts.state)}`, COMMAND_SYNTAX.wait.usage);
+      return usageError(
+        flags,
+        `wait: unknown state ${JSON.stringify(opts.state)}`,
+        COMMAND_SYNTAX.wait.usage
+      );
     }
   }
 
@@ -725,7 +880,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
   // working so existing setup scripts don't break; the command warns.
   if (canonical === 'init' && rest.length > 0) {
     if (rest[0].toLowerCase() !== 'codex') {
-      return usageError(flags, `init: unknown target ${JSON.stringify(rest[0])}`, COMMAND_SYNTAX.init.usage);
+      return usageError(
+        flags,
+        `init: unknown target ${JSON.stringify(rest[0])}`,
+        COMMAND_SYNTAX.init.usage
+      );
     }
     // Two ways of naming the target in one command line. Even when they agree,
     // silently letting one win is worse than saying they conflict — the losing
@@ -734,7 +893,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       return usageError(
         flags,
         'init: `init codex` and `--agent` cannot be combined; use `--agent` alone',
-        COMMAND_SYNTAX.init.usage,
+        COMMAND_SYNTAX.init.usage
       );
     }
   }
@@ -742,6 +901,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
   // Map surface command → dispatcher command + collect args.
   switch (lower) {
     case 'go':
+    case 'open':
     case 'goto':
     case 'navigate':
       return { cmd: 'go', args: { url: rest[0], ...opts }, flags };
@@ -750,7 +910,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       return { cmd: 'click', args: { selector: rest[0], ...opts }, flags };
 
     case 'fill':
-      return { cmd: 'fill', args: { selector: rest[0], value: rest.slice(1).join(' '), ...opts }, flags };
+      return {
+        cmd: 'fill',
+        args: { selector: rest[0], value: rest.slice(1).join(' '), ...opts },
+        flags,
+      };
 
     case 'type':
       // BREAKING (was an alias for `fill`): `type` now types into the
@@ -760,7 +924,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
 
     case 'press':
       // craftdriver press <key> [selector]
-      return { cmd: 'press', args: { key: rest[0], ...(rest[1] ? { selector: rest[1] } : {}), ...opts }, flags };
+      return {
+        cmd: 'press',
+        args: { key: rest[0], ...(rest[1] ? { selector: rest[1] } : {}), ...opts },
+        flags,
+      };
 
     case 'hover':
       return { cmd: 'hover', args: { selector: rest[0], ...opts }, flags };
@@ -778,7 +946,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
 
     case 'select':
       // craftdriver select <selector> <value>
-      return { cmd: 'select', args: { selector: rest[0], value: rest.slice(1).join(' '), ...opts }, flags };
+      return {
+        cmd: 'select',
+        args: { selector: rest[0], value: rest.slice(1).join(' '), ...opts },
+        flags,
+      };
 
     case 'focus':
     case 'scroll':
