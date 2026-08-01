@@ -12,7 +12,7 @@
  */
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { Browser, type LaunchOptions } from '../lib/browser.js';
+import { Browser, INTERNAL_FILL_AND_SUBMIT, type LaunchOptions } from '../lib/browser.js';
 import type { By } from '../lib/by.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { parseSelector, describeSelector } from './selector.js';
@@ -36,7 +36,7 @@ import {
   summarizeState,
   listStateNames,
 } from './stateStore.js';
-import { AGENT_DEFAULT_TIMEOUT_MS, AGENT_DEFAULT_LIMIT } from './defaults.js';
+import { AGENT_DEFAULT_TIMEOUT_MS, AGENT_DEFAULT_LIMIT, type AgentViewport } from './defaults.js';
 import { boundValue, boundString, clampLimit, MAX_TEXT_CHARS } from './bounds.js';
 
 /** Lazy-initialized browser handle shared by all commands in a session. */
@@ -61,13 +61,22 @@ export function createBrowserHandle(launch: () => Promise<Browser>): BrowserHand
       // stale error and the only recovery was closing the session.
       if (!pending) {
         pending = launch().then(
-          (b) => { inst = b; pending = null; return b; },
-          (err) => { pending = null; throw err; },
+          (b) => {
+            inst = b;
+            pending = null;
+            return b;
+          },
+          (err) => {
+            pending = null;
+            throw err;
+          }
         );
       }
       return pending;
     },
-    peek() { return inst; },
+    peek() {
+      return inst;
+    },
     async close() {
       const b = inst;
       inst = null;
@@ -101,7 +110,7 @@ function str(args: Record<string, unknown> | undefined, key: string): string {
   if (typeof v !== 'string' || v.length === 0) {
     throw new CraftdriverError(
       ErrorCode.INVALID_ARGUMENT,
-      `dispatcher: missing required argument "${key}"`,
+      `dispatcher: missing required argument "${key}"`
     );
   }
   return v;
@@ -110,6 +119,39 @@ function str(args: Record<string, unknown> | undefined, key: string): string {
 function optStr(args: Record<string, unknown> | undefined, key: string): string | undefined {
   const v = args?.[key];
   return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function viewportOf(args: Record<string, unknown> | undefined): AgentViewport | undefined {
+  const raw = args?.viewport;
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, 'viewport must be { width, height }');
+  }
+  const { width, height } = raw as Record<string, unknown>;
+  const valid = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 10_000;
+  if (!valid(width) || !valid(height)) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      'viewport width and height must be integers in 100..10000',
+      { detail: { width, height } }
+    );
+  }
+  return { width, height };
+}
+
+/**
+ * The selector the caller asked us to act on, for success output.
+ *
+ * `By` deliberately compiles several semantic selectors to a long XPath for
+ * WebDriver. Returning that transport implementation after a successful
+ * action consumes agent context without teaching it anything; the caller's
+ * own selector is the useful, stable description.
+ */
+function publicSelectorOf(args: Record<string, unknown> | undefined, key = 'selector'): string {
+  const raw = str(args, key);
+  const ref = /^\s*(e\d+)\s*$/.exec(raw)?.[1];
+  return ref ? `ref=${ref}` : raw;
 }
 
 function bool(args: Record<string, unknown> | undefined, key: string): boolean {
@@ -163,23 +205,21 @@ function fileList(args: Record<string, unknown> | undefined): string[] {
     throw new CraftdriverError(
       ErrorCode.INVALID_ARGUMENT,
       'upload: missing required argument "files"',
-      { hint: 'pass one or more local paths, e.g. --files ./a.png,./b.png' },
+      { hint: 'pass one or more local paths, e.g. --files ./a.png,./b.png' }
     );
   }
   if (files.length > MAX_UPLOAD_FILES) {
     throw new CraftdriverError(
       ErrorCode.INVALID_ARGUMENT,
-      `upload: too many files (${files.length}); the limit is ${MAX_UPLOAD_FILES}`,
+      `upload: too many files (${files.length}); the limit is ${MAX_UPLOAD_FILES}`
     );
   }
   for (const f of files) {
     const resolved = resolvePath(f);
     if (!existsSync(resolved)) {
-      throw new CraftdriverError(
-        ErrorCode.INVALID_ARGUMENT,
-        `upload: file not found: ${f}`,
-        { detail: { file: f } },
-      );
+      throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, `upload: file not found: ${f}`, {
+        detail: { file: f },
+      });
     }
   }
   return files.map((f) => resolvePath(f));
@@ -214,14 +254,10 @@ function parseKinds(args: Record<string, unknown> | undefined): JournalKind[] | 
     .filter((k) => k.length > 0);
   const unknown = kinds.filter((k) => !JOURNAL_KINDS.includes(k as JournalKind));
   if (unknown.length > 0) {
-    throw new CraftdriverError(
-      ErrorCode.INVALID_ARGUMENT,
-      `logs: unknown kind "${unknown[0]}"`,
-      {
-        detail: { known: JOURNAL_KINDS },
-        hint: `expected one or more of: ${JOURNAL_KINDS.join(', ')}`,
-      },
-    );
+    throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, `logs: unknown kind "${unknown[0]}"`, {
+      detail: { known: JOURNAL_KINDS },
+      hint: `expected one or more of: ${JOURNAL_KINDS.join(', ')}`,
+    });
   }
   return kinds as JournalKind[];
 }
@@ -233,6 +269,8 @@ export interface DispatchContext {
   artifactName?: string;
   /** Owns the one snapshot baseline and the ref-issuing document. */
   tracker: SnapshotTracker;
+  /** Effective layout viewport requested by this agent session. */
+  viewport?: AgentViewport;
   /**
    * Bounded console/network history. Attached when the browser is launched,
    * so an event during the first navigation is still answerable afterwards.
@@ -268,9 +306,10 @@ export interface DispatchContext {
  * intercepts that were gone, and the previous browser's console output
  * appearing in the replacement's logs.
  *
- * Two counters deliberately survive, for the same reason: the ref high-water
- * mark (numbers are never reissued) and the journal sequence (a cursor an
- * agent still holds must not start matching new entries).
+ * Ref history deliberately survives, for the same reason: the high-water mark
+ * stops numbers being reissued, the issued-ref set recognises an old bare ref
+ * as stale rather than CSS, and the journal sequence stops an old cursor from
+ * matching new entries.
  */
 export function resetBrowserOwnedState(ctx: DispatchContext): void {
   ctx.tracker.reset();
@@ -286,10 +325,26 @@ export function resetBrowserOwnedState(ctx: DispatchContext): void {
  * MCP cannot disagree about what "mutating" means.
  */
 const MUTATING = new Set([
-  'go', 'back', 'forward', 'reload',
-  'click', 'dblclick', 'fill', 'clear', 'type', 'press', 'hover',
-  'check', 'uncheck', 'select', 'focus', 'scroll',
-  'key', 'mouse', 'dialog', 'upload',
+  'go',
+  'back',
+  'forward',
+  'reload',
+  'click',
+  'dblclick',
+  'fill',
+  'clear',
+  'type',
+  'press',
+  'hover',
+  'check',
+  'uncheck',
+  'select',
+  'focus',
+  'scroll',
+  'key',
+  'mouse',
+  'dialog',
+  'upload',
   // `eval` runs arbitrary page script, so it is the *most* likely thing to
   // change the page. Leaving it out meant its changes went unreported and
   // were then blamed on whatever ran next.
@@ -329,7 +384,7 @@ function staleRef(ref: string, reason: string): CraftdriverError {
     {
       detail: { ref, reason },
       hint: 'take a fresh `snapshot` and use the new ref; refs are never reassigned',
-    },
+    }
   );
 }
 
@@ -345,20 +400,43 @@ function staleRef(ref: string, reason: string): CraftdriverError {
 async function selectorOf(
   ctx: DispatchContext,
   args: Record<string, unknown> | undefined,
-  key = 'selector',
+  key = 'selector'
 ): Promise<By> {
   return resolveSelector(ctx, str(args, key));
 }
 
+interface RefSelectorToken {
+  ref: string;
+  bare: boolean;
+}
+
+/** Recognise explicit refs and the CLI's copy-paste-friendly bare alias. */
+function refSelectorToken(raw: string): RefSelectorToken | null {
+  const explicit = /^\s*ref\s*=\s*(e\d+)\s*$/i.exec(raw);
+  if (explicit) return { ref: explicit[1], bare: false };
+  const bare = /^\s*(e\d+)\s*$/.exec(raw);
+  return bare ? { ref: bare[1], bare: true } : null;
+}
+
 async function resolveSelector(ctx: DispatchContext, raw: string): Promise<By> {
-  const by = parseSelector(raw);
-  // Match exactly what parseSelector treats as a ref — it lowercases the
-  // prefix and trims the value, so `REF=e5` and `ref= e5` are refs too.
-  // A stricter pattern here would let those through unvalidated, silently
-  // restoring the unsafe raw-attribute lookup this exists to prevent.
-  const match = /^\s*ref\s*=\s*(e\d+)\s*$/i.exec(raw);
-  if (!match) return by;
-  const ref = match[1];
+  const token = refSelectorToken(raw);
+  if (!token) return parseSelector(raw);
+  const { ref } = token;
+
+  // Bare eN is a convenience alias only for a ref this session actually
+  // showed the agent. Unknown tokens must not fall through to CSS and pay an
+  // action timeout; callers that genuinely mean an <e9> element use css=e9.
+  if (token.bare && !ctx.tracker.hasIssuedRef(ref)) {
+    throw new CraftdriverError(
+      ErrorCode.BARE_REF,
+      `${ref} looks like a snapshot reference but was not issued by this session`,
+      {
+        detail: { ref },
+        hint: `use ref=${ref} from the latest snapshot, or css=${ref} for a literal CSS selector`,
+      }
+    );
+  }
+  const by = parseSelector(`ref=${ref}`);
 
   const expected = ctx.tracker.documentId;
   if (expected === null) throw staleRef(ref, 'no-snapshot');
@@ -371,7 +449,7 @@ async function resolveSelector(ctx: DispatchContext, raw: string): Promise<By> {
     throw new CraftdriverError(
       ErrorCode.STATE_INVALID,
       `cannot resolve ref=${ref} while a dialog is open: ${snippet(blocking, MAX_DIALOG_TEXT)}`,
-      { hint: 'accept or dismiss it first with `dialog accept` / `dialog dismiss`' },
+      { hint: 'accept or dismiss it first with `dialog accept` / `dialog dismiss`' }
     );
   }
   const probe = await probeRef(browser, ref, expected);
@@ -379,8 +457,82 @@ async function resolveSelector(ctx: DispatchContext, raw: string): Promise<By> {
   return by;
 }
 
+interface SnapshotLineInfo {
+  ref: string;
+  role: string;
+  name?: string;
+  depth: number;
+  container: boolean;
+}
+
+function snapshotLineInfo(line: string): SnapshotLineInfo | null {
+  const match = /^(\s*)(e\d+):\s+(\S+)(\s+\(container\))?(?:\s+"([^"]*)")?/.exec(line);
+  if (!match) return null;
+  return {
+    ref: match[2],
+    role: match[3],
+    ...(match[5] ? { name: match[5] } : {}),
+    depth: Math.floor(match[1].length / 2),
+    container: Boolean(match[4]),
+  };
+}
+
+/** Fail from the current snapshot instead of waiting on an impossible action. */
+function assertEditableRef(
+  ctx: DispatchContext,
+  args: Record<string, unknown>,
+  cmd: 'fill' | 'clear'
+): void {
+  const raw = str(args, 'selector');
+  const refToken = refSelectorToken(raw);
+  if (!refToken) return;
+  const lines = ctx.tracker.current?.lines ?? [];
+  const index = lines.findIndex((line) => snapshotLineInfo(line)?.ref === refToken.ref);
+  if (index < 0) return;
+  const target = snapshotLineInfo(lines[index]);
+  if (!target?.container) return;
+
+  const descendants: SnapshotLineInfo[] = [];
+  for (let i = index + 1; i < lines.length; i += 1) {
+    const candidate = snapshotLineInfo(lines[i]);
+    if (!candidate) continue;
+    if (candidate.depth <= target.depth) break;
+    descendants.push(candidate);
+  }
+  const editable = descendants.find((candidate) =>
+    ['textbox', 'searchbox', 'combobox', 'spinbutton', 'input'].includes(candidate.role)
+  );
+  const reveal = descendants.find(
+    (candidate) => candidate.role === 'button' || candidate.role === 'link'
+  );
+  const alternative = editable ?? reveal;
+  const targetSelector = `ref=${target.ref}`;
+  const alternativeSelector = alternative ? `ref=${alternative.ref}` : undefined;
+  const quotedName = alternative?.name ? ` (${JSON.stringify(alternative.name)})` : '';
+  const hint = editable
+    ? `${cmd} ${alternativeSelector}${quotedName}`
+    : reveal
+      ? `click ${alternativeSelector}${quotedName} to reveal an editable field`
+      : 'choose an editable field inside this container from a fresh snapshot';
+  throw new CraftdriverError(
+    ErrorCode.NOT_EDITABLE,
+    `${cmd}: ${targetSelector} is a ${target.role} container, not an editable field`,
+    {
+      detail: {
+        target: targetSelector,
+        role: target.role,
+        ...(alternativeSelector ? { alternative: alternativeSelector } : {}),
+      },
+      hint,
+    }
+  );
+}
+
 interface Evaluable {
-  evaluate: (fn: (node: unknown, ...args: unknown[]) => void, ...args: unknown[]) => Promise<unknown>;
+  evaluate: (
+    fn: (node: unknown, ...args: unknown[]) => void,
+    ...args: unknown[]
+  ) => Promise<unknown>;
 }
 
 /**
@@ -422,15 +574,13 @@ async function focusElement(el: Evaluable, caretToEnd = false): Promise<void> {
 function selectPage<T extends { id(): string }>(
   pages: T[],
   args: Record<string, unknown> | undefined,
-  action: string,
+  action: string
 ): T {
   const raw = args?.target ?? args?.index ?? args?.id;
   if (raw === undefined || raw === null || raw === '') {
-    throw new CraftdriverError(
-      ErrorCode.INVALID_ARGUMENT,
-      `page ${action}: missing target`,
-      { hint: 'pass an index from `page list`, or a page id' },
-    );
+    throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, `page ${action}: missing target`, {
+      hint: 'pass an index from `page list`, or a page id',
+    });
   }
   const value = String(raw).trim();
   if (/^\d+$/.test(value)) {
@@ -439,18 +589,16 @@ function selectPage<T extends { id(): string }>(
       throw new CraftdriverError(
         ErrorCode.NO_MATCH,
         `page ${action}: no page at index ${index} (${pages.length} open)`,
-        { detail: { index, count: pages.length } },
+        { detail: { index, count: pages.length } }
       );
     }
     return pages[index];
   }
   const byId = pages.find((p) => p.id() === value);
   if (!byId) {
-    throw new CraftdriverError(
-      ErrorCode.NO_MATCH,
-      `page ${action}: no page with id ${value}`,
-      { detail: { id: value } },
-    );
+    throw new CraftdriverError(ErrorCode.NO_MATCH, `page ${action}: no page with id ${value}`, {
+      detail: { id: value },
+    });
   }
   return byId;
 }
@@ -461,7 +609,7 @@ async function firstElement(
   browser: Browser,
   args: Record<string, unknown> | undefined,
   cmd: string,
-  key = 'selector',
+  key = 'selector'
 ) {
   const by = await selectorOf(ctx, args, key);
   const els = await browser.findAll(by);
@@ -469,7 +617,7 @@ async function firstElement(
     throw new CraftdriverError(
       ErrorCode.NO_MATCH,
       `${cmd}: no element matches ${describeSelector(by)}`,
-      { detail: { selector: describeSelector(by) } },
+      { detail: { selector: describeSelector(by) } }
     );
   }
   return { by, el: els[0] };
@@ -484,14 +632,24 @@ export async function dispatch(
     // ---- session ---------------------------------------------------------
     case 'status': {
       const b = ctx.handle.peek();
-      if (!b) return { browser: null, pid: process.pid, ready: false };
+      if (!b) {
+        return {
+          browser: null,
+          pid: process.pid,
+          ready: false,
+          ...(ctx.viewport ? { viewport: ctx.viewport } : {}),
+        };
+      }
       const page = await b.activePage().catch(() => null);
       const url = page ? await page.url().catch(() => '') : '';
       return {
-        browser: ctx.launchOptions.electron ? 'electron' : (ctx.launchOptions.browserName ?? 'chrome'),
+        browser: ctx.launchOptions.electron
+          ? 'electron'
+          : (ctx.launchOptions.browserName ?? 'chrome'),
         pid: process.pid,
         ready: true,
         activeUrl: url,
+        ...(ctx.viewport ? { viewport: ctx.viewport } : {}),
       };
     }
 
@@ -504,10 +662,16 @@ export async function dispatch(
     // ---- navigation ------------------------------------------------------
     case 'go': {
       const url = str(args, 'url');
+      const viewport = viewportOf(args);
       const b = await ctx.handle.get();
+      if (viewport) {
+        await b.setViewportSize(viewport);
+        ctx.viewport = { ...viewport };
+      }
       await b.navigateTo(url);
-      const page = await b.activePage();
-      return { url: await page.url(), title: await page.title() };
+      return b._evaluateClassic<{ url: string; title: string }>(
+        'return { url: location.href, title: document.title };'
+      );
     }
 
     case 'back': {
@@ -562,12 +726,14 @@ export async function dispatch(
         };
       }
       const slice = els.slice(offset, offset + limit);
-      const matches = await Promise.all(slice.map(async (el, i) => ({
-        index: offset + i,
-        tag: await el.tagName().catch(() => ''),
-        text: snippet(await el.text().catch(() => '')),
-        visible: await el.isVisible().catch(() => false),
-      })));
+      const matches = await Promise.all(
+        slice.map(async (el, i) => ({
+          index: offset + i,
+          tag: await el.tagName().catch(() => ''),
+          text: snippet(await el.text().catch(() => '')),
+          visible: await el.isVisible().catch(() => false),
+        }))
+      );
       return {
         count: total,
         offset,
@@ -601,29 +767,35 @@ export async function dispatch(
       const by = await selectorOf(ctx, args);
       const b = await ctx.handle.get();
       await b.click(by, { timeout: ms(args) });
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'dblclick': {
       const by = await selectorOf(ctx, args);
       const b = await ctx.handle.get();
       await b.mouse.dblclick(by);
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'fill': {
       const by = await selectorOf(ctx, args);
+      // Validate identity/document freshness first; an old container ref must
+      // still report STALE_REF rather than being classified from stale text.
+      assertEditableRef(ctx, args, 'fill');
       const value = str(args, 'value');
       const b = await ctx.handle.get();
-      await b.fill(by, value, { timeout: ms(args) });
-      return { ok: true, selector: describeSelector(by) };
+      const submit = bool(args, 'submit');
+      if (submit) await b[INTERNAL_FILL_AND_SUBMIT](by, value, { timeout: ms(args) });
+      else await b.fill(by, value, { timeout: ms(args) });
+      return { ok: true, selector: publicSelectorOf(args), ...(submit ? { submitted: true } : {}) };
     }
 
     case 'clear': {
       const by = await selectorOf(ctx, args);
+      assertEditableRef(ctx, args, 'clear');
       const b = await ctx.handle.get();
       await b.clear(by, { timeout: ms(args) });
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'type': {
@@ -658,7 +830,7 @@ export async function dispatch(
       const b = await ctx.handle.get();
       const { by, el } = await firstElement(ctx, b, args, 'hover');
       await el.hover({ timeout: ms(args) });
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'check':
@@ -682,10 +854,10 @@ export async function dispatch(
           {
             detail: { selector: describeSelector(by), expected: want, actual: checked },
             hint: 'the click may have been intercepted, or the control is disabled',
-          },
+          }
         );
       }
-      return { ok: true, selector: describeSelector(by), checked };
+      return { ok: true, selector: publicSelectorOf(args), checked };
     }
 
     case 'select': {
@@ -693,7 +865,7 @@ export async function dispatch(
       const b = await ctx.handle.get();
       const { by, el } = await firstElement(ctx, b, args, 'select');
       await el.select(value);
-      return { ok: true, selector: describeSelector(by), value };
+      return { ok: true, selector: publicSelectorOf(args), value };
     }
 
     case 'focus': {
@@ -703,7 +875,7 @@ export async function dispatch(
       // then `type`, and a bare focus() leaves the caret at offset 0 —
       // which would silently prepend. Use `clear` to overwrite instead.
       await focusElement(el, true);
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'scroll': {
@@ -712,10 +884,12 @@ export async function dispatch(
       // One-line DOM call with no public primitive; run it against the
       // resolved handle rather than re-querying in the page.
       await el.evaluate((node: unknown) => {
-        (node as { scrollIntoView(o: object): void })
-          .scrollIntoView({ block: 'center', inline: 'center' });
+        (node as { scrollIntoView(o: object): void }).scrollIntoView({
+          block: 'center',
+          inline: 'center',
+        });
       });
-      return { ok: true, selector: describeSelector(by) };
+      return { ok: true, selector: publicSelectorOf(args) };
     }
 
     case 'upload': {
@@ -727,7 +901,7 @@ export async function dispatch(
       // neither do absolute local paths — the MCP tool promises exactly that,
       // and echoing them back leaked the caller's directory layout into a
       // transcript for no benefit: the caller already knows what it sent.
-      return { ok: true, selector: describeSelector(by), count: files.length };
+      return { ok: true, selector: publicSelectorOf(args), count: files.length };
     }
 
     // ---- keyboard / mouse -------------------------------------------------
@@ -747,7 +921,7 @@ export async function dispatch(
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
           `key: unknown action "${action}". Expected: press | down | up`,
-          { hint: 'to type text, use `type <text>` (types into the focused element)' },
+          { hint: 'to type text, use `type <text>` (types into the focused element)' }
         );
       }
       const key = str(args, 'key');
@@ -764,7 +938,7 @@ export async function dispatch(
       if (button !== 'left' && button !== 'middle' && button !== 'right') {
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
-          `mouse: unknown button "${button}". Expected: left | middle | right`,
+          `mouse: unknown button "${button}". Expected: left | middle | right`
         );
       }
       // A target is either a selector or an x/y point.
@@ -787,12 +961,16 @@ export async function dispatch(
           await b.mouse.click(target, { button });
           return { ok: true, action, button };
         case 'wheel':
-          await b.mouse.wheel(int(args, 'deltaX', 0), int(args, 'deltaY', 0), sel ? target : undefined);
+          await b.mouse.wheel(
+            int(args, 'deltaX', 0),
+            int(args, 'deltaY', 0),
+            sel ? target : undefined
+          );
           return { ok: true, action };
         default:
           throw new CraftdriverError(
             ErrorCode.INVALID_ARGUMENT,
-            `mouse: unknown action "${action}". Expected: move | down | up | click | wheel`,
+            `mouse: unknown action "${action}". Expected: move | down | up | click | wheel`
           );
       }
     }
@@ -820,7 +998,7 @@ export async function dispatch(
       }
       throw new CraftdriverError(
         ErrorCode.INVALID_ARGUMENT,
-        `dialog: unknown action "${action}". Expected: inspect | accept | dismiss`,
+        `dialog: unknown action "${action}". Expected: inspect | accept | dismiss`
       );
     }
 
@@ -883,13 +1061,16 @@ export async function dispatch(
       }
       const el = els[0];
       switch (what) {
-        case 'visible': return { result: await el.isVisible() };
-        case 'enabled': return { result: await el.isEnabled() };
-        case 'checked': return { result: await el.isChecked() };
+        case 'visible':
+          return { result: await el.isVisible() };
+        case 'enabled':
+          return { result: await el.isEnabled() };
+        case 'checked':
+          return { result: await el.isChecked() };
         default:
           throw new CraftdriverError(
             ErrorCode.INVALID_ARGUMENT,
-            `is: unknown state "${what}". Expected: visible | enabled | checked`,
+            `is: unknown state "${what}". Expected: visible | enabled | checked`
           );
       }
     }
@@ -906,12 +1087,16 @@ export async function dispatch(
         return { ok: true, state };
       }
       if (kind === 'load') {
-        await b.waitForLoadState((optStr(args, 'state') as 'load' | 'domcontentloaded' | 'networkidle' | undefined) ?? 'load', { timeout: ms(args) });
+        await b.waitForLoadState(
+          (optStr(args, 'state') as 'load' | 'domcontentloaded' | 'networkidle' | undefined) ??
+            'load',
+          { timeout: ms(args) }
+        );
         return { ok: true };
       }
       throw new CraftdriverError(
         ErrorCode.INVALID_ARGUMENT,
-        `wait: unknown kind "${kind}". Expected: selector | load`,
+        `wait: unknown kind "${kind}". Expected: selector | load`
       );
     }
 
@@ -919,12 +1104,14 @@ export async function dispatch(
     case 'pages': {
       const b = await ctx.handle.get();
       const pages = await b.pages();
-      const out = await Promise.all(pages.map(async (p, i) => ({
-        index: i,
-        id: p.id(),
-        url: await p.url().catch(() => ''),
-        title: await p.title().catch(() => ''),
-      })));
+      const out = await Promise.all(
+        pages.map(async (p, i) => ({
+          index: i,
+          id: p.id(),
+          url: await p.url().catch(() => ''),
+          title: await p.title().catch(() => ''),
+        }))
+      );
       return { pages: out, count: out.length };
     }
 
@@ -938,13 +1125,18 @@ export async function dispatch(
       const pages = await b.pages();
 
       if (action === 'list') {
-        const out = await Promise.all(pages.map(async (p, i) => ({
-          index: i,
-          id: p.id(),
-          url: await p.url().catch(() => ''),
-          title: await p.title().catch(() => ''),
-        })));
-        const activeId = await b.activePage().then((p) => p.id()).catch(() => null);
+        const out = await Promise.all(
+          pages.map(async (p, i) => ({
+            index: i,
+            id: p.id(),
+            url: await p.url().catch(() => ''),
+            title: await p.title().catch(() => ''),
+          }))
+        );
+        const activeId = await b
+          .activePage()
+          .then((p) => p.id())
+          .catch(() => null);
         return { pages: out, count: out.length, active: activeId };
       }
 
@@ -979,7 +1171,7 @@ export async function dispatch(
 
       throw new CraftdriverError(
         ErrorCode.INVALID_ARGUMENT,
-        `page: unknown action "${action}". Expected: list | open | select | close`,
+        `page: unknown action "${action}". Expected: list | open | select | close`
       );
     }
 
@@ -990,10 +1182,7 @@ export async function dispatch(
     case 'logs': {
       const journal = ctx.journal;
       if (!journal) {
-        throw new CraftdriverError(
-          ErrorCode.STATE_INVALID,
-          'logs: no journal on this session',
-        );
+        throw new CraftdriverError(ErrorCode.STATE_INVALID, 'logs: no journal on this session');
       }
       const action = optStr(args, 'action') ?? 'list';
       // Validate before any effect: a typo'd --kind must not cost a browser
@@ -1002,7 +1191,7 @@ export async function dispatch(
       if (action !== 'list' && action !== 'wait' && action !== 'clear') {
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
-          `logs: unknown action "${action}". Expected: list | wait | clear`,
+          `logs: unknown action "${action}". Expected: list | wait | clear`
         );
       }
 
@@ -1033,7 +1222,7 @@ export async function dispatch(
             {
               detail: { query },
               hint: 'widen --contains or --kind, or check `logs list` for what was captured',
-            },
+            }
           );
         }
         return { ok: true, action, entry: found, cursor: journal.query().cursor };
@@ -1062,7 +1251,10 @@ export async function dispatch(
       const mocks = (ctx.mocks ??= []);
 
       if (action === 'list') {
-        return { mocks: mocks.map(({ id, pattern, kind, status }) => ({ id, pattern, kind, status })), count: mocks.length };
+        return {
+          mocks: mocks.map(({ id, pattern, kind, status }) => ({ id, pattern, kind, status })),
+          count: mocks.length,
+        };
       }
 
       // Everything below is validated before the browser is touched. A mock
@@ -1072,7 +1264,7 @@ export async function dispatch(
       if (action !== 'add' && action !== 'block' && action !== 'remove' && action !== 'clear') {
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
-          `mock: unknown action "${action}". Expected: add | block | list | remove | clear`,
+          `mock: unknown action "${action}". Expected: add | block | list | remove | clear`
         );
       }
 
@@ -1083,7 +1275,7 @@ export async function dispatch(
           {
             detail: { open: mocks.map((m) => m.id) },
             hint: 'run `mock list` to see active mocks',
-          },
+          }
         );
       }
 
@@ -1101,14 +1293,14 @@ export async function dispatch(
           throw new CraftdriverError(
             ErrorCode.STATE_INVALID,
             `mock: limit reached (${MAX_MOCKS} active)`,
-            { hint: 'remove one with `mock remove <id>`, or `mock clear`' },
+            { hint: 'remove one with `mock remove <id>`, or `mock clear`' }
           );
         }
         pattern = str(args, 'pattern');
         if (pattern.length > MAX_MOCK_PATTERN) {
           throw new CraftdriverError(
             ErrorCode.INVALID_ARGUMENT,
-            `mock: pattern is too long (${pattern.length} chars; max ${MAX_MOCK_PATTERN})`,
+            `mock: pattern is too long (${pattern.length} chars; max ${MAX_MOCK_PATTERN})`
           );
         }
       }
@@ -1117,7 +1309,7 @@ export async function dispatch(
         if (!Number.isInteger(status) || status < 100 || status > 599) {
           throw new CraftdriverError(
             ErrorCode.INVALID_ARGUMENT,
-            `mock: status ${status} is not a valid HTTP status (100-599)`,
+            `mock: status ${status} is not a valid HTTP status (100-599)`
           );
         }
         body = optStr(args, 'body') ?? '';
@@ -1125,7 +1317,7 @@ export async function dispatch(
           throw new CraftdriverError(
             ErrorCode.INVALID_ARGUMENT,
             `mock: body is too large (${body.length} bytes; max ${MAX_MOCK_BODY})`,
-            { hint: 'mock a small fixture; craftdriver is not a fixture server' },
+            { hint: 'mock a small fixture; craftdriver is not a fixture server' }
           );
         }
       }
@@ -1138,7 +1330,7 @@ export async function dispatch(
         throw new CraftdriverError(
           ErrorCode.UNSUPPORTED,
           'mock: network interception requires BiDi',
-          { hint: 'BiDi negotiation failed at launch; Chrome and Firefox negotiate it by default' },
+          { hint: 'BiDi negotiation failed at launch; Chrome and Firefox negotiate it by default' }
         );
       }
 
@@ -1183,9 +1375,7 @@ export async function dispatch(
 
       if (action === 'status') {
         const active = ctx.activeTrace ?? null;
-        return active
-          ? { running: true, ...active }
-          : { running: false, root: traceRoot() };
+        return active ? { running: true, ...active } : { running: false, root: traceRoot() };
       }
 
       // Answered without a browser: whether this session started a trace is
@@ -1200,7 +1390,7 @@ export async function dispatch(
       if (action !== 'start' && action !== 'stop') {
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
-          `trace: unknown action "${action}". Expected: start | stop | status`,
+          `trace: unknown action "${action}". Expected: start | stop | status`
         );
       }
 
@@ -1216,7 +1406,7 @@ export async function dispatch(
             {
               detail: { ...ctx.activeTrace },
               hint: 'stop it first with `trace stop`',
-            },
+            }
           );
         }
         name = optStr(args, 'name') ?? 'trace';
@@ -1289,7 +1479,7 @@ export async function dispatch(
       if (action !== 'save' && action !== 'load') {
         throw new CraftdriverError(
           ErrorCode.INVALID_ARGUMENT,
-          `state: unknown action "${action}". Expected: save | load | list`,
+          `state: unknown action "${action}". Expected: save | load | list`
         );
       }
 
@@ -1305,7 +1495,7 @@ export async function dispatch(
         throw new CraftdriverError(
           ErrorCode.STATE_INVALID,
           `cannot ${action} state while a dialog is open: ${snippet(blocking, MAX_DIALOG_TEXT)}`,
-          { hint: 'accept or dismiss it first with `dialog accept` / `dialog dismiss`' },
+          { hint: 'accept or dismiss it first with `dialog accept` / `dialog dismiss`' }
         );
       }
 
@@ -1330,7 +1520,15 @@ export async function dispatch(
           origin === null && summary.storageKeys === 0
             ? 'no page origin: cookies were saved, local/session storage was not'
             : undefined;
-        return { ok: true, action, name, root: stateRoot(), origin, ...summary, ...(note ? { note } : {}) };
+        return {
+          ok: true,
+          action,
+          name,
+          root: stateRoot(),
+          origin,
+          ...summary,
+          ...(note ? { note } : {}),
+        };
       }
 
       const state = await readStateFile(target, name as string);
@@ -1349,13 +1547,14 @@ export async function dispatch(
       // made an exploratory loop grow `.craftdriver/screenshots` forever;
       // overwriting this tool-owned "latest" file is bounded and still leaves
       // explicit `-o` available when the caller wants history.
-      const path = optStr(args, 'path')
-        ?? await resolveArtifactPath({
+      const path =
+        optStr(args, 'path') ??
+        (await resolveArtifactPath({
           root: artifactRoot('screenshots', 'CRAFTDRIVER_SCREENSHOT_DIR'),
           name: `screenshot-${ctx.artifactName ?? 'default'}`,
           suffix: '.png',
           kind: 'screenshot',
-        });
+        }));
       const buf = await b.screenshot({
         path,
         ...(sel ? { selector: await resolveSelector(ctx, sel) } : {}),
@@ -1415,10 +1614,8 @@ export async function dispatch(
     }
 
     default:
-      throw new CraftdriverError(
-        ErrorCode.INVALID_ARGUMENT,
-        `unknown command "${cmd}"`,
-        { hint: 'run `craftdriver --help` for the command list' }
-      );
+      throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, `unknown command "${cmd}"`, {
+        hint: 'run `craftdriver --help` for the command list',
+      });
   }
 }

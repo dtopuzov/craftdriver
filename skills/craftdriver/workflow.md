@@ -14,9 +14,8 @@ assistant instructions.
 Run the project's existing app command in its own process. Then:
 
 ```bash
-npx craftdriver daemon start
-npx craftdriver go http://127.0.0.1:3000
-npx craftdriver snapshot
+npx craftdriver go http://127.0.0.1:3000 --browser chrome --headless
+npx craftdriver snapshot --pretty
 ```
 
 Use the actual project URL and wait for a clear page condition when necessary.
@@ -38,7 +37,8 @@ npx craftdriver find 'label=Email' --all
 
 Refs from the snapshot are safe to act on: a ref binds to one element, and if
 that element is gone or the page navigated, the command fails with `STALE_REF`
-instead of hitting something else. Take a fresh snapshot when that happens.
+instead of hitting something else. Use its bounded `recoverySnapshot` when
+present; take a fresh snapshot only when recovery context is unavailable.
 
 Never copy `ref=eN` into test code. When you have the right element, ask for a
 durable selector and let CraftDriver validate it against the live page:
@@ -58,12 +58,20 @@ during exploration, don't lock a test to it. If nothing resolves uniquely, add a
 ```bash
 npx craftdriver fill 'label=Email' alice@example.test
 npx craftdriver fill 'label=Password' secret
-npx craftdriver click 'role=button[name=Sign in]'
+npx craftdriver click 'role=button[name=Sign in]' --observe=page
 npx craftdriver text 'testid=welcome'
 ```
 
-After each meaningful mutation, inspect fresh output or snapshot state. If a
-selector is ambiguous, refine it from observed structure and validate again.
+Use the snapshot refs while exploring. For a searchbox or single-field form,
+prefer `fill TARGET VALUE --submit` over filling and then clicking a sibling
+submit ref. A reactive fill can replace neighbouring controls; when a separate
+sibling action is genuinely needed, use `fill TARGET VALUE --observe=delta`
+and act on the fresh ref.
+
+After a predictable navigation, use `--observe=page` plus targeted `text`,
+`attr`, or `value` reads when the required evidence is already known. Use
+`--observe=delta` when the next action depends on discovering what changed. If
+a selector is ambiguous, refine it from observed structure and validate again.
 
 **The DOM is not the whole story.** An application can fail while showing a
 generic message, or succeed while logging an error you should not ship. Check
@@ -91,7 +99,10 @@ try {
   await browser.locator(By.labelText('Email')).fill('alice@example.test');
   await browser.locator(By.labelText('Password')).fill('secret');
   await browser.locator(By.role('button', { name: 'Sign in' })).click();
-  await browser.locator(By.testId('welcome')).expect().toHaveText(/welcome/i);
+  await browser
+    .locator(By.testId('welcome'))
+    .expect()
+    .toHaveText(/welcome/i);
 } finally {
   await browser.quit();
 }
@@ -156,3 +167,10 @@ assertions, or silent runtime selector substitution. If the application
 changed, change the test in an explicit source diff and say what changed and
 why. A test that hides a real application change is worse than a failing one,
 because it removes the signal without fixing the cause.
+
+## On-demand references
+
+Only when the workflow above and the consuming repository do not cover a
+needed API, read the [CLI reference](cli.md), [TypeScript API
+cheatsheet](cheatsheet.md), or [worked patterns](patterns.md). Do not load them
+speculatively.

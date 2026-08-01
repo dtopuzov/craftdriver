@@ -74,6 +74,14 @@ export const AGENT_DEFAULT_TIMEOUT_MS = (() => {
 /** Default `--limit` for list-returning commands. */
 export const AGENT_DEFAULT_LIMIT = 20;
 
+export interface AgentViewport {
+  width: number;
+  height: number;
+}
+
+/** Desktop layout used by CLI/MCP sessions unless navigation overrides it. */
+export const AGENT_DEFAULT_VIEWPORT: AgentViewport = { width: 1280, height: 800 };
+
 /** Path to this project's daemon socket. */
 export const DAEMON_SOCKET_PATH = (() => {
   const override = process.env.CRAFTDRIVER_SOCKET;

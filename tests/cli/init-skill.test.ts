@@ -137,6 +137,7 @@ describe('safe project-local skill installer', () => {
     expect(result.files).toEqual([...result.files].sort());
     expect(result.files).toContain('SKILL.md');
     expect(result.files).toContain('agents/openai.yaml');
+    expect(result.files).not.toContain('browser.md');
     expect(result.files).toContain('workflow.md');
 
     const installedSkill = readFileSync(join(destination, 'SKILL.md'), 'utf8');
@@ -146,7 +147,12 @@ describe('safe project-local skill installer', () => {
     // `locators`, not from guesswork.
     expect(installedSkill).toContain('STALE_REF');
     expect(installedSkill).toContain('craftdriver locators');
+    expect(installedSkill).toContain('--observe=delta');
+    expect(installedSkill).toContain('do not follow it with another snapshot');
     expect(installedSkill).not.toContain('refs can be reassigned');
+    expect(installedSkill).not.toContain('[browser.md]');
+    expect(installedSkill).toContain('[cli.md](cli.md)');
+    expect(installedSkill).not.toContain('[cheatsheet.md]');
     // `name` and `description` frontmatter is what every host indexes the
     // skill by — Claude Code, Codex, and Copilot all read the same two fields.
     expect(installedSkill).toMatch(/^---\nname: craftdriver\ndescription: .+\n---\n/);
@@ -157,6 +163,9 @@ describe('safe project-local skill installer', () => {
     // at failures the console and network journal explain outright.
     expect(installedWorkflow).toContain('craftdriver logs --kind');
     expect(installedWorkflow).toContain('Never heal a test at runtime');
+    expect(installedWorkflow).toContain('[CLI reference](cli.md)');
+    expect(installedWorkflow).toContain('[TypeScript API\ncheatsheet](cheatsheet.md)');
+    expect(installedWorkflow).toContain('[worked patterns](patterns.md)');
     expect(
       readFileSync(join(destination, 'agents', 'openai.yaml'), 'utf8'),
     ).toContain('default_prompt: "Use $craftdriver');

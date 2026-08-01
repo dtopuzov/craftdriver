@@ -94,6 +94,49 @@ describe('agent action set', () => {
     expect(await value()).toBe('alice-bob');
   });
 
+  it('fails immediately when a ref names a structural container and suggests its reveal control', async () => {
+    await session.run({
+      cmd: 'eval',
+      args: {
+        js: `document.body.innerHTML = '<div id="search" role="search"><a id="reveal" href="#find">Search</a></div>'`,
+      },
+    });
+    const snap = (await session.run({ cmd: 'snapshot' })) as { lines: string[] };
+    const container = snap.lines.find((line) => line.includes('search (container)'));
+    const child = snap.lines.find((line) => line.includes('link "Search"'));
+    expect(container).toMatch(/^e\d+: search \(container\)/);
+    expect(child).toMatch(/^  e\d+: link "Search"/);
+    const ref = /^(e\d+):/.exec(container!)![1];
+
+    const error = await session.run({
+      cmd: 'fill',
+      args: { selector: `ref=${ref}`, value: 'Telerik' },
+    }).catch((caught: unknown) => caught as { code?: string; hint?: string });
+
+    expect(error).toMatchObject({
+      code: ErrorCode.NOT_EDITABLE,
+      hint: expect.stringMatching(/^click ref=e\d+ \("Search"\) to reveal/),
+    });
+  });
+
+  it('applies an explicit viewport before navigation', async () => {
+    await session.run({
+      cmd: 'go',
+      args: { url: `${EXAMPLES_BASE_URL}/agent-actions.html`, viewport: { width: 900, height: 700 } },
+    });
+    const size = (await session.run({
+      cmd: 'eval',
+      args: { js: 'return { width: innerWidth, height: innerHeight }' },
+    })) as { result: { width: number; height: number } };
+    expect(size.result).toEqual({ width: 900, height: 700 });
+
+    // Do not leak this test's responsive mode into later cases sharing the session.
+    await session.run({
+      cmd: 'go',
+      args: { url: `${EXAMPLES_BASE_URL}/agent-actions.html`, viewport: { width: 1280, height: 800 } },
+    });
+  });
+
   it('focus puts the caret at the end so type appends rather than prepends', async () => {
     await session.run({ cmd: 'focus', args: { selector: '#nickname' } });
     await session.run({ cmd: 'type', args: { text: 'XY' } });
@@ -141,6 +184,17 @@ describe('agent action set', () => {
     })) as { result: boolean };
     // The command must not simply echo back what was requested.
     expect(result.checked).toBe(observed.result);
+  });
+
+  it('returns the requested semantic target, never the generated WebDriver XPath', async () => {
+    const result = (await session.run({
+      cmd: 'click',
+      args: { selector: 'role=button[name=Save changes]' },
+    })) as { ok: boolean; selector: string };
+
+    expect(result).toEqual({ ok: true, selector: 'role=button[name=Save changes]' });
+    expect(JSON.stringify(result)).not.toContain('xpath');
+    expect(JSON.stringify(result)).not.toContain('.//*');
   });
 
   it('key rejects the removed type action and points at the type command', async () => {

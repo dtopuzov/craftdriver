@@ -36,7 +36,14 @@ import type { Browser } from '../lib/browser.js';
 import { PAGE_SEMANTICS_JS } from './pageSemantics.js';
 
 const MAX_NODES = 80;
+/** Incidental leaf text is useful evidence, but must never hide controls. */
+const MAX_EVIDENCE_TEXT_NODES = 10;
+/** Keep ordinary prose independently bounded. */
+const MAX_ORDINARY_TEXT_NODES = 7;
+/** Long prose belongs to `text`, not to the action-oriented snapshot. */
+const MAX_TEXT_LENGTH = 120;
 const MAX_NAME = 80;
+const MAX_HREF = 80;
 /**
  * Upper bound on refs issued per document. Reaching it resets the registry
  * under a fresh `documentId`, which invalidates every outstanding ref
@@ -82,24 +89,24 @@ export interface RefProbe {
  * Build a fresh snapshot of the active page. Errors swallowed so a
  * partial post-action payload never breaks the protocol.
  */
-export async function takeSnapshot(
-  browser: Browser,
-  minRef = 0,
-): Promise<SnapshotShape | null> {
+export async function takeSnapshot(browser: Browser, minRef = 0): Promise<SnapshotShape | null> {
   try {
-    const page = await browser.activePage();
-    const [url, title] = await Promise.all([
-      page.url().catch(() => ''),
-      page.title().catch(() => ''),
-    ]);
-    const raw = await page.evaluate(jsSnapshot(minRef));
+    // The snapshot is a synchronous, JSON-safe DOM probe. Running it through
+    // Classic avoids paying for a fresh BiDi realm after every navigation
+    // (measured in seconds on Chrome) without changing public evaluate().
+    const raw = await browser._evaluateClassic(jsSnapshot(minRef));
     if (!raw || typeof raw !== 'object') return null;
     const shaped = raw as {
-      lines?: unknown; documentId?: unknown; refs?: unknown; nextRef?: unknown;
+      url?: unknown;
+      title?: unknown;
+      lines?: unknown;
+      documentId?: unknown;
+      refs?: unknown;
+      nextRef?: unknown;
     };
     return {
-      url,
-      title,
+      url: typeof shaped.url === 'string' ? shaped.url : '',
+      title: typeof shaped.title === 'string' ? shaped.title : '',
       lines: Array.isArray(shaped.lines) ? (shaped.lines as string[]) : [],
       documentId: typeof shaped.documentId === 'string' ? shaped.documentId : '',
       revision: 0,
@@ -137,13 +144,12 @@ export async function peekDialog(browser: Browser): Promise<string | null> {
 export async function probeRef(
   browser: Browser,
   ref: string,
-  expectedDocumentId: string | null,
+  expectedDocumentId: string | null
 ): Promise<RefProbe> {
   if (!/^e\d+$/.test(ref)) return { status: 'unknown-ref', documentId: null };
   try {
-    const page = await browser.activePage();
     const js = jsProbeRef(ref, expectedDocumentId);
-    const raw = await page.evaluate(js);
+    const raw = await browser._evaluateClassic(js);
     if (!raw || typeof raw !== 'object') return { status: 'no-registry', documentId: null };
     const shaped = raw as { status?: unknown; documentId?: unknown; count?: unknown };
     return {
@@ -159,13 +165,20 @@ export async function probeRef(
 /** Human-readable reason attached to a STALE_REF failure. */
 export function describeRefStatus(status: RefStatus): string {
   switch (status) {
-    case 'no-snapshot': return 'no snapshot has been taken in this session yet';
-    case 'no-registry': return 'the page has no ref registry (it navigated or was replaced)';
-    case 'document-changed': return 'the page navigated or reloaded after the ref was issued';
-    case 'unknown-ref': return 'the ref was never issued for the current document';
-    case 'detached': return 'the element was removed from the document';
-    case 'ambiguous': return 'the ref no longer identifies exactly one element';
-    default: return 'the ref is no longer valid';
+    case 'no-snapshot':
+      return 'no snapshot has been taken in this session yet';
+    case 'no-registry':
+      return 'the page has no ref registry (it navigated or was replaced)';
+    case 'document-changed':
+      return 'the page navigated or reloaded after the ref was issued';
+    case 'unknown-ref':
+      return 'the ref was never issued for the current document';
+    case 'detached':
+      return 'the element was removed from the document';
+    case 'ambiguous':
+      return 'the ref no longer identifies exactly one element';
+    default:
+      return 'the ref is no longer valid';
   }
 }
 
@@ -180,10 +193,7 @@ export function describeRefStatus(status: RefStatus): string {
  * Refs are stripped before the set-difference and re-attached when
  * rendering, so a diff reports semantic change rather than renumbering.
  */
-export function renderDelta(
-  prev: SnapshotShape | null,
-  next: SnapshotShape | null,
-): string {
+export function renderDelta(prev: SnapshotShape | null, next: SnapshotShape | null): string {
   if (!next) return '';
   const header = `page: ${next.title || '(untitled)'} — ${next.url || '(no url)'}`;
   if (!prev) {
@@ -256,6 +266,7 @@ export class SnapshotTracker {
   private baseline: SnapshotShape | null = null;
   private revision = 0;
   private highWater = 0;
+  private readonly issuedRefs = new Set<string>();
 
   /** The document outstanding refs were issued against, if any. */
   get documentId(): string | null {
@@ -277,12 +288,18 @@ export class SnapshotTracker {
     return this.highWater;
   }
 
+  /** Whether this session has ever shown the ref to the agent. */
+  hasIssuedRef(ref: string): boolean {
+    return this.issuedRefs.has(ref);
+  }
+
   /** Stamp a session-monotonic revision and make this the new baseline. */
   record(snap: SnapshotShape | null): SnapshotShape | null {
     if (!snap) return null;
     const stamped: SnapshotShape = { ...snap, revision: ++this.revision };
     this.baseline = stamped;
     this.highWater = Math.max(this.highWater, stamped.nextRef - 1);
+    for (const ref of stamped.refs) this.issuedRefs.add(ref);
     return stamped;
   }
 
@@ -334,14 +351,18 @@ return { status: 'ok', documentId: reg.doc };
  * 2. Walk the composed tree, entering open shadow roots and flattened slots.
  * 3. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
  * 4. Reuse each node's existing ref, or issue the next unused one.
- * 5. Cap output at MAX_NODES so the snapshot stays bounded regardless
- *    of page complexity.
+ * 5. Bound semantic and short-text evidence independently so prose cannot
+ *    hide controls and output stays bounded regardless of page complexity.
  */
 function jsSnapshot(minRef: number): string {
   const floor = Number.isSafeInteger(minRef) && minRef >= 0 ? minRef : 0;
   return `
 const MAX_NODES = ${MAX_NODES};
+const MAX_EVIDENCE_TEXT_NODES = ${MAX_EVIDENCE_TEXT_NODES};
+const MAX_ORDINARY_TEXT_NODES = ${MAX_ORDINARY_TEXT_NODES};
+const MAX_TEXT_LENGTH = ${MAX_TEXT_LENGTH};
 const MAX_NAME = ${MAX_NAME};
+const MAX_HREF = ${MAX_HREF};
 const MAX_REFS = ${MAX_REFS};
 const MIN_REF = ${floor};
 function newDocId(epoch) {
@@ -400,7 +421,14 @@ function refFor(reg, el) {
 }
 function visible(el) {
   if (!el || !el.getClientRects) return false;
-  if (el.hidden) return false;
+  // Layout APIs already account for display:none ancestors, but aria-hidden
+  // and inert content can still have boxes. Never tell an agent that content
+  // hidden from the accessibility tree is available to act on or verify.
+  for (let p = el; p && p.nodeType === 1;) {
+    if (p.hidden || p.hasAttribute('inert') || p.getAttribute('aria-hidden') === 'true') return false;
+    const root = p.getRootNode ? p.getRootNode() : null;
+    p = p.parentElement || (root && root.host) || null;
+  }
   const rects = el.getClientRects();
   if (!rects.length) return false;
   const r = rects[0];
@@ -410,6 +438,44 @@ function visible(el) {
   return true;
 }
 ${PAGE_SEMANTICS_JS}
+function visibleText(el) {
+  const chunks = [];
+  function collect(node) {
+    if (node.nodeType === 3) {
+      chunks.push(node.nodeValue || '');
+      return;
+    }
+    if (node.nodeType !== 1 || (node !== el && !visible(node))) return;
+    const children = node.childNodes || [];
+    for (let i = 0; i < children.length; i++) collect(children[i]);
+  }
+  collect(el);
+  return chunks.join(' ').trim().replace(/\\s+/g, ' ');
+}
+function explicitName(el) {
+  const aria = el.getAttribute('aria-label');
+  if (aria && aria.trim()) return aria.trim();
+  const labelledby = el.getAttribute('aria-labelledby');
+  if (!labelledby) return '';
+  const ref = elementByIdInRoot(semanticRoot(el), labelledby);
+  return ref && visible(ref) ? visibleText(ref) : '';
+}
+function snapshotName(el, role, contentOnly) {
+  if (contentOnly) return visibleText(el);
+  // Structural containers must not inherit every descendant's text as their
+  // name. Besides being noisy, raw textContent can include hidden results and
+  // make an agent believe content is already visible.
+  if (isStructuralRole(role)) return explicitName(el);
+  return accName(el);
+}
+function isStructuralRole(role) {
+  return role === 'main' || role === 'navigation' || role === 'form' ||
+    role === 'article' || role === 'banner' || role === 'contentinfo' ||
+    role === 'list' || role === 'table' || role === 'row' ||
+    role === 'search' || role === 'region' || role === 'group' ||
+    role === 'dialog' || role === 'alertdialog' || role === 'complementary' ||
+    role === 'feed' || role === 'section';
+}
 function locatorHint(el) {
   if (el.id) return '#' + el.id;
   const testid = el.getAttribute('data-testid') || el.getAttribute('data-test-id');
@@ -419,59 +485,201 @@ function locatorHint(el) {
   return null;
 }
 const reg = registry();
-const sel = 'a,button,input,select,textarea,h1,h2,h3,h4,h5,h6,[role],nav,main,header,footer,form,img,label';
+// Short leaf content is decision evidence (validation, result summaries,
+// save confirmations), not merely decoration. Keep the allow-list narrow and
+// the global MAX_NODES/MAX_NAME bounds intact so this cannot become a DOM dump.
+const contentSel = 'p,output,dt,dd,figcaption,caption';
+const semanticSel = 'a,button,input,select,textarea,h1,h2,h3,h4,h5,h6,[role],nav,main,header,footer,form,img,label';
+const sel = semanticSel + ',[aria-live],' + contentSel;
 const out = [];
 const refs = [];
 const seen = new WeakSet();
+let semanticCount = 0;
+let evidenceTextCount = 0;
+let ordinaryTextCount = 0;
 function emit(el, depth) {
-  if (out.length >= MAX_NODES || !visible(el)) return;
+  if (!visible(el)) return;
   // A <header>/<footer> inside sectioning content is not a landmark, and
   // listing it as a bare tag would be pure noise. Everything else keeps a
   // line even without an ARIA role, so controls stay addressable by ref.
   const tag = el.tagName.toLowerCase();
   if (!ariaRole(el) && (tag === 'header' || tag === 'footer')) return;
-  const role = displayRole(el);
-  let name = accName(el);
+  const contentOnly = el.matches(contentSel) && !ariaRole(el);
+  if (!contentOnly && semanticCount >= MAX_NODES) return;
+  const role = contentOnly ? 'text' : displayRole(el);
+  let name = snapshotName(el, role, contentOnly);
+  const fieldValueSensitive =
+    (tag === 'input' || tag === 'textarea') && fieldValueIsSensitive(el, name);
+  // Some DOM fallbacks treat a textarea's text content as its accessible
+  // name. If that content is also the sensitive value, omitting value= alone
+  // would still leak it through the quoted name.
+  if (fieldValueSensitive) {
+    const value = String(el.value || '');
+    if (value && name.includes(value)) name = explicitName(el);
+  }
+  // A bare empty announcement target carries no evidence. If it later gains
+  // content it will appear as an added line in the next delta.
+  if (el.hasAttribute('aria-live') && !el.matches(semanticSel) && !name) return;
+  // Empty leaf content carries no evidence and should not consume a ref. It
+  // will appear as an added line if an action later populates it.
+  if (contentOnly && !name) return;
+  // Bare paragraphs and definition text are often article prose. Preserve
+  // short status/result evidence while sending long-form reading through the
+  // explicit text command. Purpose-built evidence elements have a separate
+  // bounded budget so article prose cannot hide multiple validation results.
+  const evidenceText =
+    tag === 'output' || tag === 'caption' || tag === 'figcaption' ||
+    el.hasAttribute('aria-live') || hasEvidenceIdentity(el);
+  if (contentOnly && evidenceText && evidenceTextCount >= MAX_EVIDENCE_TEXT_NODES) return;
+  if (contentOnly && !evidenceText && ordinaryTextCount >= MAX_ORDINARY_TEXT_NODES) return;
+  if (contentOnly && !evidenceText && name.length > MAX_TEXT_LENGTH) return;
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME - 1) + '…';
   const hint = locatorHint(el);
   const ref = refFor(reg, el);
   refs.push(ref);
   let line = '  '.repeat(depth) + ref + ': ' + role;
+  if (isStructuralRole(role)) line += ' (container)';
   if (name) line += ' "' + name + '"';
+  if (role === 'heading') {
+    const nativeLevel = /^h[1-6]$/.test(tag) ? tag.slice(1) : null;
+    const level = el.getAttribute('aria-level') || nativeLevel;
+    if (level) line += ' [level=' + level + ']';
+  }
+  if (tag === 'a' && el.hasAttribute('href')) {
+    try {
+      const href = new URL(el.href, location.href);
+      let destination = href.origin === location.origin
+        ? href.pathname + href.search + href.hash
+        : href.href;
+      if (destination.length > MAX_HREF) {
+        destination = destination.slice(0, MAX_HREF - 1) + '…';
+      }
+      line += ' href=' + JSON.stringify(destination);
+    } catch {}
+  }
+  if (
+    ((tag === 'input' || tag === 'textarea') &&
+      fieldValueIsSafeToShow(el, fieldValueSensitive)) ||
+    tag === 'select'
+  ) {
+    let value = String(el.value || '');
+    if (value.length > MAX_NAME) value = value.slice(0, MAX_NAME - 1) + '…';
+    if (value) line += ' value=' + JSON.stringify(value);
+  }
   if (hint) line += ' ' + hint;
-  // Annotate disabled/checked state, agents need it.
-  if (el.disabled) line += ' (disabled)';
-  if (el.checked) line += ' (checked)';
+  // Annotate state agents need for their next decision.
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') line += ' (disabled)';
+  if (el.checked || el.getAttribute('aria-checked') === 'true') line += ' (checked)';
+  if (el.selected || el.getAttribute('aria-selected') === 'true') line += ' (selected)';
+  const expanded = el.getAttribute('aria-expanded');
+  if (expanded === 'true' || expanded === 'false') line += ' (expanded=' + expanded + ')';
+  const pressed = el.getAttribute('aria-pressed');
+  if (pressed === 'true' || pressed === 'false' || pressed === 'mixed') line += ' (pressed=' + pressed + ')';
+  const current = el.getAttribute('aria-current');
+  if (current && current !== 'false') line += ' (current=' + current + ')';
   out.push(line);
+  if (contentOnly) {
+    if (evidenceText) evidenceTextCount += 1;
+    else ordinaryTextCount += 1;
+  } else semanticCount += 1;
+}
+function hasEvidenceIdentity(el) {
+  const identity = [
+    el.id,
+    el.getAttribute('data-testid'),
+    el.getAttribute('data-test-id'),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase();
+  return /(^|[^a-z0-9])(status|result|message|error|success|log|notice|alert|feedback|confirmation)([^a-z0-9]|$)/.test(identity);
+}
+function fieldValueIsSafeToShow(el, sensitive) {
+  const type = (el.type || '').toLowerCase();
+  if (
+    ['password', 'hidden', 'file', 'checkbox', 'radio', 'submit', 'button', 'reset', 'image']
+      .includes(type)
+  ) return false;
+  return !sensitive;
+}
+function fieldValueIsSensitive(el, accessibleName) {
+  const autocomplete = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\\s+/);
+  if (
+    autocomplete.some((token) =>
+      token === 'one-time-code' || token === 'current-password' ||
+      token === 'new-password' || token.startsWith('cc-')
+    )
+  ) return true;
+  const identity = [
+    el.id,
+    el.getAttribute('name'),
+    el.getAttribute('placeholder'),
+    el.getAttribute('aria-label'),
+    accessibleName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase();
+  // Best-effort only: reduce incidental capture of conventionally named
+  // secret fields without claiming arbitrary page values can be classified.
+  return /(^|[^a-z0-9])(password|passcode|otp|one[ _-]?time|token|secret|api[ _-]?key|access[ _-]?key|credit[ _-]?card|cc[ _-]?(number|no)|card[ _-]?(number|no)|cvv|cvc|security[ _-]?code)([^a-z0-9]|$)/.test(identity);
 }
 function visitContainer(container, depth) {
   const children = container && container.children ? Array.from(container.children) : [];
-  for (let i = 0; i < children.length && out.length < MAX_NODES; i++) {
+  for (let i = 0; i < children.length; i++) {
+    if (
+      semanticCount >= MAX_NODES &&
+      evidenceTextCount >= MAX_EVIDENCE_TEXT_NODES &&
+      ordinaryTextCount >= MAX_ORDINARY_TEXT_NODES
+    ) break;
     visitElement(children[i], depth);
   }
 }
 function visitElement(el, depth) {
-  if (!el || seen.has(el) || out.length >= MAX_NODES) return;
+  if (!el || seen.has(el)) return;
   seen.add(el);
   const openRoot = el.shadowRoot || null;
-  if (el.matches(sel) || openRoot) emit(el, depth);
+  const listed = el.matches(sel) || openRoot;
+  const role = listed ? displayRole(el) : '';
+  const nestsChildren = listed && isStructuralRole(role);
+  if (listed) emit(el, depth);
   if (openRoot) {
-    if (out.length < MAX_NODES) out.push('  '.repeat(depth + 1) + '#shadow-root (open)');
+    if (semanticCount < MAX_NODES) {
+      out.push('  '.repeat(depth + 1) + '#shadow-root (open)');
+      semanticCount += 1;
+    } else return;
     visitContainer(openRoot, depth + 2);
     return;
   }
   if (el.tagName === 'SLOT') {
     const assigned = el.assignedElements ? el.assignedElements({ flatten: true }) : [];
     if (assigned.length) {
-      for (let i = 0; i < assigned.length && out.length < MAX_NODES; i++) {
+      for (let i = 0; i < assigned.length; i++) {
+        if (
+          semanticCount >= MAX_NODES &&
+          evidenceTextCount >= MAX_EVIDENCE_TEXT_NODES &&
+          ordinaryTextCount >= MAX_ORDINARY_TEXT_NODES
+        ) break;
         visitElement(assigned[i], depth);
       }
       return;
     }
   }
-  visitContainer(el, depth);
+  // Preserve only useful semantic hierarchy. Arbitrary wrapper divs stay
+  // flat, while controls under a form/search/navigation container are visibly
+  // related to it and cannot be mistaken for the container itself.
+  visitContainer(el, depth + (nestsChildren ? 1 : 0));
 }
 visitContainer(document, 0);
-return { lines: out, refs: refs, documentId: reg.doc, nextRef: reg.next };
+return {
+  url: location.href,
+  title: document.title,
+  lines: out,
+  refs: refs,
+  documentId: reg.doc,
+  nextRef: reg.next
+};
 `;
 }

@@ -61,7 +61,8 @@ const SELECTOR = {
   description:
     "CSS by default. Switch kind with a prefix: 'role=button[name=Submit]', " +
     "'text=Sign In', 'text*=Sign', 'label=Email', 'placeholder=...', " +
-    "'testid=...', 'xpath=...', 'id=...', 'name=...', or 'ref=eN' from a snapshot.",
+    "'testid=...', 'xpath=...', 'id=...', 'name=...', or 'ref=eN' from a snapshot. " +
+    'Bare eN is accepted only after this session issued it; use css=eN for a literal element.',
 } as const;
 
 const OPTIONAL_SELECTOR = { ...SELECTOR, required: false } as const;
@@ -118,16 +119,21 @@ export const TOOLS: ToolDef[] = [
     name: 'browser_fill',
     description:
       'Fill an input/textarea. Clears first, then enters the value with real key events. ' +
+      'Set submit to press Enter through the focused field in the same action. ' +
       'For checkboxes use browser_element with action=check.',
     params: {
       selector: SELECTOR,
       value: { type: 'string', required: true },
+      submit: {
+        type: 'boolean',
+        description: 'Press Enter after filling, without resolving the selector again.',
+      },
       timeout_ms: TIMEOUT,
     },
     annotations: mutating('Fill field'),
     toDispatch: (a) => ({
       cmd: 'fill',
-      args: { selector: a.selector, value: a.value, timeout: a.timeout_ms },
+      args: { selector: a.selector, value: a.value, submit: a.submit, timeout: a.timeout_ms },
     }),
   },
   {
@@ -545,7 +551,7 @@ export function validateToolArgs(tool: ToolDef, args: unknown): Record<string, u
 export async function runTool(
   session: AgentSessionRunner,
   tool: ToolDef,
-  args: Record<string, unknown>,
+  args: Record<string, unknown>
 ): Promise<unknown> {
   return session.run(tool.toDispatch(args));
 }
@@ -558,7 +564,7 @@ export async function runTool(
 export async function runToolDetailed(
   session: AgentSessionRunner,
   tool: ToolDef,
-  args: Record<string, unknown>,
+  args: Record<string, unknown>
 ): Promise<AgentDetailedResult> {
   return session.runDetailed(tool.toDispatch(args));
 }

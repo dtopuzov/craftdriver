@@ -23,14 +23,24 @@ CraftDriver-owned `.github/skills/craftdriver/` copy so it cannot become stale.
 ## Persistent browser
 
 ```bash
-npx craftdriver daemon start
-npx craftdriver go http://127.0.0.1:8080/login.html
-npx craftdriver snapshot
+npx craftdriver go http://127.0.0.1:8080/login.html --browser chrome --headless --observe=delta
 npx craftdriver daemon stop
 ```
 
-The first ordinary command auto-starts the daemon when needed. State, cookies,
+The first ordinary command auto-starts the daemon when needed. `open <url>` is
+an alias for `go <url>`. On the first call, `--observe=delta` returns the full
+bounded snapshot, so no separate initial snapshot is needed. State, cookies,
 and the active page survive between commands.
+
+Agent sessions start at a 1280x800 desktop layout. Use
+`go <url> --viewport WIDTHxHEIGHT` only when the task intentionally targets a
+different responsive size.
+
+For a mutation whose result determines the next step, append `--observe=page`
+(URL/title/document identity) or `--observe=delta` (bounded semantic change
+since the last observation). `documentChange` is `same`, `changed`, or
+`unknown`; unknown means no preceding observed document exists. The default
+stays compact and does not snapshot after every action.
 
 The daemon uses a Unix socket and is not available on Windows. On Windows, or in
 a sandbox that cannot keep a background process, use the configured MCP server
@@ -40,12 +50,12 @@ script.
 ## Current commands
 
 ```text
-go <url>
+go|open <url> [--observe=page|delta]
 find <selector> [--all] [--limit N] [--offset N]
 exists <selector>
-click <selector>
+click <selector> [--observe=page|delta]
 dblclick <selector>
-fill <selector> <value>
+fill <selector> <value> [--submit] [--observe=page|delta]
 type <text>
 clear <selector>
 check <selector> | uncheck <selector>
@@ -70,7 +80,7 @@ page list | open [url] | select <index|id> | close <index|id>
 snapshot
 locators <selector>
 screenshot [-o out.png] [--full-page] [--selector selector]
-eval <javascript>
+eval <javascript> [--observe=page|delta]
 back | forward | reload | status | quit
 daemon start | status | stop
 session list | close [name]
@@ -110,8 +120,12 @@ that exits with the command.
 `select` matches an `<option>` by its `value` attribute, not its label.
 
 Use `fill <selector> <value>` to put a value in a field — it clears first and
-delivers real key events, so fields with key handlers work. `type <text>` takes
-no selector and types into whatever holds focus, mapping onto
+delivers real key events, so fields with key handlers work. For a searchbox or
+single-field form, add `--submit`: CraftDriver presses Enter through the focused
+field without resolving the selector again, so a reactive rerender cannot stale
+a sibling submit ref. If a separate sibling action is required, observe the
+fill's delta and use its fresh ref. `type <text>` takes no selector and types
+into whatever holds focus, mapping onto
 `browser.keyboard.type()`; reach for `focus <selector>` then `type` only when
 you need to append to existing text. `focus` leaves the caret at the end.
 
@@ -203,12 +217,42 @@ reports counts and origins only, and that is all you should report onward.
 
 `state load` clears refs, so take a fresh `snapshot` after it.
 
+## Reading a snapshot line
+
+```text
+e4: textbox "Username" value="alice" #username
+e7: button "Sign in" #submit (disabled)
+e9: text "Field 1 is required" #f1-error
+```
+
+`ref: role "accessible name"`, then whatever decides the next step:
+`[level=N]` on headings, `href="…"` on links, `value="…"` on filled fields, a
+locator hint (`#id`, `[data-testid=…]`, `tag[name=…]`), and state —
+`(disabled)`, `(checked)`, `(selected)`, `(expanded=…)`, `(pressed=…)`,
+`(current=…)`.
+
+`text` lines are status and result evidence: `<output>`, `aria-live` regions,
+captions, and short `<p>` whose id reads like `status`/`result`/`error`/
+`message`. Long prose is deliberately excluded — read it with `text` when you
+need it.
+
+Structural containers are marked `(container)` and their semantic descendants
+are indented. They are named only from an explicit `aria-label`, so a bare
+`form (container) #login-form` is normal, not a missing name. Values of password, card,
+one-time-code and conventionally named secret fields are never printed, so an
+absent `value=` is not evidence that a field is empty — use `value <selector>`.
+
+Anything under an `aria-hidden="true"` or `inert` ancestor is omitted, even
+when visible on screen.
+
 ## Refs vs. durable locators
 
-A `ref=eN` from `snapshot` names one element for as long as it lives. It cannot
-drift onto a different element: if the element is removed or duplicated, or the
-page navigates or reloads, the command fails with `STALE_REF` and you take a
-fresh snapshot. Refs are never reused, so an old ref never matches a new page.
+A `ref=eN` from `snapshot` names one element for as long as it lives. The CLI
+also accepts bare `eN` when the session issued that ref; write `css=eN` to select
+a literal `<eN>` element. A ref cannot drift onto a different element: if the
+element is removed or duplicated, or the page navigates or reloads, the command
+fails with `STALE_REF` and includes a bounded recovery snapshot when available.
+Refs are never reused, so an old ref never matches a new page.
 
 Refs are still exploration state and never belong in test code. To write a test,
 turn the element into a durable selector and let CraftDriver check it against

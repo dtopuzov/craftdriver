@@ -21,6 +21,7 @@ function parse(line: string) {
 describe('CLI command mapping', () => {
   it.each([
     ['go http://x.test', 'go', { url: 'http://x.test' }],
+    ['open http://x.test', 'go', { url: 'http://x.test' }],
     ['click #a', 'click', { selector: '#a' }],
     ['dblclick #a', 'dblclick', { selector: '#a' }],
     ['hover #a', 'hover', { selector: '#a' }],
@@ -43,6 +44,48 @@ describe('CLI command mapping', () => {
     expect(parsed.args).toMatchObject(args);
   });
 
+  it('keeps explicit post-action observation on the command rather than as a global flag', () => {
+    expect(parse('click #save --observe delta')).toMatchObject({
+      cmd: 'click',
+      args: { selector: '#save', observe: 'delta' },
+    });
+    expect(parse('go http://x.test --observe page')).toMatchObject({
+      cmd: 'go',
+      args: { url: 'http://x.test', observe: 'page' },
+    });
+    expect(parse('click #save --observe=delta')).toMatchObject({
+      cmd: 'click',
+      args: { selector: '#save', observe: 'delta' },
+    });
+    expect(parse('eval document.body.remove() --observe=delta')).toMatchObject({
+      cmd: 'eval',
+      args: { js: 'document.body.remove()', observe: 'delta' },
+    });
+    expect(parse('snapshot --observe delta')).toMatchObject({
+      cmd: '__usage_error__',
+      args: { message: expect.stringContaining('--observe is not valid for snapshot') },
+    });
+    expect(parse('click #save --observe full')).toMatchObject({
+      cmd: '__usage_error__',
+      args: { message: expect.stringContaining('expected "page" or "delta"') },
+    });
+  });
+
+  it('parses and bounds a navigation viewport', () => {
+    expect(parse('go http://x.test --viewport 1280x800')).toMatchObject({
+      cmd: 'go',
+      args: { url: 'http://x.test', viewport: { width: 1280, height: 800 } },
+    });
+    expect(parse('go http://x.test --viewport 99x800')).toMatchObject({
+      cmd: '__usage_error__',
+      args: { message: expect.stringContaining('100..10000') },
+    });
+    expect(parse('click #save --viewport 1280x800')).toMatchObject({
+      cmd: '__usage_error__',
+      args: { message: expect.stringContaining('--viewport is not valid for click') },
+    });
+  });
+
   it('type takes text and no selector', () => {
     const parsed = parse('type hello world');
     expect(parsed.cmd).toBe('type');
@@ -54,6 +97,17 @@ describe('CLI command mapping', () => {
     expect(parse('fill #a hello big world').args).toMatchObject({
       selector: '#a',
       value: 'hello big world',
+    });
+  });
+
+  it('keeps submit and observation on one fill command', () => {
+    expect(parse('fill #query Telerik --submit --observe=page')).toMatchObject({
+      cmd: 'fill',
+      args: { selector: '#query', value: 'Telerik', submit: true, observe: 'page' },
+    });
+    expect(parse('click #save --submit')).toMatchObject({
+      cmd: '__usage_error__',
+      args: { message: expect.stringContaining('--submit is not valid for click') },
     });
   });
 

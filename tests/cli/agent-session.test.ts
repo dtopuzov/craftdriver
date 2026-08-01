@@ -19,7 +19,10 @@ function deferred<T = void>() {
 
 function fakeBrowser() {
   return {
-    browser: { quit: vi.fn().mockResolvedValue(undefined) } as unknown as Browser,
+    browser: {
+      quit: vi.fn().mockResolvedValue(undefined),
+      setViewportSize: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Browser,
   };
 }
 
@@ -103,6 +106,49 @@ describe('AgentSession', () => {
       session.run({ cmd: 'second' }),
     ])).resolves.toEqual(['first', 'second']);
     expect(launch).toHaveBeenCalledTimes(1);
+    expect(browser.setViewportSize).toHaveBeenCalledOnce();
+    expect(browser.setViewportSize).toHaveBeenCalledWith({ width: 1280, height: 800 });
+    await session.close();
+  });
+
+  it('closes a launched browser when viewport normalization fails', async () => {
+    const browser = {
+      setViewportSize: vi.fn().mockRejectedValue(new Error('resize failed')),
+      quit: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Browser;
+    const session = new AgentSession({
+      launchOptions: {},
+      launch: async () => browser,
+      dispatcher: async (ctx) => ctx.handle.get(),
+    });
+
+    await expect(session.run({ cmd: 'launch' })).rejects.toThrow('resize failed');
+    expect(browser.quit).toHaveBeenCalledOnce();
+    await session.close();
+  });
+
+  it('reports an unavailable post-action snapshot instead of silently omitting it', async () => {
+    const browser = {
+      quit: vi.fn().mockResolvedValue(undefined),
+      setViewportSize: vi.fn().mockResolvedValue(undefined),
+      getDialogMessage: vi.fn().mockRejectedValue(new Error('no dialog')),
+      activePage: vi.fn().mockRejectedValue(new Error('page unavailable')),
+    } as unknown as Browser;
+    const session = new AgentSession({
+      launchOptions: {},
+      launch: async () => browser,
+      dispatcher: async (ctx) => {
+        await ctx.handle.get();
+        return { ok: true };
+      },
+      autoSnapshot: false,
+    });
+
+    await expect(session.runDetailed({ cmd: 'click', observe: 'page' })).resolves.toEqual({
+      value: { ok: true },
+      delta: 'post-action snapshot unavailable',
+      snapshot: null,
+    });
     await session.close();
   });
 
@@ -151,6 +197,7 @@ describe('AgentSession', () => {
 
   it('keeps close idempotent when browser cleanup throws synchronously', async () => {
     const browser = {
+      setViewportSize: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn(() => {
         throw new Error('cleanup failed');
       }),

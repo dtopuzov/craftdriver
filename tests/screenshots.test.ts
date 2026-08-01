@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { Browser } from '../src';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
@@ -26,6 +26,9 @@ describe('screenshots', () => {
   beforeAll(async () => {
     browser = await Browser.launch({ browserName: BROWSER_NAME });
     await browser.setViewportSize({ width: 800, height: 600 });
+  });
+
+  beforeEach(async () => {
     await browser.navigateTo(`${baseUrl}/screenshot.html`);
   });
 
@@ -33,15 +36,30 @@ describe('screenshots', () => {
     await browser.quit();
   });
 
-  it('viewport screenshot is bounded by the viewport height', async () => {
-    const buf = await browser.screenshot();
-    const { width, height } = pngSize(buf);
-    // Allow for HiDPI / device scaling: dimensions should be a positive
-    // multiple of the CSS viewport, never the full document height.
-    expect(width).toBeGreaterThan(0);
-    expect(height).toBeGreaterThan(0);
-    // Document is 6000px tall; viewport capture must be much smaller.
-    expect(height).toBeLessThan(2000);
+  it('viewport screenshot matches client dimensions on scrolling and non-scrolling pages', async () => {
+    const assertClientSize = async (): Promise<void> => {
+      const page = await browser.activePage();
+      const css = await page.evaluate<{
+        width: number;
+        height: number;
+        dpr: number;
+      }>(`return {
+        width: document.documentElement.clientWidth,
+        height: document.documentElement.clientHeight,
+        dpr: devicePixelRatio,
+      }`);
+      expect(pngSize(await browser.screenshot())).toEqual({
+        width: Math.round(css.width * css.dpr),
+        height: Math.round(css.height * css.dpr),
+      });
+    };
+
+    // The fixture is 6000px tall, so its classic scrollbar reduces clientWidth.
+    await assertClientSize();
+    await browser.setContent(
+      `<!doctype html><title>Short page</title><p>Fits in the viewport.</p>`
+    );
+    await assertClientSize();
   });
 
   it('fullPage screenshot covers the entire scrollable document', async () => {

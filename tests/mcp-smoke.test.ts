@@ -189,7 +189,10 @@ describe('MCP smoke', () => {
       name: 'browser_trace',
       arguments: { action: 'stop', zip: true },
     })) as RpcSuccess;
-    const stopped = stop.result as { isError?: boolean; structuredContent?: { result?: { zip?: string } } };
+    const stopped = stop.result as {
+      isError?: boolean;
+      structuredContent?: { result?: { zip?: string } };
+    };
     expect(stopped.isError ?? false).toBe(false);
 
     const zipPath = stopped.structuredContent?.result?.zip as string;
@@ -210,9 +213,11 @@ describe('MCP smoke', () => {
       name: 'browser_locators',
       arguments: { selector: '#submit' },
     })) as RpcSuccess;
-    const report = (locators.result as {
-      structuredContent: { result: { best?: string; candidates: Array<{ status: string }> } };
-    }).structuredContent.result;
+    const report = (
+      locators.result as {
+        structuredContent: { result: { best?: string; candidates: Array<{ status: string }> } };
+      }
+    ).structuredContent.result;
     expect(report.best).toBeTruthy();
     expect(report.best).not.toMatch(/ref=/);
     expect(report.candidates.some((c) => c.status === 'unique')).toBe(true);
@@ -234,9 +239,11 @@ describe('MCP smoke', () => {
       name: 'browser_logs',
       arguments: { action: 'list', kind: 'error' },
     })) as RpcSuccess;
-    const page = (errors.result as {
-      structuredContent: { result: { entries: Array<{ kind: string }> } };
-    }).structuredContent.result;
+    const page = (
+      errors.result as {
+        structuredContent: { result: { entries: Array<{ kind: string }> } };
+      }
+    ).structuredContent.result;
     expect(page.entries.length).toBeGreaterThan(0);
 
     // browser_element: one tool, several real dispatcher commands behind it.
@@ -251,9 +258,11 @@ describe('MCP smoke', () => {
       name: 'browser_page',
       arguments: { action: 'list' },
     })) as RpcSuccess;
-    const listed = (pages.result as {
-      structuredContent: { result: { count: number } };
-    }).structuredContent.result;
+    const listed = (
+      pages.result as {
+        structuredContent: { result: { count: number } };
+      }
+    ).structuredContent.result;
     expect(listed.count).toBeGreaterThan(0);
   });
 
@@ -281,6 +290,29 @@ describe('MCP smoke', () => {
     // No ARIA role for a password input; listed under its tag, still reffed.
     expect(all).toMatch(/e\d+: input .*Password/);
     expect(all).toMatch(/e\d+: button .*Sign in/i);
+  });
+
+  it('browser_fill submit shares the observed navigation semantics', async () => {
+    await mcp.request('tools/call', {
+      name: 'browser_navigate',
+      arguments: { url: `${EXAMPLES_BASE_URL}/reactive-search.html?delay=40` },
+    });
+
+    const fill = (await mcp.request('tools/call', {
+      name: 'browser_fill',
+      arguments: { selector: '#query', value: 'MCP Atomic', submit: true },
+    })) as RpcSuccess;
+    const result = fill.result as {
+      isError?: boolean;
+      content: Array<{ type: string; text?: string }>;
+      structuredContent: { result: { submitted?: boolean } };
+    };
+
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent.result.submitted).toBe(true);
+    expect(result.content.map((item) => item.text ?? '').join('\n')).toContain(
+      'heading "MCP Atomic"'
+    );
   });
 
   it('surfaces stable error codes via isError + structuredContent.error', async () => {

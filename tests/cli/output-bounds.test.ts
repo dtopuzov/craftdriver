@@ -32,7 +32,9 @@ import { toWireError } from '../../src/cli/daemon';
 const artifactRoots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(artifactRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    artifactRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  );
 });
 
 async function artifactStore(limits: { maxArtifacts?: number; maxTotalBytes?: number }) {
@@ -68,8 +70,10 @@ describe('boundValue', () => {
 
   it('bounds an oversized object rather than trimming it structurally', () => {
     // A structurally trimmed object still looks like a complete answer.
-    const bounded = boundValue({ rows: Array.from({ length: 50_000 }, (_, i) => i) }) as
-      Record<string, unknown>;
+    const bounded = boundValue({ rows: Array.from({ length: 50_000 }, (_, i) => i) }) as Record<
+      string,
+      unknown
+    >;
     expect(bounded.truncated).toBe(true);
     expect(typeof bounded.value).toBe('string');
   });
@@ -179,11 +183,11 @@ describe('MCP failure results', () => {
 
 describe('CLI/daemon failure results', () => {
   it('bounds page-derived messages and structured details before transport', () => {
-    const wire = toWireError(new CraftdriverError(
-      ErrorCode.DRIVER_ERROR,
-      'x'.repeat(200_000),
-      { detail: { page: 'y'.repeat(200_000) } },
-    ));
+    const wire = toWireError(
+      new CraftdriverError(ErrorCode.DRIVER_ERROR, 'x'.repeat(200_000), {
+        detail: { page: 'y'.repeat(200_000) },
+      })
+    );
     expect(utf8Bytes(JSON.stringify(wire))).toBeLessThanOrEqual(DEFAULT_MAX_RESULT_BYTES);
     expect(wire.message.endsWith('…')).toBe(true);
     expect(wire.detail).toMatchObject({ truncated: true });
@@ -192,13 +196,35 @@ describe('CLI/daemon failure results', () => {
   it('turns circular detail into a serializable diagnostic', () => {
     const detail: Record<string, unknown> = {};
     detail.self = detail;
-    const wire = toWireError(new CraftdriverError(
-      ErrorCode.DRIVER_ERROR,
-      'boom',
-      { detail },
-    ));
+    const wire = toWireError(new CraftdriverError(ErrorCode.DRIVER_ERROR, 'boom', { detail }));
     expect(() => JSON.stringify(wire)).not.toThrow();
     expect(wire.detail).toMatchObject({ truncated: true });
+  });
+
+  it('removes nested native driver stacks from agent-facing details', () => {
+    const wire = toWireError(
+      new CraftdriverError(ErrorCode.DRIVER_ERROR, 'element is not editable', {
+        detail: {
+          webDriverError: 'invalid element state',
+          response: { value: { stacktrace: 'native frame\nnative frame', stack: 'js frame' } },
+        },
+      })
+    );
+    expect(wire.detail).toEqual({
+      webDriverError: 'invalid element state',
+      response: { value: {} },
+    });
+    expect(JSON.stringify(wire)).not.toContain('native frame');
+  });
+
+  it('bounds a stale-ref recovery snapshot independently', () => {
+    const wire = toWireError(
+      new CraftdriverError(ErrorCode.STALE_REF, 'ref=e7 is stale', {
+        recoverySnapshot: 'page: Example\n' + 'e1: button "Save"\n'.repeat(10_000),
+      })
+    );
+    expect(utf8Bytes(wire.recoverySnapshot!)).toBeLessThanOrEqual(12 * 1024);
+    expect(wire.recoverySnapshot).toMatch(/…$/);
   });
 });
 
@@ -207,8 +233,9 @@ describe('artifact store quota', () => {
     const store = await artifactStore({ maxTotalBytes: 16 });
     // Use a small injected budget; allocating 257 MiB made the unit test itself
     // a memory-pressure hazard while proving the same comparison.
-    await expect(store.write('big.bin', Buffer.alloc(17)))
-      .rejects.toBeInstanceOf(ArtifactQuotaError);
+    await expect(store.write('big.bin', Buffer.alloc(17))).rejects.toBeInstanceOf(
+      ArtifactQuotaError
+    );
   });
 
   it('accounts browser-written screenshots by their actual size', async () => {

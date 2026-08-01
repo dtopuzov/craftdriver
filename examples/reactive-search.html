@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Reactive Search</title>
+  </head>
+  <body>
+    <main id="app"></main>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const app = document.getElementById('app');
+
+      if (params.get('destination') === '1') {
+        const query = params.get('q') || '';
+        document.title = `${query} — Search result`;
+        const canonical = document.createElement('link');
+        canonical.rel = 'canonical';
+        canonical.href = `${location.origin}${location.pathname}?destination=1&q=${encodeURIComponent(query)}`;
+        document.head.append(canonical);
+        app.innerHTML = `<h1 id="result-heading"></h1><p id="result-summary">Destination loaded</p>`;
+        document.getElementById('result-heading').textContent = query;
+      } else if (params.get('intermediate') === '1') {
+        document.title = 'Intermediate redirect';
+        app.innerHTML = '<h1>Intermediate redirect</h1>';
+        const query = params.get('q') || '';
+        setTimeout(() => {
+          location.replace(`${location.pathname}?destination=1&q=${encodeURIComponent(query)}`);
+        }, 0);
+      } else {
+        app.innerHTML = `
+        <h1>Reactive Search</h1>
+        <form id="search-form">
+          <label for="query">Search</label>
+          <input id="query" name="q" type="search" autocomplete="off">
+          <button id="submit" type="submit">Search</button>
+          <output id="validation" aria-live="polite"></output>
+        </form>`;
+
+        const form = document.getElementById('search-form');
+        let replacementCount = 0;
+        let replacementScheduled = false;
+
+        function bindReactiveInput(input) {
+          input.addEventListener('input', () => {
+            if (replacementScheduled) return;
+            replacementScheduled = true;
+            setTimeout(() => {
+              const value = input.value;
+              const replacement = input.cloneNode();
+              replacement.value = value;
+              input.replaceWith(replacement);
+
+              const oldButton = document.getElementById('submit');
+              const newButton = oldButton.cloneNode(true);
+              oldButton.replaceWith(newButton);
+
+              replacementCount += 1;
+              replacement.dataset.replacement = String(replacementCount);
+              replacement.focus();
+              replacement.setSelectionRange(value.length, value.length);
+              replacementScheduled = false;
+              bindReactiveInput(replacement);
+            }, 0);
+          });
+        }
+
+        bindReactiveInput(document.getElementById('query'));
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const query = new FormData(form).get('q').trim();
+          const validation = document.getElementById('validation');
+          if (!query || query.toLowerCase() === 'invalid') {
+            validation.textContent = 'Enter a valid search term';
+            return;
+          }
+          if (query.toLowerCase() === 'dialog') {
+            alert('Search confirmation required');
+            return;
+          }
+
+          const delay = Number(params.get('delay') || '40');
+          if (query.toLowerCase() === 'same-url') {
+            setTimeout(() => location.reload(), delay);
+            return;
+          }
+          const destination =
+            query.toLowerCase() === 'redirect'
+              ? `${location.pathname}?intermediate=1&q=${encodeURIComponent(query)}`
+              : `${location.pathname}?destination=1&q=${encodeURIComponent(query)}`;
+          setTimeout(() => {
+            location.href = destination;
+          }, delay);
+        });
+      }
+    </script>
+  </body>
+</html>

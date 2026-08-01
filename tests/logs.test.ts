@@ -157,29 +157,24 @@ describe('Console Logs and JavaScript Errors', () => {
 
   describe('Async Errors', () => {
     it('captures unhandled promise rejection', async () => {
-      await browser.click('#btn-promise-reject');
-
-      // Wait a bit for promise rejection to be logged
-      await browser.pause(500);
-
-      expect(capturedErrorText()).toContain('Unhandled promise rejection');
+      await clickAndWaitForError(
+        '#btn-promise-reject',
+        (e) => e.text.includes('Unhandled promise rejection')
+      );
     });
 
     it('captures async function error', async () => {
-      await browser.click('#btn-async-error');
-
-      await browser.pause(500);
-
-      expect(capturedErrorText()).toContain('Error inside async function');
+      await clickAndWaitForError(
+        '#btn-async-error',
+        (e) => e.text.includes('Error inside async function')
+      );
     });
 
     it('captures error in setTimeout', async () => {
-      await browser.click('#btn-timeout-error');
-
-      // Wait for setTimeout to fire
-      await browser.pause(500);
-
-      expect(capturedErrorText()).toContain('Error inside setTimeout');
+      await clickAndWaitForError(
+        '#btn-timeout-error',
+        (e) => e.text.includes('Error inside setTimeout')
+      );
     });
   });
 

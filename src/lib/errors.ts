@@ -42,6 +42,12 @@ export const ErrorCode = {
   /** Method called in an invalid state (e.g. `clock.tick()` before `install()`). */
   STATE_INVALID: 'STATE_INVALID',
   /**
+   * A bare selector such as `e7` looks like an agent snapshot ref but was not
+   * issued by this session. Use `ref=e7` for a known ref or `css=e7` for a
+   * literal CSS type selector.
+   */
+  BARE_REF: 'BARE_REF',
+  /**
    * An agent-surface snapshot ref (`ref=eN`) no longer identifies exactly one
    * live element — it was removed, never issued, or issued against
    * a document the page has since navigated away from. Take a fresh snapshot;
@@ -49,6 +55,8 @@ export const ErrorCode = {
    * the specific cause.
    */
   STALE_REF: 'STALE_REF',
+  /** An agent tried to fill/clear a known structural snapshot container. */
+  NOT_EDITABLE: 'NOT_EDITABLE',
   /** Driver-level / transport-level failure surfaced to the caller. */
   DRIVER_ERROR: 'DRIVER_ERROR',
   /**
@@ -97,6 +105,8 @@ export interface CraftdriverErrorOptions {
   cause?: unknown;
   /** Optional one-line remediation hint shown after the message. */
   hint?: string;
+  /** Fresh bounded page context attached to a stale-ref recovery failure. */
+  recoverySnapshot?: string;
 }
 
 /**
@@ -113,6 +123,7 @@ export class CraftdriverError extends Error {
   readonly code: ErrorCodeValue;
   readonly detail?: Record<string, unknown>;
   readonly hint?: string;
+  readonly recoverySnapshot?: string;
 
   constructor(code: ErrorCodeValue, message: string, options?: CraftdriverErrorOptions) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
@@ -120,6 +131,7 @@ export class CraftdriverError extends Error {
     this.code = code;
     if (options?.detail) this.detail = options.detail;
     if (options?.hint) this.hint = options.hint;
+    if (options?.recoverySnapshot) this.recoverySnapshot = options.recoverySnapshot;
   }
 
   /** Type guard: does this error carry the given code? */

@@ -9,7 +9,7 @@ Compact reference for writing tests. The full installed API reference is
 import { Browser } from 'craftdriver';
 
 const browser = await Browser.launch({
-  browserName: 'chrome',   // 'chrome' | 'chromium' | 'firefox' | 'safari'
+  browserName: 'chrome', // 'chrome' | 'chromium' | 'firefox' | 'safari'
   headless: true,
   // enableBiDi defaults to true — network / logs / tracing / init scripts
   // all need it, so only set enableBiDi: false if you must disable it.
@@ -21,7 +21,7 @@ try {
   await browser.navigateTo('https://example.com');
   // ...
 } finally {
-  await browser.quit();    // never wrap in try/catch in tests
+  await browser.quit(); // never wrap in try/catch in tests
 }
 ```
 
@@ -43,12 +43,12 @@ a stable label; a stable anchor the moment it is dynamic or localized.
 ```ts
 import { By } from 'craftdriver';
 
-By.role('button', { name: 'Save' })  // role + STABLE name (string, not RegExp; exact:false = substring)
-By.labelText('Email')                // form label — stable as the field value changes
-By.text('Sign in')                   // visible text
-By.testId('checkout')                // stable escape hatch — dynamic/localized name, or app already has test ids
-By.css('#login-button')              // an existing, stable id / semantic class
-By.xpath('//button')                 // last resort
+By.role('button', { name: 'Save' }); // role + STABLE name (string, not RegExp; exact:false = substring)
+By.labelText('Email'); // form label — stable as the field value changes
+By.text('Sign in'); // visible text
+By.testId('checkout'); // stable escape hatch — dynamic/localized name, or app already has test ids
+By.css('#login-button'); // an existing, stable id / semantic class
+By.xpath('//button'); // last resort
 ```
 
 Never hardcode a dynamic or localized name: `{ name: 'Count is 0' }` breaks on the
@@ -59,8 +59,8 @@ next click, `{ name: 'Save' }` breaks in another language — use a stable id/te
 ```ts
 const submit = browser.locator(By.role('button', { name: 'Submit' }));
 
-await submit.click();                     // auto-waits visible
-await submit.fill('hello');               // click + clear + type
+await submit.click(); // auto-waits visible
+await submit.fill('hello'); // click + clear + type
 await submit.hover();
 await submit.expect().toBeVisible();
 await submit.expect().toHaveText('Submit');
@@ -69,7 +69,7 @@ await submit.expect().toBeEnabled();
 // composition
 const row = browser.locator('.row').filter({ hasText: 'Acme' }).first();
 const cells = await row.locator('td').all();
-const count = await row.locator('td').count();   // 0-wait probe
+const count = await row.locator('td').count(); // 0-wait probe
 ```
 
 ## Element handles
@@ -88,7 +88,10 @@ const isVisible = await el.isDisplayed();
 ## Assertions (`expect`)
 
 ```ts
-await browser.locator('h1').expect().toHaveText(/welcome/i);
+await browser
+  .locator('h1')
+  .expect()
+  .toHaveText(/welcome/i);
 await browser.locator('input').expect().toHaveValue('jane@example.com');
 await browser.locator('button').expect().toBeEnabled();
 await browser.locator('.spinner').expect().not.toBeVisible();
@@ -115,13 +118,13 @@ Codes: `NO_MATCH`, `TIMEOUT_WAITING_VISIBLE`, `TIMEOUT_WAITING_STATE`,
 `TIMEOUT_WAITING_LOAD`, `TIMEOUT_WAITING_NETWORK`,
 `TIMEOUT_WAITING_DIALOG`, `TIMEOUT`, `EXPECT_MISMATCH`,
 `A11Y_VIOLATIONS`, `EVAL_THREW`, `EVAL_BAD_ARG`, `INVALID_ARGUMENT`,
-`UNSUPPORTED`, `STATE_INVALID`, `DRIVER_ERROR`. Full table:
+`UNSUPPORTED`, `STATE_INVALID`, `BARE_REF`, `STALE_REF`, `DRIVER_ERROR`. Full table:
 `node_modules/craftdriver/docs/error-codes.md`.
 
 ## Pages and contexts
 
 ```ts
-const ctx = await browser.newContext();    // isolated profile (BiDi)
+const ctx = await browser.newContext(); // isolated profile (BiDi)
 const page = await ctx.newPage();
 await page.navigateTo(url);
 
@@ -183,7 +186,9 @@ const download = await browser.waitForDownload(() => browser.click('#download'))
 await browser.screenshot({ path: 'out.png', fullPage: true });
 
 await browser.startTrace({ outDir: './artefacts/run', title: 'Smoke flow' });
-try { /* ... */ } finally {
+try {
+  /* ... */
+} finally {
   await browser.stopTrace({ path: './artefacts/run.zip' }); // player.vibium.dev
 }
 ```
@@ -191,8 +196,8 @@ try { /* ... */ } finally {
 ## Accessibility
 
 ```ts
-const result = await browser.a11y.audit();       // returns violations
-await browser.a11y.check();                       // throws A11yError if any
+const result = await browser.a11y.audit(); // returns violations
+await browser.a11y.check(); // throws A11yError if any
 ```
 
 ## Virtual clock
@@ -200,7 +205,7 @@ await browser.a11y.check();                       // throws A11yError if any
 ```ts
 await browser.clock.install({ time: '2026-01-01T00:00:00Z' });
 await browser.clock.tick(1000);
-await browser.clock.fastForward('05:00');         // 5 minutes
+await browser.clock.fastForward('05:00'); // 5 minutes
 await browser.clock.uninstall();
 ```
 

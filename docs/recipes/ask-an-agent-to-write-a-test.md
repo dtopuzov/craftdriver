@@ -1,6 +1,6 @@
 # Ask Your Coding Agent To Write A Browser Test
 
-Your agent can already write code. What it cannot do is *see your app* — so it
+Your agent can already write code. What it cannot do is _see your app_ — so it
 guesses selectors from source, invents `data-testid`s that don't exist, and
 hands you a test that fails on first run.
 
@@ -49,11 +49,11 @@ Leave the app running in its own terminal — the agent needs a live URL.
 
 Invoke the skill explicitly if the agent doesn't pick it up on its own:
 
-| Agent | Explicit invocation |
-| --- | --- |
-| Claude Code | `/craftdriver <task>` |
+| Agent                            | Explicit invocation   |
+| -------------------------------- | --------------------- |
+| Claude Code                      | `/craftdriver <task>` |
 | Copilot in VS Code / Copilot CLI | `/craftdriver <task>` |
-| Codex | `$craftdriver <task>` |
+| Codex                            | `$craftdriver <task>` |
 
 The portable phrasing — "Use the CraftDriver skill" — works everywhere.
 
@@ -67,16 +67,29 @@ npx craftdriver snapshot --pretty
 
 ```text
 page: Login — http://localhost:3000/login
-e1: heading "Login"
-e2: form "Username Password Sign in" #login-form
-e4: textbox "Username" #username
-e6: input "Password" #password
-e7: button "Sign in" #submit
+e1: heading "Login" [level=1]
+e2: form (container) #login-form
+  e3: label "Username"
+  e4: textbox "Username" #username
+  e5: label "Password"
+  e6: input "Password" #password
+  e7: button "Sign in" #submit
 ```
 
 That is the accessibility tree, not raw HTML — role and accessible name per
-element, in a few hundred tokens instead of a DOM dump. Then it converts an
-element into locators CraftDriver has re-checked against the live page:
+element, plus the state the agent needs to choose a next step (heading level,
+link target, field value, `(disabled)`/`(checked)`/`(expanded=…)`), in a few
+hundred tokens instead of a DOM dump. Status and validation text is captured
+too, so a failed submit shows up as a `text` line rather than needing a second
+command. For a conventional form the agent can exercise that path atomically:
+
+```bash
+npx craftdriver fill ref=e4 invalid@example.test
+npx craftdriver fill ref=e6 wrong-password --submit --observe=delta
+```
+
+It then converts an element into locators CraftDriver has re-checked against
+the live page:
 
 ```bash
 npx craftdriver locators ref=e7 --pretty
@@ -90,7 +103,7 @@ best: role=button[name=Sign in]
 ✓ #submit
 ```
 
-Every `✓` matched exactly one element *just now*. The agent puts the `By.…` line
+Every `✓` matched exactly one element _just now_. The agent puts the `By.…` line
 into the test. It also drives the flow first, so it knows the test passes before
 you see it — and reads `craftdriver logs --kind error` when something fails, so
 "it says something went wrong" becomes "a 405 on `POST /api/checkout`".

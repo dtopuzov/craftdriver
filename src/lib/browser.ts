@@ -9,7 +9,12 @@ import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
 import { resolveLaunchTarget, type RemoteLaunchTarget } from './launchTarget.js';
-import { parseRemoteEndpoint, buildRemoteCapabilities, redactUrlForLog, type RemoteWebDriverOptions } from './remote.js';
+import {
+  parseRemoteEndpoint,
+  buildRemoteCapabilities,
+  redactUrlForLog,
+  type RemoteWebDriverOptions,
+} from './remote.js';
 import { Driver } from './driver.js';
 import { By } from './by.js';
 import { Condition, WaitOptions, until } from './wait.js';
@@ -375,7 +380,8 @@ interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
 }
 
 /** Mutually-exclusive browser, Electron, and remote-WebDriver launch configurations. */
-export type LaunchOptions = BrowserLaunchOptions | ElectronTargetLaunchOptions | RemoteTargetLaunchOptions;
+export type LaunchOptions =
+  BrowserLaunchOptions | ElectronTargetLaunchOptions | RemoteTargetLaunchOptions;
 
 /**
  * When to consider a navigation complete.
@@ -536,6 +542,38 @@ interface BidiContextInfo {
   userContext?: string;
   children?: BidiContextInfo[];
 }
+
+/**
+ * Internal agent-session hook. The symbol keeps the navigation fence out of
+ * the documented Browser API while still letting the CLI arm it before its
+ * shared dispatcher invokes an Enter/submit action.
+ */
+export const INTERNAL_RUN_WITH_NAVIGATION_FENCE = Symbol('runWithNavigationFence');
+export const INTERNAL_FILL_AND_SUBMIT = Symbol('fillAndSubmit');
+
+// Includes a small pre-action identity probe; measured no-navigation fence
+// cost remains ~150 ms in a persistent session.
+const NAVIGATION_DETECTION_WINDOW_MS = 140;
+const NAVIGATION_FENCE_CEILING_MS = 500;
+const NAVIGATION_LOAD_STABILITY_MS = 25;
+
+interface ClassicNavigationProbe {
+  url: string;
+  documentId: string;
+  readyState: string;
+}
+
+const CLASSIC_NAVIGATION_PROBE = `
+const key = Symbol.for('craftdriver.navigationFence.documentId');
+if (!window[key]) {
+  window[key] = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+return {
+  url: location.href,
+  documentId: window[key],
+  readyState: document.readyState,
+};
+`;
 
 /** Best-effort string form of a selector (CSS string or By descriptor) for tracing. */
 function selectorToString(sel: string | By | undefined): string | undefined {
@@ -930,7 +968,9 @@ export class Browser {
             this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
           },
         });
-        session.network.setInternalContextPredicate((context) => this._isInternalContextId(context));
+        session.network.setInternalContextPredicate((context) =>
+          this._isInternalContextId(context)
+        );
         session.logs.setInternalContextPredicate((context) => this._isInternalContextId(context));
         await this._ensureTopLevelContextTracking().catch(() => {});
         return; // success
@@ -1116,7 +1156,7 @@ export class Browser {
     name: string,
     args: unknown[] | undefined,
     selector: string | undefined,
-    run: () => Promise<T>,
+    run: () => Promise<T>
   ): Promise<T> {
     const actionIndex = this._tracer?.recordAction(name, args, selector);
     try {
@@ -1133,12 +1173,12 @@ export class Browser {
     return this._runTracedAction('navigateTo', [url, opts], url, async () => {
       const waitUntil: LoadState = opts?.waitUntil ?? 'load';
 
-    // Classic-first for ordinary `waitUntil: 'load'` navigations: Classic
-    // already blocks until `document.readyState === 'complete'`, so the common
-    // case avoids a BiDi round trip. Preload-backed sessions stay on BiDi
-    // because the next operation is often a BiDi script evaluation into the new
-    // document; mixing Classic navigate + immediate BiDi evaluate can race with
-    // the browser clearing old execution contexts on loaded-but-settling pages.
+      // Classic-first for ordinary `waitUntil: 'load'` navigations: Classic
+      // already blocks until `document.readyState === 'complete'`, so the common
+      // case avoids a BiDi round trip. Preload-backed sessions stay on BiDi
+      // because the next operation is often a BiDi script evaluation into the new
+      // document; mixing Classic navigate + immediate BiDi evaluate can race with
+      // the browser clearing old execution contexts on loaded-but-settling pages.
       const needsBiDi = waitUntil !== 'load' || this.hasDefaultNavigationInitScripts();
       const context = needsBiDi ? this.bidiSession?.getContext() : undefined;
       if (context && this.bidiSession?.isConnected()) {
@@ -1159,7 +1199,7 @@ export class Browser {
       await this.driver.navigateTo(url);
       if (waitUntil === 'networkidle') {
         // Best-effort: Classic can't track network events; give it a short settle time
-        await new Promise(r => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
+        await new Promise((r) => setTimeout(r, NETWORK_IDLE_SETTLE_MS));
       }
     });
   }
@@ -1614,6 +1654,205 @@ export class Browser {
     );
   }
 
+  /** @internal Run an action behind a bounded, navigation-aware observation fence. */
+  async [INTERNAL_RUN_WITH_NAVIGATION_FENCE]<T>(action: () => Promise<T>): Promise<T> {
+    if (this.bidiSession?.isConnected()) {
+      return this.runWithBidiNavigationFence(action);
+    }
+    return this.runWithClassicNavigationFence(action);
+  }
+
+  private async runWithBidiNavigationFence<T>(action: () => Promise<T>): Promise<T> {
+    const session = this.bidiSession!;
+    const context = (await this.activePage()).id();
+    const baseline = await this.driver.executeScript<ClassicNavigationProbe>(
+      CLASSIC_NAVIGATION_PROBE,
+      []
+    );
+    let navigationId: string | null = null;
+    let loadedNavigationId: string | null = null;
+    let sameUrlCandidateId: string | null = null;
+    let wake: (() => void) | null = null;
+
+    const signal = (): void => {
+      const current = wake;
+      wake = null;
+      current?.();
+    };
+    const waitForSignal = (timeout: number): Promise<void> =>
+      new Promise((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (wake === finish) wake = null;
+          resolve();
+        };
+        const timer = setTimeout(finish, Math.max(0, timeout));
+        wake = finish;
+      });
+
+    const onStarted = (params: Record<string, unknown>): void => {
+      if (params.context !== context || typeof params.navigation !== 'string') return;
+      // Classic `go` can finish before its BiDi events reach this client. A
+      // late start for the already-current URL must not masquerade as the
+      // Enter action's navigation. Retain it until load lets us compare the
+      // document identity, which also preserves real same-URL submissions.
+      if (navigationId === null && params.url === baseline.url) {
+        sameUrlCandidateId = params.navigation;
+        signal();
+        return;
+      }
+      // A client-side redirect starts a new navigation in the same context.
+      // It supersedes the earlier id, so only the final navigation's load can
+      // release the fence.
+      sameUrlCandidateId = null;
+      navigationId = params.navigation;
+      loadedNavigationId = null;
+      signal();
+    };
+    const onLoad = (params: Record<string, unknown>): void => {
+      if (
+        params.context === context &&
+        typeof params.navigation === 'string' &&
+        params.navigation === navigationId
+      ) {
+        loadedNavigationId = params.navigation;
+        signal();
+        return;
+      }
+      if (
+        params.context !== context ||
+        typeof params.navigation !== 'string' ||
+        params.navigation !== sameUrlCandidateId
+      ) {
+        return;
+      }
+
+      const candidate = params.navigation;
+      void this.driver
+        .executeScript<ClassicNavigationProbe>(CLASSIC_NAVIGATION_PROBE, [])
+        .then((probe) => {
+          if (sameUrlCandidateId !== candidate || navigationId !== null) return;
+          sameUrlCandidateId = null;
+          if (probe.documentId !== baseline.documentId) {
+            navigationId = candidate;
+            loadedNavigationId = candidate;
+          }
+          signal();
+        })
+        .catch(() => {
+          if (sameUrlCandidateId !== candidate || navigationId !== null) return;
+          // Losing the script realm while checking is itself evidence that
+          // the document changed. Conservatively accept this correlated load.
+          sameUrlCandidateId = null;
+          navigationId = candidate;
+          loadedNavigationId = candidate;
+          signal();
+        });
+    };
+
+    let offStarted = (): void => {};
+    let offLoad = (): void => {};
+
+    try {
+      // Listener registration is part of the guarded region too: if the
+      // second subscription fails, the first one must not leak.
+      offStarted = session.onNavigationStarted(onStarted);
+      offLoad = session.onLoad(onLoad);
+      const result = await action();
+      const completedAt = Date.now();
+      const detectionDeadline = completedAt + NAVIGATION_DETECTION_WINDOW_MS;
+      const ceiling = completedAt + NAVIGATION_FENCE_CEILING_MS;
+
+      while (Date.now() < ceiling) {
+        if (navigationId === null) {
+          if (sameUrlCandidateId !== null) {
+            await waitForSignal(ceiling - Date.now());
+            continue;
+          }
+          const remaining = detectionDeadline - Date.now();
+          if (remaining <= 0) return result;
+          await waitForSignal(remaining);
+          continue;
+        }
+
+        if (loadedNavigationId === navigationId) {
+          const loaded = navigationId;
+          // Give an immediate location.href/meta-refresh redirect a chance to
+          // supersede this load before its intermediate document is observed.
+          await waitForSignal(Math.min(NAVIGATION_LOAD_STABILITY_MS, ceiling - Date.now()));
+          if (navigationId === loaded && loadedNavigationId === loaded) return result;
+          continue;
+        }
+
+        await waitForSignal(ceiling - Date.now());
+      }
+      return result;
+    } finally {
+      try {
+        offStarted();
+      } finally {
+        try {
+          offLoad();
+        } finally {
+          signal();
+        }
+      }
+    }
+  }
+
+  private async runWithClassicNavigationFence<T>(action: () => Promise<T>): Promise<T> {
+    const before = await this.driver.executeScript<ClassicNavigationProbe>(
+      CLASSIC_NAVIGATION_PROBE,
+      []
+    );
+    const result = await action();
+    const completedAt = Date.now();
+    const detectionDeadline = completedAt + NAVIGATION_DETECTION_WINDOW_MS;
+    const ceiling = completedAt + NAVIGATION_FENCE_CEILING_MS;
+    let navigationDetected = false;
+    let stableCandidate: string | null = null;
+    let stableSince = 0;
+
+    while (Date.now() < ceiling) {
+      let probe: ClassicNavigationProbe | null = null;
+      try {
+        probe = await this.driver.executeScript<ClassicNavigationProbe>(
+          CLASSIC_NAVIGATION_PROBE,
+          []
+        );
+      } catch {
+        // Script execution commonly loses its realm while a document is
+        // being replaced. That is a navigation signal, never load completion.
+        navigationDetected = true;
+        stableCandidate = null;
+      }
+
+      if (probe) {
+        const changed = probe.url !== before.url || probe.documentId !== before.documentId;
+        navigationDetected ||= changed;
+
+        if (navigationDetected && changed && probe.readyState === 'complete') {
+          const candidate = `${probe.documentId}\u0000${probe.url}`;
+          if (candidate !== stableCandidate) {
+            stableCandidate = candidate;
+            stableSince = Date.now();
+          } else if (Date.now() - stableSince >= NAVIGATION_LOAD_STABILITY_MS) {
+            return result;
+          }
+        } else {
+          stableCandidate = null;
+        }
+      }
+
+      if (!navigationDetected && Date.now() >= detectionDeadline) return result;
+      await new Promise((resolve) => setTimeout(resolve, STATE_POLL_INTERVAL_MS));
+    }
+    return result;
+  }
+
   async url(): Promise<string> {
     return this.driver.getCurrentUrl();
   }
@@ -1703,11 +1942,8 @@ export class Browser {
       );
     }
     if (!this._tracer) {
-      this._tracer = new Tracer(
-        this,
-        this.bidiSession.getConnection(),
-        this._engine,
-        (context) => this._isInternalContextId(context)
+      this._tracer = new Tracer(this, this.bidiSession.getConnection(), this._engine, (context) =>
+        this._isInternalContextId(context)
       );
     }
     await this._tracer.start(opts);
@@ -1794,6 +2030,18 @@ export class Browser {
       );
     }
     return this.driver.executeScript<T>(fn, args);
+  }
+
+  /**
+   * Execute an internal, JSON-safe script through Classic WebDriver.
+   *
+   * @internal Agent surfaces use this for bounded DOM probes whose first BiDi
+   * realm lookup after navigation is disproportionately expensive. Public
+   * callers should use {@link evaluate}, which preserves the documented BiDi
+   * serialization and exception semantics.
+   */
+  async _evaluateClassic<T = unknown>(script: string, ...args: unknown[]): Promise<T> {
+    return this.driver.executeScript<T>(script, args);
   }
 
   /**
@@ -2059,7 +2307,7 @@ export class Browser {
         }
         if (text !== undefined) await this.driver.sendAlertText(text);
         await this.driver.acceptAlert();
-      },
+      }
     );
   }
 
@@ -2348,19 +2596,22 @@ export class Browser {
             const owner = this._wrapContext(
               (params.userContext as string | undefined) ?? 'default'
             );
-            void owner._isInternalPageContext(id).then((internal) => {
-              if (internal || settled) return;
-              settled = true;
-              clearTimeout(timer);
-              off();
-              resolve(new Page(this.driver, id, this.getDefaultTimeout, conn, owner));
-            }).catch((err) => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timer);
-              off();
-              reject(err);
-            });
+            void owner
+              ._isInternalPageContext(id)
+              .then((internal) => {
+                if (internal || settled) return;
+                settled = true;
+                clearTimeout(timer);
+                off();
+                resolve(new Page(this.driver, id, this.getDefaultTimeout, conn, owner));
+              })
+              .catch((err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                off();
+                reject(err);
+              });
           }
         });
 
@@ -2659,11 +2910,14 @@ export class Browser {
       const userContext = typeof params.userContext === 'string' ? params.userContext : 'default';
       this._destroyedTopLevelContextIds.delete(id);
       const owner = this._wrapContext(userContext);
-      void owner._isInternalPageContext(id).then((internal) => {
-        if (internal || this._destroyedTopLevelContextIds.has(id)) return;
-        this._topLevelContextUserContexts.set(id, userContext);
-        this._topLevelContextCacheVersion++;
-      }).catch(() => {});
+      void owner
+        ._isInternalPageContext(id)
+        .then((internal) => {
+          if (internal || this._destroyedTopLevelContextIds.has(id)) return;
+          this._topLevelContextUserContexts.set(id, userContext);
+          this._topLevelContextCacheVersion++;
+        })
+        .catch(() => {});
     };
     const onDestroyed = (params: Record<string, unknown>) => {
       if (params.parent) return;
@@ -2805,11 +3059,7 @@ export class Browser {
     });
   }
 
-  async fill(
-    selector: string | By,
-    text: string,
-    opts?: { timeout?: number }
-  ): Promise<void> {
+  async fill(selector: string | By, text: string, opts?: { timeout?: number }): Promise<void> {
     return this._runTracedAction('fill', [text], selectorToString(selector), async () => {
       const by = typeof selector === 'string' ? By.css(selector) : selector;
       const timeout = opts?.timeout ?? this.defaults.timeout;
@@ -2817,6 +3067,27 @@ export class Browser {
         () => this.driver.findElement(by),
         (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
         text,
+        timeout
+      );
+    });
+  }
+
+  /** @internal Fill and submit through one resolved element and one key sequence. */
+  async [INTERNAL_FILL_AND_SUBMIT](
+    selector: string | By,
+    text: string,
+    opts?: { timeout?: number }
+  ): Promise<void> {
+    return this._runTracedAction('fill', [text], selectorToString(selector), async () => {
+      const by = typeof selector === 'string' ? By.css(selector) : selector;
+      const timeout = opts?.timeout ?? this.defaults.timeout;
+      // Combining the text and Enter in one WebElement Send Keys command is
+      // what makes this atomic for reactive controls: a zero-delay rerender
+      // cannot steal focus between two protocol commands.
+      await fillWithFastPath(
+        () => this.driver.findElement(by),
+        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        `${text}${Key.Enter}`,
         timeout
       );
     });
@@ -2909,8 +3180,10 @@ export class Browser {
    *
    * Full-page capture uses BiDi `browsingContext.captureScreenshot` with
    * `origin: 'document'` and therefore requires `enableBiDi: true`
-   * (the default). Element capture composes auto-waiting via the same
-   * resolution as `find()`.
+   * (the default). Viewport capture uses the same BiDi command with
+   * `origin: 'viewport'` when connected and falls back to the Classic
+   * screenshot command otherwise. Element capture composes auto-waiting via
+   * the same resolution as `find()`.
    *
    * @example
    * const buf = await browser.screenshot();
@@ -2950,6 +3223,39 @@ export class Browser {
       const result = await conn.send<{ data: string }>('browsingContext.captureScreenshot', {
         context: page.id(),
         origin: 'document',
+      });
+      buf = Buffer.from(result.data, 'base64');
+    } else if (this.bidiSession?.isConnected()) {
+      const conn = this.bidiSession.getConnection();
+      const page = await this.activePage();
+      // Firefox's BiDi implementation currently includes classic scrollbars in
+      // an origin:"viewport" capture, while Chromium excludes them. Keep the
+      // public viewport-screenshot contract consistent by clipping Firefox to
+      // the document's client area. Clip coordinates are CSS pixels relative
+      // to the viewport origin, so BiDi still applies DPR when painting.
+      const clip =
+        this._engine === 'firefox'
+          ? await page.evaluate<{ width: number; height: number }>(`
+              return {
+                width: document.documentElement.clientWidth,
+                height: document.documentElement.clientHeight,
+              };
+            `)
+          : undefined;
+      const result = await conn.send<{ data: string }>('browsingContext.captureScreenshot', {
+        context: page.id(),
+        origin: 'viewport',
+        ...(clip
+          ? {
+              clip: {
+                type: 'box',
+                x: 0,
+                y: 0,
+                width: clip.width,
+                height: clip.height,
+              },
+            }
+          : {}),
       });
       buf = Buffer.from(result.data, 'base64');
     } else {
@@ -3039,9 +3345,7 @@ export class Browser {
     return new ElementHandle(this.driver, by, this.getDefaultTimeout).withBiDi(() => {
       if (!this.bidiSession?.isConnected()) return undefined;
       const contextId = this.bidiSession.getContext();
-      return contextId
-        ? { connection: this.bidiSession.getConnection(), contextId }
-        : undefined;
+      return contextId ? { connection: this.bidiSession.getConnection(), contextId } : undefined;
     });
   }
 
@@ -3054,9 +3358,7 @@ export class Browser {
     return new Locator(this.driver, by, this.getDefaultTimeout).withBiDi(() => {
       if (!this.bidiSession?.isConnected()) return undefined;
       const contextId = this.bidiSession.getContext();
-      return contextId
-        ? { connection: this.bidiSession.getConnection(), contextId }
-        : undefined;
+      return contextId ? { connection: this.bidiSession.getConnection(), contextId } : undefined;
     });
   }
 
@@ -3071,9 +3373,7 @@ export class Browser {
       ElementHandle.fromWebElement(this.driver, we, this.getDefaultTimeout).withBiDi(() => {
         if (!this.bidiSession?.isConnected()) return undefined;
         const contextId = this.bidiSession.getContext();
-        return contextId
-          ? { connection: this.bidiSession.getConnection(), contextId }
-          : undefined;
+        return contextId ? { connection: this.bidiSession.getConnection(), contextId } : undefined;
       })
     );
   }

@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { CraftdriverError, ErrorCode } from '../../src/lib/errors.js';
 import { ArtifactStore } from '../../src/cli/mcp/artifacts.js';
 import { getTool } from '../../src/cli/mcp/tools.js';
-import {
-  serializeToolFailure,
-  serializeToolSuccess,
-} from '../../src/cli/mcp/server.js';
+import { serializeToolFailure, serializeToolSuccess } from '../../src/cli/mcp/server.js';
 
 const roots: string[] = [];
 
@@ -27,11 +24,7 @@ describe('MCP tool result serialization', () => {
     const tool = getTool('browser_status')!;
     const value = { browser: null, pid: 42, ready: false };
 
-    await expect(serializeToolSuccess(
-      tool,
-      value,
-      await resultContext(),
-    )).resolves.toEqual({
+    await expect(serializeToolSuccess(tool, value, await resultContext())).resolves.toEqual({
       content: [{ type: 'text', text: JSON.stringify(value) }],
       structuredContent: { result: value },
     });
@@ -45,11 +38,10 @@ describe('MCP tool result serialization', () => {
       lines: ['e1: button "Save"'],
     };
 
-    const result = await serializeToolSuccess(
-      tool,
-      value,
-      { ...await resultContext(), delta: '+ e2: status "Saved"' },
-    );
+    const result = await serializeToolSuccess(tool, value, {
+      ...(await resultContext()),
+      delta: '+ e2: status "Saved"',
+    });
 
     expect(result.content).toEqual([
       { type: 'text', text: 'page: Example — https://example.test\ne1: button "Save"' },
@@ -63,7 +55,7 @@ describe('MCP tool result serialization', () => {
     const result = await serializeToolSuccess(
       tool,
       { text: 'a'.repeat(200) },
-      await resultContext(20),
+      await resultContext(20)
     );
 
     expect(result.content[0].text).toMatch(/full output:/);
@@ -71,21 +63,21 @@ describe('MCP tool result serialization', () => {
   });
 
   it('serializes structured CraftdriverError details without stacktrace noise', () => {
-    const result = serializeToolFailure(new CraftdriverError(
-      ErrorCode.DRIVER_ERROR,
-      'invalid selector',
-      {
+    const result = serializeToolFailure(
+      new CraftdriverError(ErrorCode.DRIVER_ERROR, 'invalid selector', {
         hint: 'fix the selector',
         detail: { webDriverError: 'invalid selector', stacktrace: 'noise' },
-      },
-    ));
+      })
+    );
 
     expect(result).toEqual({
       isError: true,
-      content: [{
-        type: 'text',
-        text: 'error: invalid selector\ncode:  DRIVER_ERROR\nhint:  fix the selector',
-      }],
+      content: [
+        {
+          type: 'text',
+          text: 'error: invalid selector\ncode:  DRIVER_ERROR\nhint:  fix the selector',
+        },
+      ],
       structuredContent: {
         error: {
           code: ErrorCode.DRIVER_ERROR,
@@ -101,6 +93,22 @@ describe('MCP tool result serialization', () => {
     expect(serializeToolFailure(new Error('boom'))).toMatchObject({
       isError: true,
       structuredContent: { error: { code: ErrorCode.DRIVER_ERROR, message: 'boom' } },
+    });
+  });
+
+  it('includes bounded stale-ref recovery context in text and structured output', () => {
+    const result = serializeToolFailure(
+      new CraftdriverError(ErrorCode.STALE_REF, 'ref=e7 is stale', {
+        recoverySnapshot: 'page: Updated\ne8: button "Continue"',
+      })
+    );
+
+    expect(result.content[0].text).toContain('recovery snapshot:\npage: Updated');
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: ErrorCode.STALE_REF,
+        recoverySnapshot: 'page: Updated\ne8: button "Continue"',
+      },
     });
   });
 });

@@ -62,9 +62,12 @@ export default defineConfig({
       'tests/cli/auth-state.test.ts',
       'tests/cli/journal-wait-race.test.ts',
       'tests/cli/named-sessions.test.ts',
+      'tests/cli/navigation-submit.test.ts',
+      'tests/cli/navigation-submit-classic.test.ts',
       'tests/cli/stable-refs.test.ts',
       'tests/cli/skill-workflow.test.ts',
       'tests/cli/snapshot-baseline.test.ts',
+      'tests/cli/snapshot-content.test.ts',
     ],
   },
   esbuild: {

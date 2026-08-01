@@ -18,7 +18,7 @@ import type { ParamSpec } from '../../src/cli/mcp/params.js';
 const DISPATCHER_COMMANDS: Set<string> = (() => {
   const source = readFileSync(
     resolve(__dirname, '..', '..', 'src', 'cli', 'dispatcher.ts'),
-    'utf8',
+    'utf8'
   );
   return new Set([...source.matchAll(/case '([a-z-]+)':/g)].map((m) => m[1]));
 })();
@@ -82,7 +82,7 @@ describe('every tool dispatches a command that exists', () => {
   });
 
   const cases = TOOLS.flatMap((tool) =>
-    argVariants(tool).map((args) => [tool.name, tool, args] as const),
+    argVariants(tool).map((args) => [tool.name, tool, args] as const)
   );
 
   it.each(cases)('%s → a real command', (_name, tool, args) => {
@@ -96,7 +96,7 @@ describe('every tool dispatches a command that exists', () => {
 
 describe('annotations tell the truth', () => {
   const cases = TOOLS.flatMap((tool) =>
-    argVariants(tool).map((args) => [tool.name, tool, args] as const),
+    argVariants(tool).map((args) => [tool.name, tool, args] as const)
   );
 
   // The check that makes readOnlyHint meaningful: a client may auto-approve
@@ -151,7 +151,7 @@ describe('parity with the landed CLI surface', () => {
         } catch {
           return false;
         }
-      }),
+      })
     );
     expect(reachable).toBe(true);
   });
@@ -164,5 +164,19 @@ describe('parity with the landed CLI surface', () => {
     for (const tool of TOOLS) {
       expect(Object.keys(tool.params)).not.toContain('session');
     }
+  });
+
+  it('maps browser_fill submit onto the shared dispatcher flag', () => {
+    const tool = TOOLS.find((candidate) => candidate.name === 'browser_fill')!;
+    const validated = validateToolArgs(tool, {
+      selector: '#query',
+      value: 'Telerik',
+      submit: true,
+    });
+
+    expect(tool.toDispatch(validated)).toMatchObject({
+      cmd: 'fill',
+      args: { selector: '#query', value: 'Telerik', submit: true },
+    });
   });
 });

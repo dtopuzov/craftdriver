@@ -23,6 +23,7 @@ import { assertLocalOnlyLaunch } from '../lib/launchTarget.js';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH } from './defaults.js';
 import { AgentSession } from './agentSession.js';
+import type { AgentDetailedResult } from './agentSession.js';
 import {
   createSessionRegistry,
   validateSessionName,
@@ -50,18 +51,23 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
   await fs.promises.mkdir(path.dirname(socketPath), { recursive: true });
   await fs.promises.mkdir(path.dirname(pidPath), { recursive: true });
   // If a stale socket exists from a crashed previous daemon, remove it.
-  try { await fs.promises.unlink(socketPath); } catch { /* ignore */ }
+  try {
+    await fs.promises.unlink(socketPath);
+  } catch {
+    /* ignore */
+  }
 
   // One browser per named session, created on first use. As with the
   // ephemeral CLI: the wire response carries only the command result, so an
   // automatic post-action snapshot would be pure cost.
   const registry = createSessionRegistry({
-    create: (name) => new AgentSession({
-      launchOptions: opts.launch,
-      launch: () => Browser.launch(opts.launch),
-      autoSnapshot: false,
-      artifactName: name,
-    }),
+    create: (name) =>
+      new AgentSession({
+        launchOptions: opts.launch,
+        launch: () => Browser.launch(opts.launch),
+        autoSnapshot: false,
+        artifactName: name,
+      }),
   });
 
   const server = net.createServer((sock) => {
@@ -98,22 +104,24 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
           });
           continue;
         }
-        const response = await handleDaemonRequest(
-          registry,
-          req,
-          () => void shutdown(0),
-        );
+        const response = await handleDaemonRequest(registry, req, () => void shutdown(0));
         writeResp(sock, response);
       }
     });
-    sock.on('error', () => { /* swallow per-client errors */ });
+    sock.on('error', () => {
+      /* swallow per-client errors */
+    });
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(socketPath, () => {
       server.off('error', reject);
-      try { fs.chmodSync(socketPath, 0o600); } catch { /* not fatal */ }
+      try {
+        fs.chmodSync(socketPath, 0o600);
+      } catch {
+        /* not fatal */
+      }
       resolve();
     });
   });
@@ -132,10 +140,22 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
     // window, seconds wide, where stop had already returned "daemon stopped"
     // and the PID file was still on disk. A later `daemon status` then
     // reported a PID owning nothing.
-    try { fs.unlinkSync(pidPath); } catch { /* ignore */ }
-    try { server.close(); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(pidPath);
+    } catch {
+      /* ignore */
+    }
+    try {
+      server.close();
+    } catch {
+      /* ignore */
+    }
     await registry.closeAll();
-    try { await fs.promises.unlink(socketPath); } catch { /* ignore */ }
+    try {
+      await fs.promises.unlink(socketPath);
+    } catch {
+      /* ignore */
+    }
     process.exit(code);
   }
 
@@ -148,13 +168,15 @@ export async function runDaemon(opts: DaemonOptions): Promise<void> {
 
   // Block the caller forever; the daemon shuts down via signal or
   // `daemon:stop`, both of which call `process.exit()` directly.
-  await new Promise<void>(() => { /* never resolves */ });
+  await new Promise<void>(() => {
+    /* never resolves */
+  });
 }
 
 export async function handleDaemonRequest(
   registry: SessionRegistry,
   req: Request,
-  onStop?: () => void,
+  onStop?: () => void
 ): Promise<Response> {
   // Daemon- and registry-level commands answer without touching a session.
   // `session:close` in particular must not be routed *through* the session it
@@ -179,21 +201,50 @@ export async function handleDaemonRequest(
     if (req.cmd === 'session:close') {
       // `target` when named explicitly, otherwise whichever session the
       // caller addressed — `craftdriver session close --session checkout`.
-      const name = validateSessionName(
-        (req.args?.target as unknown) ?? req.session,
-      );
+      const name = validateSessionName((req.args?.target as unknown) ?? req.session);
       const closed = await registry.close(name);
       return { id: req.id, ok: true, result: { closed, name } };
     }
 
     // Untrusted: the CLI validates before opening a socket, but a socket peer
     // is not necessarily the CLI. Validation precedes session creation.
+    const { observe, ...args } = req.args ?? {};
+    if (observe !== undefined && observe !== 'page' && observe !== 'delta') {
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `--observe must be "page" or "delta", got ${JSON.stringify(observe)}`
+      );
+    }
     const session = registry.get(validateSessionName(req.session));
-    const result = await session.run({ cmd: req.cmd, args: req.args ?? {} });
+    const observation: 'page' | 'delta' | undefined =
+      observe === 'page' || observe === 'delta' ? observe : undefined;
+    const command = {
+      cmd: req.cmd,
+      args,
+      ...(observation ? { observe: observation } : {}),
+    };
+    const detailed = await session.runDetailed(command);
+    const result = renderObservedResult(detailed, observe);
     return { id: req.id, ok: true, result };
   } catch (err) {
     return { id: req.id, ok: false, error: toWireError(err) };
   }
+}
+
+/** Add requested observation without changing the normal compact CLI result. */
+export function renderObservedResult(detailed: AgentDetailedResult, observe: unknown): unknown {
+  if (observe !== 'page' && observe !== 'delta') return detailed.value;
+  // Every observable browser action currently returns an object. Keep the
+  // wrapper robust for future commands instead of silently dropping its value.
+  const value = detailed.value;
+  const result: Record<string, unknown> =
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? { ...(value as Record<string, unknown>) }
+      : { result: value };
+  if (observe === 'page' && detailed.page) result.page = detailed.page;
+  else if (observe === 'page' && detailed.delta) result.warning = detailed.delta;
+  if (observe === 'delta' && detailed.delta) result.delta = detailed.delta;
+  return result;
 }
 
 function writeResp(sock: net.Socket, resp: Response): void {
@@ -225,6 +276,7 @@ function writeResp(sock: net.Socket, resp: Response): void {
 const MAX_ERROR_MESSAGE_BYTES = 16 * 1024;
 const MAX_ERROR_HINT_BYTES = 4 * 1024;
 const MAX_ERROR_DETAIL_BYTES = 8 * 1024;
+const MAX_ERROR_RECOVERY_BYTES = 12 * 1024;
 
 function boundErrorText(text: string, maxBytes: number): string {
   if (utf8Bytes(text) <= maxBytes) return text;
@@ -232,17 +284,30 @@ function boundErrorText(text: string, maxBytes: number): string {
   return truncateUtf8(text, maxBytes - utf8Bytes(marker)) + marker;
 }
 
+function stripDriverStacks(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) throw new TypeError('circular error detail');
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((child) => stripDriverStacks(child, seen));
+  const compact: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key.toLowerCase() === 'stacktrace' || key.toLowerCase() === 'stack') continue;
+    compact[key] = stripDriverStacks(child, seen);
+  }
+  return compact;
+}
+
 function boundErrorDetail(detail: Record<string, unknown>): Record<string, unknown> {
   let serialized: string;
   try {
-    serialized = JSON.stringify(detail);
+    serialized = JSON.stringify(stripDriverStacks(detail));
   } catch {
     return { truncated: true, preview: '[unserializable error detail]' };
   }
   if (utf8Bytes(serialized) <= MAX_ERROR_DETAIL_BYTES) {
     const parsed = JSON.parse(serialized) as unknown;
     return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : { value: parsed };
   }
   const preview = truncateUtf8(serialized, MAX_ERROR_DETAIL_BYTES);
@@ -254,14 +319,29 @@ function boundErrorDetail(detail: Record<string, unknown>): Record<string, unkno
   };
 }
 
-export function toWireError(err: unknown): { code: string; message: string; hint?: string; detail?: Record<string, unknown> } {
+export function toWireError(err: unknown): {
+  code: string;
+  message: string;
+  hint?: string;
+  detail?: Record<string, unknown>;
+  recoverySnapshot?: string;
+} {
   if (err instanceof CraftdriverError) {
-    const out: { code: string; message: string; hint?: string; detail?: Record<string, unknown> } = {
+    const out: {
+      code: string;
+      message: string;
+      hint?: string;
+      detail?: Record<string, unknown>;
+      recoverySnapshot?: string;
+    } = {
       code: err.code,
       message: boundErrorText(err.message, MAX_ERROR_MESSAGE_BYTES),
     };
     if (err.hint) out.hint = boundErrorText(err.hint, MAX_ERROR_HINT_BYTES);
     if (err.detail) out.detail = boundErrorDetail(err.detail);
+    if (err.recoverySnapshot) {
+      out.recoverySnapshot = boundErrorText(err.recoverySnapshot, MAX_ERROR_RECOVERY_BYTES);
+    }
     return out;
   }
   if (err instanceof Error) {

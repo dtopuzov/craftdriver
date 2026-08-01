@@ -1,6 +1,7 @@
 # CraftDriver — patterns
 
-Worked recipes, each kept compact. Load on demand from [SKILL.md](SKILL.md).
+Worked recipes, each kept compact. Load on demand from
+[workflow.md](workflow.md), only when its core example is insufficient.
 
 ## 1. Login, save storage state for reuse
 
