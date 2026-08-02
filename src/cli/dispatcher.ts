@@ -376,14 +376,17 @@ function a11yHtml(html: string): string {
  * the line breaks become separators instead of disappearing.
  */
 function a11ySummary(summary: string): string {
-  return snippet(
-    summary
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .join('; '),
-    MAX_A11Y_SUMMARY
+  const lines = summary
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const joined = lines.slice(1).reduce(
+    // axe's heading line already ends in a colon, and a separator straight
+    // after it reads as punctuation noise ("Fix any of the following:;").
+    (acc, line) => acc + (acc.endsWith(':') ? ' ' : '; ') + line,
+    lines[0] ?? ''
   );
+  return snippet(joined, MAX_A11Y_SUMMARY);
 }
 
 /** WCAG conformance and success-criterion tags, in axe's own spelling. */

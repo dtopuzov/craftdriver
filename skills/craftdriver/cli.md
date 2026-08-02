@@ -272,6 +272,9 @@ than committing a positional selector.
 
 ## Accessibility audits
 
+Reach for this only when the task is about accessibility, WCAG, or screen-reader
+behaviour. It is not part of the ordinary exploration loop.
+
 `a11y [selector]` runs axe-core over the page, or one region. Every violation
 node carries a `ref=eN`, so a finding is directly actionable — axe's own
 `target` is a CSS path describing a position, not a handle.

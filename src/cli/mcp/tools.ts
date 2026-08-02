@@ -356,10 +356,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'browser_a11y',
     description:
-      'Audit the page or a region with axe-core. Violations carry snapshot refs — pass one ' +
-      'to browser_locators to get a durable selector for the fix, then re-run to verify. ' +
-      'Reports rule id, impact, WCAG tags and help URL; bounded by default, and `truncated` ' +
-      'says when something was dropped. Reports only, never edits the page.',
+      'Audit the page or a region with axe-core. Call only when the task is about ' +
+      'accessibility, WCAG, or screen readers — not as part of ordinary exploration. ' +
+      'Violations carry snapshot refs — pass one to browser_locators to get a durable ' +
+      'selector for the fix, then re-run to verify. Reports rule id, impact, WCAG tags and ' +
+      'help URL; bounded by default, and `truncated` says when something was dropped. ' +
+      'Reports only, never edits the page.',
     params: {
       selector: { ...OPTIONAL_SELECTOR, description: 'Scope the audit to one element.' },
       min_impact: {

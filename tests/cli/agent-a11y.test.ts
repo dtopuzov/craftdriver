@@ -210,6 +210,10 @@ describe('a11y audits carry actionable refs', () => {
       expect(node.html).not.toContain('data-craftdriver-ref');
       expect(node.html.length).toBeLessThanOrEqual(160);
       expect(node.failureSummary.length).toBeLessThanOrEqual(240);
+      // axe writes the summary as a colon-terminated heading plus one line per
+      // remedy. The lines become separators, but not straight after the colon.
+      expect(node.failureSummary).not.toContain(':;');
+      expect(node.failureSummary).toMatch(/following: \S/);
     }
   });
 

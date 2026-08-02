@@ -77,6 +77,10 @@ first.
 
 ## Accessibility
 
+Run `a11y` only when the request is about accessibility, WCAG, or a screen
+reader. It is not part of ordinary exploration: it injects axe-core and costs a
+round trip, and an unrequested audit reports problems the task did not ask about.
+
 `a11y [selector]` audits with axe-core; each violation node carries a `ref=eN`
 usable as a selector, so run `locators ref=eN` for the durable selector the
 source fix needs, then re-run `a11y` to verify. It exits `0` even with
