@@ -77,14 +77,10 @@ first.
 
 ## Accessibility
 
-Run `a11y` only when the request is about accessibility, WCAG, or a screen
-reader. It is not part of ordinary exploration: it injects axe-core and costs a
-round trip, and an unrequested audit reports problems the task did not ask about.
-
-`a11y [selector]` audits with axe-core; each violation node carries a `ref=eN`
-usable as a selector, so run `locators ref=eN` for the durable selector the
-source fix needs, then re-run `a11y` to verify. It exits `0` even with
-violations; add `--fail-on serious` only when a non-zero gate is wanted.
+Only for accessibility, WCAG, or screen-reader tasks, use `a11y` to report or
+`a11y --check` to verify. Findings carry `ref=eN`; convert with `locators`
+before editing or writing a test. For filters and the `audit()` / `check()` API
+mapping, read [cli.md](cli.md#accessibility-audits).
 
 ## Writing or debugging committed tests
 

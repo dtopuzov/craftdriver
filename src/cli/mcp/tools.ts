@@ -19,10 +19,11 @@
  *   dispatcher did not, so the one tool that can rewrite a page never
  *   reported its changes.
  *
- * The set is kept deliberately smaller than the CLI's command list. Every tool
- * costs context in `tools/list` on every agent turn, so element actions that
- * share a signature are grouped behind one `action` argument instead of
- * becoming seven tools.
+ * The set is kept deliberately smaller than the CLI's command list. Eager MCP
+ * clients put every definition into model context; clients with tool search
+ * can defer schemas, but still benefit from a focused catalogue. Element
+ * actions that share a signature are therefore grouped behind one `action`
+ * argument instead of becoming seven tools.
  */
 import type { AgentDetailedResult, AgentSessionRunner } from '../agentSession.js';
 import { toInputSchema, validateArgs, type ParamSpecs } from './params.js';
@@ -358,6 +359,7 @@ export const TOOLS: ToolDef[] = [
     description:
       'Audit the page or a region with axe-core. Call only when the task is about ' +
       'accessibility, WCAG, or screen readers — not as part of ordinary exploration. ' +
+      'Set check=true for an explicit pass/fail verification; omit it for a report. ' +
       'Violations carry snapshot refs — pass one to browser_locators to get a durable ' +
       'selector for the fix, then re-run to verify. Reports rule id, impact, WCAG tags and ' +
       'help URL; bounded by default, and `truncated` says when something was dropped. ' +
@@ -367,7 +369,11 @@ export const TOOLS: ToolDef[] = [
       min_impact: {
         type: 'string',
         enum: ['minor', 'moderate', 'serious', 'critical'],
-        description: 'Lowest impact reported. Defaults to serious.',
+        description: 'Lowest impact reported or checked. Defaults to minor.',
+      },
+      check: {
+        type: 'boolean',
+        description: 'Return passed=false when any finding meets min_impact.',
       },
       rules: {
         type: 'string',
@@ -394,6 +400,7 @@ export const TOOLS: ToolDef[] = [
       args: {
         ...(a.selector ? { selector: a.selector } : {}),
         minImpact: a.min_impact,
+        check: a.check,
         rules: a.rules,
         disableRules: a.disable_rules,
         limit: a.limit,

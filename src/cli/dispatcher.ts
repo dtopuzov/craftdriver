@@ -272,7 +272,7 @@ const A11Y_IMPACTS: readonly A11yImpact[] = ['minor', 'moderate', 'serious', 'cr
 
 function a11yImpactOf(
   args: Record<string, unknown> | undefined,
-  key: 'minImpact' | 'failOn'
+  key: 'minImpact'
 ): A11yImpact | undefined {
   const raw = optStr(args, key);
   if (!raw) return undefined;
@@ -325,7 +325,9 @@ function a11yRulesOf(
  * is already running — which costs a launch to learn about a typo, and reports
  * a usage mistake as a driver error.
  */
-function a11yOptionsOf(args: Record<string, unknown> | undefined): A11yOptions {
+function a11yOptionsOf(
+  args: Record<string, unknown> | undefined
+): A11yOptions & { minImpact: A11yImpact } {
   const rules = a11yRulesOf(args, 'rules', '--rules');
   const disableRules = a11yRulesOf(args, 'disableRules', '--disable-rules');
   if (rules && disableRules) {
@@ -335,11 +337,11 @@ function a11yOptionsOf(args: Record<string, unknown> | undefined): A11yOptions {
       { hint: 'run only a rule set with --rules, or waive known rules with --disable-rules' }
     );
   }
-  const minImpact = a11yImpactOf(args, 'minImpact');
+  const minImpact = a11yImpactOf(args, 'minImpact') ?? 'minor';
   return {
     ...(rules ? { rules } : {}),
     ...(disableRules ? { disableRules } : {}),
-    ...(minImpact ? { minImpact } : {}),
+    minImpact,
   };
 }
 
@@ -393,13 +395,6 @@ function a11ySummary(summary: string): string {
 function wcagTags(violation: A11yViolation): string[] {
   return (violation.tags ?? []).filter((tag) => tag.startsWith('wcag'));
 }
-
-const A11Y_IMPACT_RANK: Record<A11yImpact, number> = {
-  minor: 0,
-  moderate: 1,
-  serious: 2,
-  critical: 3,
-};
 
 const JOURNAL_KINDS: JournalKind[] = ['console', 'error', 'request', 'response'];
 
@@ -1777,7 +1772,7 @@ export async function dispatch(
     // for the fix, so the loop closes without the agent guessing.
     case 'a11y': {
       const options = a11yOptionsOf(args);
-      const failOn = a11yImpactOf(args, 'failOn');
+      const check = bool(args, 'check');
       const limit = clampLimit(
         int(args, 'limit', AGENT_DEFAULT_LIMIT),
         AGENT_DEFAULT_LIMIT,
@@ -1858,6 +1853,7 @@ export async function dispatch(
 
       return {
         ...(sel ? { scope: publicSelectorOf(args) } : {}),
+        minImpact: options.minImpact,
         violations,
         counts: {
           violations: report.violations.length,
@@ -1865,16 +1861,9 @@ export async function dispatch(
           incomplete: report.incomplete,
         },
         truncated,
-        // Reported for the *whole* audit, not the truncated view: a limit must
-        // never turn a failing gate green.
-        ...(failOn
-          ? {
-              failOn,
-              failed: report.violations.some(
-                (violation) => A11Y_IMPACT_RANK[violation.impact] >= A11Y_IMPACT_RANK[failOn]
-              ),
-            }
-          : {}),
+        // Check the whole filtered audit, never the bounded display slice: a
+        // small --limit must not turn a failed verification green.
+        ...(check ? { checked: true, passed: report.violations.length === 0 } : {}),
       };
     }
 

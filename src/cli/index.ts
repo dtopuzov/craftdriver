@@ -374,12 +374,12 @@ function successExitCode(parsed: ParsedCommand, result: unknown): number {
     const r = result as { exists?: boolean } | null;
     return r && r.exists === false ? 1 : 0;
   }
-  // `a11y` is a report, so it exits 0 even with violations: making failure the
-  // default would break `a11y | jq` and tell an agent the command is broken
-  // when it worked. `--fail-on <impact>` is how you opt into a CI gate.
+  // `a11y` is a report by default, so findings do not make the command fail.
+  // `--check` explicitly opts into the assertion-like exit status while still
+  // returning the actionable report.
   if (parsed.cmd === 'a11y') {
-    const r = result as { failed?: boolean } | null;
-    return r && r.failed === true ? 1 : 0;
+    const r = result as { checked?: boolean; passed?: boolean } | null;
+    return r && r.checked === true && r.passed === false ? 1 : 0;
   }
   return 0;
 }
@@ -697,15 +697,17 @@ function prettyResult(cmd: string, result: unknown): string {
   if (cmd === 'a11y' && Array.isArray(r.violations)) {
     const counts = (r.counts ?? {}) as Record<string, number>;
     const total = counts.violations ?? 0;
+    const threshold = typeof r.minImpact === 'string' ? ` at ${r.minImpact}+` : '';
     const head =
-      `${total === 0 ? 'no' : total} violation${total === 1 ? '' : 's'}` +
+      `${total === 0 ? 'no' : total} violation${total === 1 ? '' : 's'}${threshold}` +
       ` (${counts.passes ?? 0} passes, ${counts.incomplete ?? 0} incomplete)` +
       (r.scope ? ` in ${r.scope as string}` : '');
     const blocks = (r.violations as Array<Record<string, unknown>>).map((v) => {
       const wcag = formatWcag((v.wcag as string[] | undefined) ?? []);
-      const nodes = ((v.nodes as Array<Record<string, unknown>>) ?? []).map(
-        (n) => `    ${n.ref ? `ref=${n.ref as string}` : `at ${n.target as string}`}  ${n.html as string}`
-      );
+      const nodes = ((v.nodes as Array<Record<string, unknown>>) ?? []).flatMap((n) => [
+        `    ${n.ref ? `ref=${n.ref as string}` : `at ${n.target as string}`}  ${n.html as string}`,
+        ...(n.failureSummary ? [`        ${n.failureSummary as string}`] : []),
+      ]);
       return [
         `✗ ${v.id as string} (${v.impact as string})${wcag ? ` · ${wcag}` : ''}`,
         `    ${(v.help as string) || (v.description as string)}`,
@@ -715,11 +717,11 @@ function prettyResult(cmd: string, result: unknown): string {
     });
     const trailer: string[] = [];
     if (r.truncated) trailer.push('(truncated — raise --limit / --nodes for the rest)');
-    if (r.failOn !== undefined) {
+    if (r.checked === true) {
       trailer.push(
-        r.failed
-          ? `FAIL: at least one ${r.failOn as string}+ violation`
-          : `PASS: no ${r.failOn as string}+ violation`
+        r.passed
+          ? `PASS: no ${r.minImpact as string}+ violations detected`
+          : `FAIL: ${total} ${r.minImpact as string}+ violation${total === 1 ? '' : 's'}`
       );
     }
     const body = blocks.length > 0 ? ['', blocks.join('\n\n')] : [];

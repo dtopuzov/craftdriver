@@ -48,11 +48,12 @@ interface A11yRow {
 
 interface A11yReport {
   scope?: string;
+  minImpact: string;
   violations: A11yRow[];
   counts: { violations: number; passes: number; incomplete: number };
   truncated: boolean;
-  failOn?: string;
-  failed?: boolean;
+  checked?: boolean;
+  passed?: boolean;
 }
 
 interface SnapshotResult {
@@ -114,6 +115,8 @@ describe('a11y audits carry actionable refs', () => {
     expect(ids).toContain('image-alt');
     expect(ids).toContain('button-name');
     expect(ids).toContain('color-contrast');
+    expect(ids).toContain('heading-order');
+    expect(report.minImpact).toBe('minor');
 
     const imageAlt = report.violations.find((v) => v.id === 'image-alt')!;
     expect(imageAlt.impact).toBe('critical');
@@ -229,19 +232,37 @@ describe('a11y audits carry actionable refs', () => {
     expect(bounded.counts.violations).toBe(full.counts.violations);
   });
 
-  it('gates on the whole audit, so a limit cannot turn a failure green', async () => {
-    const gated = await audit({ failOn: 'critical', limit: 1, nodes: 1 });
-    expect(gated.failOn).toBe('critical');
-    expect(gated.failed).toBe(true);
+  it('checks the whole audit, so a limit cannot turn a failure green', async () => {
+    const checked = await audit({ check: true, limit: 1, nodes: 1 });
+    expect(checked.checked).toBe(true);
+    expect(checked.passed).toBe(false);
 
-    const clean = (await audit({ selector: '#good', failOn: 'minor' })) as A11yReport;
-    expect(clean.failed).toBe(false);
+    const clean = await audit({ selector: '#good', check: true });
+    expect(clean.checked).toBe(true);
+    expect(clean.passed).toBe(true);
   });
 
-  it('omits the gate verdict entirely without --fail-on', async () => {
+  it('omits the check verdict in report mode', async () => {
     const report = await audit();
-    expect(report.failOn).toBeUndefined();
-    expect(report.failed).toBeUndefined();
+    expect(report.checked).toBeUndefined();
+    expect(report.passed).toBeUndefined();
+  });
+
+  it('uses one minimum impact for both reports and checks', async () => {
+    const moderate = await audit({ selector: '#bad', rules: 'heading-order', check: true });
+    expect(moderate.minImpact).toBe('minor');
+    expect(moderate.violations.map((v) => v.id)).toEqual(['heading-order']);
+    expect(moderate.passed).toBe(false);
+
+    const serious = await audit({
+      selector: '#bad',
+      rules: 'heading-order',
+      minImpact: 'serious',
+      check: true,
+    });
+    expect(serious.minImpact).toBe('serious');
+    expect(serious.violations).toEqual([]);
+    expect(serious.passed).toBe(true);
   });
 
   it('honours --rules and --disable-rules', async () => {
@@ -320,7 +341,6 @@ describe('a11y arguments are rejected before a browser starts', () => {
 
   it('refuses an impact outside axe’s four buckets', async () => {
     await rejects({ minImpact: 'blocker' }, ErrorCode.INVALID_ARGUMENT);
-    await rejects({ failOn: 'catastrophic' }, ErrorCode.INVALID_ARGUMENT);
   });
 
   it('refuses an unusable rule filter', async () => {
@@ -351,16 +371,18 @@ describe('a11y exit codes through the shipped binary', () => {
     });
   }
 
-  it('exits 0 with violations and 1 only when --fail-on is given', async () => {
+  it('exits 0 for a report and 1 only in check mode', async () => {
     const report = await run(`go ${FIXTURE}\na11y\n`);
     // A report is not an assertion. Exiting non-zero by default would break
     // `a11y | jq` and tell an agent the command itself is broken.
     expect(report.exitCode).toBe(0);
     expect(report.stdout).toContain('image-alt');
 
-    const gate = await run(`go ${FIXTURE}\na11y --fail-on serious\n`);
-    expect(gate.exitCode).toBe(1);
-    // The clean-region case is covered in-process above (`failed: false`);
+    const check = await run(`go ${FIXTURE}\na11y --check --pretty\n`);
+    expect(check.exitCode).toBe(1);
+    expect(check.stdout).toContain('FAIL:');
+    expect(check.stdout).toContain('Fix any of the following:');
+    // The clean-region case is covered in-process above (`passed: true`);
     // a third browser launch here would only re-prove the same mapping.
   }, 180_000);
 });

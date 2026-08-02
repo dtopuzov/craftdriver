@@ -184,4 +184,18 @@ describe('parity with the landed CLI surface', () => {
       args: { selector: '#query', value: 'Telerik', submit: true },
     });
   });
+
+  it('maps browser_a11y report and check options onto the shared command', () => {
+    const tool = TOOLS.find((candidate) => candidate.name === 'browser_a11y')!;
+    const validated = validateToolArgs(tool, {
+      selector: '#main',
+      min_impact: 'moderate',
+      check: true,
+    });
+
+    expect(tool.toDispatch(validated)).toMatchObject({
+      cmd: 'a11y',
+      args: { selector: '#main', minImpact: 'moderate', check: true },
+    });
+  });
 });

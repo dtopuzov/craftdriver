@@ -81,7 +81,7 @@ snapshot
 locators <selector>
 a11y [selector] [--min-impact minor|moderate|serious|critical]
      [--rules id,id] [--disable-rules id,id] [--limit N] [--nodes N]
-     [--fail-on impact]
+     [--check]
 screenshot [-o out.png] [--full-page] [--selector selector]
 eval <javascript> [--observe=page|delta]
 back | forward | reload | status | quit
@@ -282,14 +282,16 @@ node carries a `ref=eN`, so a finding is directly actionable — axe's own
 ```bash
 npx craftdriver a11y                      # violation → ref=e4
 npx craftdriver locators ref=e4           # ref → durable selector for the fix
-npx craftdriver a11y --fail-on serious    # re-run; exits 1 until it is clean
+npx craftdriver a11y --check              # re-run; exits 1 until it is clean
 ```
 
-An element an earlier snapshot already reffed keeps that same ref. Without
-`--fail-on` the command exits `0` even with violations, because it is a report;
-`--fail-on <impact>` makes it a gate and counts the whole audit, not the
-truncated view. Output is bounded by `--limit` (violations) and `--nodes` (per
-violation) and sets `truncated` when anything was dropped.
+An element an earlier snapshot already reffed keeps that same ref. `a11y`
+mirrors `browser.a11y.audit()` and exits `0` after reporting; `a11y --check`
+mirrors `browser.a11y.check()` and exits `1` when findings exist. Both default
+to all (`minor+`) violations, and `--min-impact` is their one shared threshold.
+Check mode uses the whole audit, not the truncated view. Output is bounded by
+`--limit` (violations) and `--nodes` (per violation) and sets `truncated` when
+anything was dropped.
 
 Refs from an audit are exploration state exactly like snapshot refs — convert
 with `locators` before writing anything into a test. `locators` cannot yet

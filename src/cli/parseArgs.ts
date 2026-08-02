@@ -77,9 +77,9 @@ COMMON COMMANDS
                                     each re-checked against the live page
   a11y [selector] [--min-impact minor|moderate|serious|critical]
        [--rules id,id] [--disable-rules id,id] [--limit N] [--nodes N]
-       [--fail-on impact]
+       [--check]
                                     axe-core audit; each violation node
-                                    carries a ref for "locators ref=eN"
+                                    carries a ref; --check exits 1 on findings
   logs [list] [--kind console,error,request,response] [--level error]
        [--contains text] [--since N] [--limit N]
                                     what the page logged and requested
@@ -196,7 +196,7 @@ const KNOWN_FLAGS = [
   '--all',
   '--nodes',
   '--min-impact',
-  '--fail-on',
+  '--check',
   '--rules',
   '--disable-rules',
   '--dry-run',
@@ -272,8 +272,8 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
   a11y: {
     min: 0,
     max: 1,
-    usage: 'a11y [selector] [--min-impact serious] [--fail-on serious]',
-    options: ['limit', 'nodes', 'minImpact', 'failOn', 'rules', 'disableRules'],
+    usage: 'a11y [selector] [--min-impact serious] [--check]',
+    options: ['limit', 'nodes', 'minImpact', 'check', 'rules', 'disableRules'],
   },
   upload: {
     min: 1,
@@ -509,7 +509,7 @@ const OPTION_FLAG: Record<string, string> = {
   deltaX: '--delta-x',
   deltaY: '--delta-y',
   disableRules: '--disable-rules',
-  failOn: '--fail-on',
+  check: '--check',
   files: '--files',
   minImpact: '--min-impact',
   nodes: '--nodes',
@@ -704,7 +704,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     }
     // Validated here as well as in the dispatcher: a typo'd impact should cost
     // a usage error, not a daemon start and a browser launch.
-    else if (a === '--min-impact' || a === '--fail-on') {
+    else if (a === '--min-impact') {
       const value = takeValue(a, i);
       if (typeof value !== 'string') return value;
       if (!A11Y_IMPACTS.includes(value.toLowerCase())) {
@@ -713,7 +713,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
           `${a}: expected one of ${A11Y_IMPACTS.join('|')}, got ${JSON.stringify(value)}`
         );
       }
-      opts[a === '--fail-on' ? 'failOn' : 'minImpact'] = value.toLowerCase();
+      opts.minImpact = value.toLowerCase();
       i += 1;
     } else if (a === '--rules' || a === '--disable-rules') {
       const value = takeValue(a, i);
@@ -721,6 +721,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       opts[a === '--rules' ? 'rules' : 'disableRules'] = value;
       i += 1;
     } else if (a === '--all') opts.all = true;
+    else if (a === '--check') opts.check = true;
     else if (a === '--submit') opts.submit = true;
     else if (a === '--dry-run') opts['dry-run'] = true;
     else if (a === '--mcp') opts.mcp = true;

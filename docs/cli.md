@@ -85,7 +85,7 @@ craftdriver snapshot                   # sanitized DOM summary with refs
 craftdriver locators <selector>        # durable selectors, live-validated
 craftdriver a11y [selector] [--min-impact minor|moderate|serious|critical]
                  [--rules id,id] [--disable-rules id,id]
-                 [--limit N] [--nodes N] [--fail-on impact]
+                 [--limit N] [--nodes N] [--check]
                                        # axe-core audit; violation nodes
                                        # carry refs
 craftdriver screenshot [-o file.png] [--full-page] [--selector S]
@@ -356,7 +356,7 @@ there is nothing to install.
 
 ```bash
 $ craftdriver a11y
-3 violations (24 passes, 0 incomplete)
+4 violations at minor+ (24 passes, 0 incomplete)
 
 ✗ button-name (critical) · WCAG 2.0 A · 4.1.2
     Buttons must have discernible text
@@ -378,7 +378,7 @@ issues, so the loop closes with commands you already have:
 craftdriver a11y                       # violation → ref=e4
 craftdriver locators ref=e4            # ref → #no-alt, live-validated
 #   … add alt="…" in the source, reload …
-craftdriver a11y --fail-on serious     # re-run; exits 0 when clean
+craftdriver a11y --check               # re-run; exits 0 when clean
 ```
 
 An element the snapshot already listed keeps the ref it already had — an audit
@@ -387,23 +387,28 @@ out (images, long prose, headings — most violations, in practice) get one
 minted on the spot. The usual rule is unchanged: **a ref is live-session state
 and never belongs in committed source.** Run `locators` first.
 
-| Flag | Effect |
-| --- | --- |
-| `--min-impact` | Lowest impact reported. Default `serious`, matching the library. |
-| `--rules id,id` | Run only these axe rules. |
-| `--disable-rules id,id` | Skip these. Mutually exclusive with `--rules`. |
-| `--limit N` | Violations reported. Default 20. |
-| `--nodes N` | Nodes per violation. Default 3. |
-| `--fail-on impact` | Exit 1 when a violation at or above this impact exists. |
+| Flag                    | Effect                                                                  |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `--min-impact`          | Lowest impact reported or checked. Default `minor` (all violations).    |
+| `--rules id,id`         | Run only these axe rules.                                               |
+| `--disable-rules id,id` | Skip these. Mutually exclusive with `--rules`.                          |
+| `--limit N`             | Violations reported. Default 20.                                        |
+| `--nodes N`             | Nodes per violation. Default 3.                                         |
+| `--check`               | Return a pass/fail verdict and exit 1 when a reported violation exists. |
 
 Output is bounded by default — a raw axe report on a real page is thousands of
-tokens — and `truncated` says when something was dropped. `--fail-on` counts the
-whole audit, not the truncated view, so a small `--limit` cannot turn a failing
-gate green.
+tokens — and `truncated` says when something was dropped. Check mode uses the
+whole audit, not the truncated view, so a small `--limit` cannot turn a failed
+verification green.
 
-Without `--fail-on`, `a11y` exits **0** even with violations: it is a report, and
+Without `--check`, `a11y` exits **0** even with violations: it is a report, and
 a non-zero status would break `craftdriver a11y | jq` and read as "the command
-is broken". Add `--fail-on serious` to make it a CI gate.
+is broken". Add `--check` to verify; combine it with `--min-impact serious` when
+the project deliberately gates only serious and critical findings.
+
+`PASS` means axe found no violations at that threshold. The `incomplete` count
+still names checks that need manual review; like `A11y.check()`, it does not
+turn the automated verdict into a failure.
 
 Two limits worth knowing:
 
@@ -437,9 +442,9 @@ code:  NO_MATCH
 
 | Code | Meaning                                                                          |
 | ---- | -------------------------------------------------------------------------------- |
-| `0`  | success (or `exists` matched at least one element, or `a11y` without `--fail-on`) |
-| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero / `a11y --fail-on` hit    |
-| `2`  | usage error (missing argument, unknown command)                                   |
+| `0`  | success (or `exists` matched at least one element, or an `a11y` report)          |
+| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero / failed `a11y --check` |
+| `2`  | usage error (missing argument, unknown command)                                  |
 
 ## Fail-fast defaults
 

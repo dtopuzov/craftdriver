@@ -33,6 +33,7 @@ describe('CLI command mapping', () => {
     ['exists #a', 'exists', { selector: '#a' }],
     ['value #a', 'value', { selector: '#a' }],
     ['locators #a', 'locators', { selector: '#a' }],
+    ['a11y #a', 'a11y', { selector: '#a' }],
     ['find #a', 'find', { selector: '#a' }],
     ['attr #a href', 'attr', { selector: '#a', name: 'href' }],
     ['is checked #a', 'is', { what: 'checked', selector: '#a' }],
@@ -173,6 +174,18 @@ describe('CLI command mapping', () => {
       all: true,
       limit: 5,
       offset: 10,
+    });
+  });
+
+  it('maps a11y report and check modes onto one severity threshold', () => {
+    expect(parse('a11y').args).toEqual({});
+    expect(parse('a11y #main --check --min-impact moderate')).toMatchObject({
+      cmd: 'a11y',
+      args: { selector: '#main', check: true, minImpact: 'moderate' },
+    });
+    expect(parse('a11y --fail-on serious')).toMatchObject({
+      cmd: '__unknown_flag__',
+      args: { flag: '--fail-on' },
     });
   });
 
@@ -434,6 +447,7 @@ describe('CLI command mapping', () => {
         'mock add /api --status 200 --body {} --content-type application/json',
         'state save auth --session-storage',
         'mouse wheel --delta-x 10 --delta-y 20',
+        'a11y --check --min-impact serious --rules image-alt --limit 1 --nodes 1',
       ]) {
         expect(parse(line).cmd, line).not.toBe('__unknown_flag__');
         expect(parse(line).cmd, line).not.toBe('__usage_error__');

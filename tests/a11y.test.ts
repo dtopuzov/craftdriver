@@ -22,6 +22,7 @@ describe('a11y (axe-core wrapper)', () => {
     const ids = report.violations.map((v) => v.id);
     expect(ids).toContain('image-alt');
     expect(ids).toContain('button-name');
+    expect(ids).toContain('heading-order');
     expect(typeof report.passes).toBe('number');
     expect(typeof report.incomplete).toBe('number');
     expect(typeof report.inapplicable).toBe('number');
@@ -88,6 +89,22 @@ describe('a11y (axe-core wrapper)', () => {
     expect(report.violations.map((v) => v.id)).toContain('image-alt');
     // nothing below critical should leak through
     expect(new Set(report.violations.map((v) => v.impact))).toEqual(new Set(['critical']));
+  });
+
+  it('reports every impact by default and allows callers to raise the threshold', async () => {
+    const all = await browser.a11y.audit();
+    expect(all.violations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'heading-order', impact: 'moderate' })])
+    );
+
+    const checked = (await browser.a11y
+      .check({ rules: ['heading-order'] })
+      .catch((e: unknown) => e)) as A11yError;
+    expect(checked).toBeInstanceOf(A11yError);
+    expect(checked.violations.map((v) => v.id)).toEqual(['heading-order']);
+
+    const serious = await browser.a11y.audit({ minImpact: 'serious' });
+    expect(serious.violations.map((v) => v.id)).not.toContain('heading-order');
   });
 
   it('scoping: #bad has violations, #good is clean and check() does not throw', async () => {

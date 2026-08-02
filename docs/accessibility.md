@@ -12,7 +12,7 @@ import { Browser } from 'craftdriver';
 const browser = await Browser.launch({ browserName: 'chrome' });
 await browser.navigateTo('https://example.com');
 
-await browser.a11y.check();         // throws on any serious+ violation
+await browser.a11y.check();         // throws on any violation (minor+ by default)
 const report = await browser.a11y.audit(); // returns the raw report
 console.log(report.violations);
 await browser.quit();
@@ -83,15 +83,15 @@ you need exotic axe configuration (custom rule sets, locale, etc.).
 
 ## Filtering by impact
 
-Default reports only include `serious` and `critical` violations.
-Tune the threshold per call:
+The default `minor` threshold includes every axe violation. Raise it when a
+project deliberately gates only higher-impact findings:
 
 ```ts
 // CI gate: only fail PRs on critical issues
 await browser.a11y.check({ minImpact: 'critical' });
 
-// Debug everything
-const report = await browser.a11y.audit({ minImpact: 'minor' });
+// Report serious and critical findings only
+const report = await browser.a11y.audit({ minImpact: 'serious' });
 ```
 
 ## Scoping to an element
@@ -208,13 +208,15 @@ issues refs of its own rather than passing axe's string along.
 craftdriver a11y                       # → ref=e14 on the offending <img>
 craftdriver locators ref=e14           # → #no-alt
 #   … add alt="…" in the source, reload …
-craftdriver a11y --fail-on serious     # exits 1 while it is still broken
+craftdriver a11y --check               # exits 1 while it is still broken
 ```
 
-`--fail-on` is what turns the report into a gate; without it the command exits
-0 even with violations, because it is a report. Everything on this page maps
-across: `--min-impact`, `--rules`, `--disable-rules`. Output is bounded by
-`--limit` and `--nodes` and says so with `truncated`.
+`--check` mirrors the API distinction between `audit()` and `check()`: without
+it the command reports findings and exits 0; with it the same findings produce
+an explicit pass/fail verdict and exit 1 when any are present. `--min-impact`
+is the single threshold for both modes. `--rules` and `--disable-rules` map
+across too. Output is bounded by `--limit` and `--nodes` and says so with
+`truncated`.
 
 Refs are live-session handles. They mean nothing in the next session, so
 **never put one in committed source** — that is what `locators` is for. Full
