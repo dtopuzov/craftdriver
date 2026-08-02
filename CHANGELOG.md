@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/dtopuzov/craftdriver/compare/v1.11.0...v1.12.0) (2026-08-02)
+
+
+### Features
+
+* **a11y:** audit from the CLI and MCP, with actionable refs ([#63](https://github.com/dtopuzov/craftdriver/issues/63)) ([b27c200](https://github.com/dtopuzov/craftdriver/commit/b27c200c532942e67f6e6a019596528b82912608)), closes [hi#water](https://github.com/hi/issues/water)
+
 # [1.11.0](https://github.com/dtopuzov/craftdriver/compare/v1.10.0...v1.11.0) (2026-08-01)
 
 
