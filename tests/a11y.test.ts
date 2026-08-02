@@ -33,6 +33,20 @@ describe('a11y (axe-core wrapper)', () => {
     expect(v.nodes[0].target).toEqual(expect.any(Array));
   });
 
+  it('carries axe tags and the one-line help, so WCAG is answerable', async () => {
+    const report = await browser.a11y.audit();
+    const imageAlt = report.violations.find((v) => v.id === 'image-alt');
+    expect(imageAlt).toBeDefined();
+    // Raw axe tags, not a craftdriver severity scale: `wcag2a` is the
+    // conformance level and `wcag111` is success criterion 1.1.1. Both were
+    // dropped before, so no caller could report which criterion had failed.
+    expect(imageAlt!.tags).toContain('wcag2a');
+    expect(imageAlt!.tags).toContain('wcag111');
+    // `help` is the imperative one-liner; `description` is the longer gloss.
+    expect(imageAlt!.help).toMatch(/alternat/i);
+    expect(imageAlt!.help).not.toBe(imageAlt!.description);
+  });
+
   it('check() throws A11yError with violations and help URLs in the message', async () => {
     const err = (await browser.a11y.check().catch((e: unknown) => e)) as A11yError;
 

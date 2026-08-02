@@ -75,6 +75,13 @@ For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
 first.
 
+## Accessibility
+
+`a11y [selector]` audits with axe-core; each violation node carries a `ref=eN`
+usable as a selector, so run `locators ref=eN` for the durable selector the
+source fix needs, then re-run `a11y` to verify. It exits `0` even with
+violations; add `--fail-on serious` only when a non-zero gate is wanted.
+
 ## Writing or debugging committed tests
 
 Only when the request asks for test source, inspect the repository's existing

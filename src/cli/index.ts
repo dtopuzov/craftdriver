@@ -370,9 +370,18 @@ function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
  * two different contracts depending on how it was run.
  */
 function successExitCode(parsed: ParsedCommand, result: unknown): number {
-  if (parsed.cmd !== 'exists') return 0;
-  const r = result as { exists?: boolean } | null;
-  return r && r.exists === false ? 1 : 0;
+  if (parsed.cmd === 'exists') {
+    const r = result as { exists?: boolean } | null;
+    return r && r.exists === false ? 1 : 0;
+  }
+  // `a11y` is a report, so it exits 0 even with violations: making failure the
+  // default would break `a11y | jq` and tell an agent the command is broken
+  // when it worked. `--fail-on <impact>` is how you opt into a CI gate.
+  if (parsed.cmd === 'a11y') {
+    const r = result as { failed?: boolean } | null;
+    return r && r.failed === true ? 1 : 0;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +694,37 @@ function prettyResult(cmd: string, result: unknown): string {
       `${r.cookies as number} cookies, ${r.storageKeys as number} storage keys${scope}${note}`
     );
   }
+  if (cmd === 'a11y' && Array.isArray(r.violations)) {
+    const counts = (r.counts ?? {}) as Record<string, number>;
+    const total = counts.violations ?? 0;
+    const head =
+      `${total === 0 ? 'no' : total} violation${total === 1 ? '' : 's'}` +
+      ` (${counts.passes ?? 0} passes, ${counts.incomplete ?? 0} incomplete)` +
+      (r.scope ? ` in ${r.scope as string}` : '');
+    const blocks = (r.violations as Array<Record<string, unknown>>).map((v) => {
+      const wcag = formatWcag((v.wcag as string[] | undefined) ?? []);
+      const nodes = ((v.nodes as Array<Record<string, unknown>>) ?? []).map(
+        (n) => `    ${n.ref ? `ref=${n.ref as string}` : `at ${n.target as string}`}  ${n.html as string}`
+      );
+      return [
+        `✗ ${v.id as string} (${v.impact as string})${wcag ? ` · ${wcag}` : ''}`,
+        `    ${(v.help as string) || (v.description as string)}`,
+        `    ${v.helpUrl as string}`,
+        ...nodes,
+      ].join('\n');
+    });
+    const trailer: string[] = [];
+    if (r.truncated) trailer.push('(truncated — raise --limit / --nodes for the rest)');
+    if (r.failOn !== undefined) {
+      trailer.push(
+        r.failed
+          ? `FAIL: at least one ${r.failOn as string}+ violation`
+          : `PASS: no ${r.failOn as string}+ violation`
+      );
+    }
+    const body = blocks.length > 0 ? ['', blocks.join('\n\n')] : [];
+    return [head, ...body, ...(trailer.length > 0 ? ['', ...trailer] : [])].join('\n');
+  }
   if (cmd === 'snapshot' && Array.isArray(r.lines)) {
     const header = `page: ${(r.title as string) || '(untitled)'} — ${(r.url as string) || '(no url)'}`;
     const lines = r.lines as string[];
@@ -692,6 +732,34 @@ function prettyResult(cmd: string, result: unknown): string {
     return `${header}\n${lines.join('\n')}`;
   }
   return JSON.stringify(result, null, 2);
+}
+
+/**
+ * axe's WCAG tags, spelled the way the standard is cited.
+ *
+ * `wcag2a` is a conformance level (WCAG 2.0, level A) and `wcag111` is a
+ * success criterion (1.1.1); the two share a prefix and mean different things,
+ * so the report renders both rather than dumping raw tags. Levels lead, then
+ * criteria — how a WCAG reference is normally written. A tag matching neither
+ * shape is passed through untouched rather than guessed at.
+ */
+function formatWcag(tags: string[]): string {
+  const levels: string[] = [];
+  const criteria: string[] = [];
+  const other: string[] = [];
+  for (const tag of tags) {
+    const level = /^wcag(\d)(\d?)(a{1,3})$/.exec(tag);
+    if (level) {
+      levels.push(`WCAG ${level[1]}.${level[2] || '0'} ${level[3].toUpperCase()}`);
+      continue;
+    }
+    // Principle, guideline, then the criterion number — which reaches two
+    // digits (2.4.10), so the tail is not a single character.
+    const criterion = /^wcag(\d)(\d)(\d+)$/.exec(tag);
+    if (criterion) criteria.push(`${criterion[1]}.${criterion[2]}.${criterion[3]}`);
+    else other.push(tag);
+  }
+  return [...levels, ...criteria, ...other].join(' · ');
 }
 
 // ---------------------------------------------------------------------------

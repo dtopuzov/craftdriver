@@ -54,6 +54,7 @@ export default defineConfig({
       'tests/cli-smoke.test.ts',
       'tests/mcp-smoke.test.ts',
       'tests/cli/cli-e2e.test.ts',
+      'tests/cli/agent-a11y.test.ts',
       'tests/cli/agent-actions.test.ts',
       'tests/cli/agent-pages.test.ts',
       'tests/cli/agent-logs.test.ts',

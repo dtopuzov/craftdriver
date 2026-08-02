@@ -14,13 +14,18 @@ import { TOOLS, inputSchemaFor, validateToolArgs } from '../../src/cli/mcp/tools
 import { isMutating } from '../../src/cli/dispatcher.js';
 import type { ParamSpec } from '../../src/cli/mcp/params.js';
 
-/** Command labels the dispatcher's switch actually handles. */
+/**
+ * Command labels the dispatcher's switch actually handles.
+ *
+ * Digits are part of a command name (`a11y`); a letters-only pattern silently
+ * omitted it and reported a correctly wired tool as dispatching nothing.
+ */
 const DISPATCHER_COMMANDS: Set<string> = (() => {
   const source = readFileSync(
     resolve(__dirname, '..', '..', 'src', 'cli', 'dispatcher.ts'),
     'utf8'
   );
-  return new Set([...source.matchAll(/case '([a-z-]+)':/g)].map((m) => m[1]));
+  return new Set([...source.matchAll(/case '([a-z0-9-]+)':/g)].map((m) => m[1]));
 })();
 
 /** A plausible value for a parameter, used to exercise `toDispatch`. */

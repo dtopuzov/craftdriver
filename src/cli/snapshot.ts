@@ -33,6 +33,7 @@
  * marker attributes.
  */
 import { INTERNAL_EVALUATE_CLASSIC, type Browser } from '../lib/browser.js';
+import type { A11yTarget } from '../lib/a11y.js';
 import { PAGE_SEMANTICS_JS } from './pageSemantics.js';
 
 const MAX_NODES = 80;
@@ -115,6 +116,54 @@ export async function takeSnapshot(browser: Browser, minRef = 0): Promise<Snapsh
     };
   } catch {
     return null;
+  }
+}
+
+/** Outcome of minting refs for elements the snapshot never listed. */
+export interface MintedRefs {
+  /**
+   * One entry per requested target, in order. `null` where the target did not
+   * resolve — detached, behind a closed shadow root, or inside a frame.
+   */
+  refs: Array<string | null>;
+  /** Document the refs belong to, for comparison against the session baseline. */
+  documentId: string | null;
+}
+
+/**
+ * Issue refs for arbitrary elements, addressed by axe-core target paths.
+ *
+ * Snapshots only ref *visible interactive* elements, but most accessibility
+ * violations land somewhere else entirely: an `<img>` with no alt, low-contrast
+ * body copy, a heading out of order. Without this, an audit could report a
+ * problem and give the agent no way to act on it — axe's `div > p:nth-child(3)`
+ * is a position, not a handle.
+ *
+ * Refs come from the same in-page registry `snapshot` uses, so an element the
+ * agent already knows as `e7` is still `e7` here — never a second number for
+ * the same node.
+ *
+ * A target that does not resolve reports `null` rather than throwing. A
+ * partially reffed report is useful; a failed audit is not.
+ */
+export async function mintRefs(
+  browser: Browser,
+  targets: A11yTarget[][],
+  minRef = 0
+): Promise<MintedRefs> {
+  const empty: MintedRefs = { refs: targets.map(() => null), documentId: null };
+  if (targets.length === 0) return { refs: [], documentId: null };
+  try {
+    const raw = await browser[INTERNAL_EVALUATE_CLASSIC](jsMintRefs(targets, minRef));
+    if (!raw || typeof raw !== 'object') return empty;
+    const shaped = raw as { refs?: unknown; documentId?: unknown };
+    const refs = Array.isArray(shaped.refs) ? shaped.refs : [];
+    return {
+      refs: targets.map((_, i) => (typeof refs[i] === 'string' ? (refs[i] as string) : null)),
+      documentId: typeof shaped.documentId === 'string' ? shaped.documentId : null,
+    };
+  } catch {
+    return empty;
   }
 }
 
@@ -293,6 +342,25 @@ export class SnapshotTracker {
     return this.issuedRefs.has(ref);
   }
 
+  /**
+   * Adopt refs issued outside a snapshot — {@link mintRefs} hands them to an
+   * audit for elements a snapshot never lists.
+   *
+   * Both halves of what `record()` does for a ref matter here. Without the
+   * issued set, a minted `e12` used bare fails the BARE_REF guard: the agent
+   * would be refused a ref this session had just given it. Without the
+   * high-water mark, the next document could reissue `e12` to a different
+   * element, which is exactly what refs exist to prevent.
+   */
+  noteIssued(refs: Array<string | null>): void {
+    for (const ref of refs) {
+      if (!ref) continue;
+      this.issuedRefs.add(ref);
+      const n = Number(ref.slice(1));
+      if (Number.isSafeInteger(n)) this.highWater = Math.max(this.highWater, n);
+    }
+  }
+
   /** Stamp a session-monotonic revision and make this the new baseline. */
   record(snap: SnapshotShape | null): SnapshotShape | null {
     if (!snap) return null;
@@ -314,6 +382,51 @@ export class SnapshotTracker {
   reset(): void {
     this.baseline = null;
   }
+}
+
+/**
+ * Resolve axe-core target paths to elements and ref them.
+ *
+ * `targets` is JSON-encoded into the source, so a selector the page authored
+ * cannot break out of the string it arrives in.
+ *
+ * Target shape, straight from axe: the outer array is one entry per frame, and
+ * an entry is either a CSS selector or — for an element inside open shadow
+ * roots — the selector path that walks into them. Anything with more than one
+ * frame entry addresses a document this script is not running in, so it is
+ * reported unresolved rather than matched against the wrong document: a ref
+ * that silently points at a same-selector element in the *top* frame is worse
+ * than no ref at all.
+ */
+function jsMintRefs(targets: A11yTarget[][], minRef: number): string {
+  return `
+${refRegistryJs(minRef)}const targets = ${JSON.stringify(targets)};
+function resolveTarget(path) {
+  if (!Array.isArray(path) || path.length !== 1) return null;
+  const steps = Array.isArray(path[0]) ? path[0] : [path[0]];
+  let root = document;
+  let el = null;
+  for (let i = 0; i < steps.length; i++) {
+    if (!root || typeof steps[i] !== 'string') return null;
+    try {
+      el = root.querySelector(steps[i]);
+    } catch (e) {
+      return null;
+    }
+    if (!el) return null;
+    // Only an open root is walkable; a closed one leaves root null and the
+    // next step reports the target unresolved.
+    root = el.shadowRoot;
+  }
+  return el;
+}
+const reg = registry();
+const refs = targets.map(function (path) {
+  const el = resolveTarget(path);
+  return el && el.isConnected ? refFor(reg, el) : null;
+});
+return { refs: refs, documentId: reg.doc };
+`;
 }
 
 /**
@@ -344,26 +457,22 @@ return { status: 'ok', documentId: reg.doc };
 }
 
 /**
- * JS executed in-page. Keep it self-contained — no closure capture.
+ * The in-page ref registry, as source both `snapshot` and on-demand minting
+ * embed.
  *
- * Strategy:
- * 1. Get or create the per-document ref registry.
- * 2. Walk the composed tree, entering open shadow roots and flattened slots.
- * 3. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
- * 4. Reuse each node's existing ref, or issue the next unused one.
- * 5. Bound semantic and short-text evidence independently so prose cannot
- *    hide controls and output stays bounded regardless of page complexity.
+ * It lives here rather than inside one command's template because refs are
+ * session state, not snapshot state: an audit refs elements a snapshot never
+ * lists (an `<img>` with no alt, low-contrast prose), and those refs have to
+ * come from the *same* registry or the two would hand out the same number for
+ * different elements. One counter, one reverse index, one re-key rule.
+ *
+ * `minRef` is the session high-water mark: the floor a fresh document's
+ * counter starts above so a ref captured before a navigation can never match
+ * a new element.
  */
-function jsSnapshot(minRef: number): string {
+function refRegistryJs(minRef: number): string {
   const floor = Number.isSafeInteger(minRef) && minRef >= 0 ? minRef : 0;
-  return `
-const MAX_NODES = ${MAX_NODES};
-const MAX_EVIDENCE_TEXT_NODES = ${MAX_EVIDENCE_TEXT_NODES};
-const MAX_ORDINARY_TEXT_NODES = ${MAX_ORDINARY_TEXT_NODES};
-const MAX_TEXT_LENGTH = ${MAX_TEXT_LENGTH};
-const MAX_NAME = ${MAX_NAME};
-const MAX_HREF = ${MAX_HREF};
-const MAX_REFS = ${MAX_REFS};
+  return `const MAX_REFS = ${MAX_REFS};
 const MIN_REF = ${floor};
 function newDocId(epoch) {
   return 'd' + epoch + '-' + Math.random().toString(36).slice(2, 10);
@@ -419,7 +528,29 @@ function refFor(reg, el) {
   el.setAttribute('data-craftdriver-ref', ref);
   return ref;
 }
-function visible(el) {
+`;
+}
+
+/**
+ * JS executed in-page. Keep it self-contained — no closure capture.
+ *
+ * Strategy:
+ * 1. Get or create the per-document ref registry.
+ * 2. Walk the composed tree, entering open shadow roots and flattened slots.
+ * 3. Skip nodes outside the viewport-ish bounds and zero-sized nodes.
+ * 4. Reuse each node's existing ref, or issue the next unused one.
+ * 5. Bound semantic and short-text evidence independently so prose cannot
+ *    hide controls and output stays bounded regardless of page complexity.
+ */
+function jsSnapshot(minRef: number): string {
+  return `
+const MAX_NODES = ${MAX_NODES};
+const MAX_EVIDENCE_TEXT_NODES = ${MAX_EVIDENCE_TEXT_NODES};
+const MAX_ORDINARY_TEXT_NODES = ${MAX_ORDINARY_TEXT_NODES};
+const MAX_TEXT_LENGTH = ${MAX_TEXT_LENGTH};
+const MAX_NAME = ${MAX_NAME};
+const MAX_HREF = ${MAX_HREF};
+${refRegistryJs(minRef)}function visible(el) {
   if (!el || !el.getClientRects) return false;
   // Layout APIs already account for display:none ancestors, but aria-hidden
   // and inert content can still have boxes. Never tell an agent that content

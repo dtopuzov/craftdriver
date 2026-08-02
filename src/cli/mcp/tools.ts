@@ -354,6 +354,52 @@ export const TOOLS: ToolDef[] = [
     toDispatch: (a) => ({ cmd: 'locators', args: { selector: a.selector, limit: a.limit } }),
   },
   {
+    name: 'browser_a11y',
+    description:
+      'Audit the page or a region with axe-core. Violations carry snapshot refs — pass one ' +
+      'to browser_locators to get a durable selector for the fix, then re-run to verify. ' +
+      'Reports rule id, impact, WCAG tags and help URL; bounded by default, and `truncated` ' +
+      'says when something was dropped. Reports only, never edits the page.',
+    params: {
+      selector: { ...OPTIONAL_SELECTOR, description: 'Scope the audit to one element.' },
+      min_impact: {
+        type: 'string',
+        enum: ['minor', 'moderate', 'serious', 'critical'],
+        description: 'Lowest impact reported. Defaults to serious.',
+      },
+      rules: {
+        type: 'string',
+        maxLength: 1024,
+        description: 'Comma-separated axe rule IDs to run exclusively.',
+      },
+      disable_rules: {
+        type: 'string',
+        maxLength: 1024,
+        description: 'Comma-separated axe rule IDs to skip. Mutually exclusive with rules.',
+      },
+      limit: { type: 'number', min: 1, max: 100, integer: true },
+      nodes: {
+        type: 'number',
+        min: 1,
+        max: 10,
+        integer: true,
+        description: 'Nodes reported per violation. Defaults to 3.',
+      },
+    },
+    annotations: readOnly('Accessibility audit'),
+    toDispatch: (a) => ({
+      cmd: 'a11y',
+      args: {
+        ...(a.selector ? { selector: a.selector } : {}),
+        minImpact: a.min_impact,
+        rules: a.rules,
+        disableRules: a.disable_rules,
+        limit: a.limit,
+        nodes: a.nodes,
+      },
+    }),
+  },
+  {
     name: 'browser_screenshot',
     description:
       'Capture a PNG of the active page or one element. Written to disk under the ' +

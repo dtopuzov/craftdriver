@@ -83,6 +83,11 @@ craftdriver page select <index|id>     # send later commands to that tab
 craftdriver page close <index|id>
 craftdriver snapshot                   # sanitized DOM summary with refs
 craftdriver locators <selector>        # durable selectors, live-validated
+craftdriver a11y [selector] [--min-impact minor|moderate|serious|critical]
+                 [--rules id,id] [--disable-rules id,id]
+                 [--limit N] [--nodes N] [--fail-on impact]
+                                       # axe-core audit; violation nodes
+                                       # carry refs
 craftdriver screenshot [-o file.png] [--full-page] [--selector S]
                                        # without -o, lands in
                                        # .craftdriver/screenshots as
@@ -343,6 +348,76 @@ never offered as CSS candidates — they look stable and are not.
 If nothing resolves uniquely, that is reported rather than papered over;
 the fix is a `data-testid` in the application, not a cleverer selector.
 
+## Accessibility — audit, then fix
+
+`craftdriver a11y` runs [axe-core](https://github.com/dequelabs/axe-core) over
+the page, or over one region if you pass a selector. axe ships with craftdriver;
+there is nothing to install.
+
+```bash
+$ craftdriver a11y
+3 violations (24 passes, 0 incomplete)
+
+✗ button-name (critical) · WCAG 2.0 A · 4.1.2
+    Buttons must have discernible text
+    https://dequeuniversity.com/rules/axe/4.12/button-name
+    ref=e5  <button id="nameless"></button>
+
+✗ image-alt (critical) · WCAG 2.0 A · 1.1.1
+    Images must have alternative text
+    https://dequeuniversity.com/rules/axe/4.12/image-alt
+    ref=e4  <img id="no-alt" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+```
+
+The `ref=eN` on each node is the difference between a report and a fix. axe
+itself hands back a CSS *path* — `div > p:nth-child(3)` — which describes where
+the element sat, not which element it is. A ref is the same handle `snapshot`
+issues, so the loop closes with commands you already have:
+
+```bash
+craftdriver a11y                       # violation → ref=e4
+craftdriver locators ref=e4            # ref → #no-alt, live-validated
+#   … add alt="…" in the source, reload …
+craftdriver a11y --fail-on serious     # re-run; exits 0 when clean
+```
+
+An element the snapshot already listed keeps the ref it already had — an audit
+never issues a second number for the same node. Elements the snapshot leaves
+out (images, long prose, headings — most violations, in practice) get one
+minted on the spot. The usual rule is unchanged: **a ref is live-session state
+and never belongs in committed source.** Run `locators` first.
+
+| Flag | Effect |
+| --- | --- |
+| `--min-impact` | Lowest impact reported. Default `serious`, matching the library. |
+| `--rules id,id` | Run only these axe rules. |
+| `--disable-rules id,id` | Skip these. Mutually exclusive with `--rules`. |
+| `--limit N` | Violations reported. Default 20. |
+| `--nodes N` | Nodes per violation. Default 3. |
+| `--fail-on impact` | Exit 1 when a violation at or above this impact exists. |
+
+Output is bounded by default — a raw axe report on a real page is thousands of
+tokens — and `truncated` says when something was dropped. `--fail-on` counts the
+whole audit, not the truncated view, so a small `--limit` cannot turn a failing
+gate green.
+
+Without `--fail-on`, `a11y` exits **0** even with violations: it is a report, and
+a non-zero status would break `craftdriver a11y | jq` and read as "the command
+is broken". Add `--fail-on serious` to make it a CI gate.
+
+Two limits worth knowing:
+
+- A violation inside an **open shadow root** gets a ref and works as a selector,
+  but `locators` cannot yet propose a durable selector across a shadow
+  boundary — it reports `element not readable`. Use the component's own test id.
+- Violations inside **iframes** are reported without a ref. Resolving an
+  iframe-scoped selector against the top document could match a different
+  element, and a ref that points somewhere the agent never looked is worse than
+  no ref at all.
+
+Rule IDs, WCAG mapping, and how to manage known violations are in
+[accessibility.md](./accessibility.md).
+
 ## Output: pretty on a TTY, JSON when piped
 
 - TTY: human-readable text, one line per result for `find` / `pages`.
@@ -360,11 +435,11 @@ code:  NO_MATCH
 
 ## Exit codes
 
-| Code | Meaning                                                           |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | success (or `exists` matched at least one element)                |
-| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero elements |
-| `2`  | usage error (missing argument, unknown command)                   |
+| Code | Meaning                                                                          |
+| ---- | -------------------------------------------------------------------------------- |
+| `0`  | success (or `exists` matched at least one element, or `a11y` without `--fail-on`) |
+| `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero / `a11y --fail-on` hit    |
+| `2`  | usage error (missing argument, unknown command)                                   |
 
 ## Fail-fast defaults
 

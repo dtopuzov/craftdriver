@@ -39,6 +39,17 @@ export interface A11yViolation {
   id: string;
   impact: A11yImpact;
   description: string;
+  /**
+   * axe-core's own tags, verbatim: conformance levels (`wcag2a`, `wcag21aa`),
+   * success criteria (`wcag111` = WCAG 1.1.1), and categories (`cat.forms`).
+   *
+   * Kept raw rather than reduced to a craftdriver severity scale — the tag set
+   * is axe's contract and changes with its rule catalogue, so re-encoding it
+   * here would just be a second thing to keep in step.
+   */
+  tags: string[];
+  /** One-line remediation summary, e.g. `'Images must have alternate text'`. */
+  help: string;
   /** Link to the axe-core rule documentation. */
   helpUrl: string;
   nodes: A11yViolationNode[];
@@ -244,6 +255,8 @@ const AUDIT_SCRIPT = `
               id: v.id,
               impact: v.impact || 'minor',
               description: v.description,
+              tags: (v.tags || []).map(String),
+              help: v.help || '',
               helpUrl: v.helpUrl,
               nodes: (v.nodes || []).map(function (n) {
                 return {

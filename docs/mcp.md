@@ -139,6 +139,7 @@ command the CLI also has — there are no MCP-only browser semantics.
 | `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.   |
 | `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.    |
 | `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref. |
+| `browser_a11y`          | **axe-core audit.** Violations carry refs; feed one to `browser_locators`. |
 | `browser_page`          | `list`/`open`/`select`/`close` tabs.                                |
 | `browser_logs`          | Console + network history, with cursors. See below.                 |
 | `browser_mock`          | Serve a fixed response or block matching requests.                  |
@@ -168,6 +169,26 @@ or headers.
   "action": "wait", "contains": "checkout ok", "timeout_ms": 10000
 } }
 ```
+
+### Accessibility
+
+`browser_a11y` audits the page, or one region when `selector` is given. Each
+violation reports the axe rule id, impact, WCAG tags, and help URL; each node
+carries a snapshot `ref`, which is what makes the finding actionable — axe's own
+`target` is a CSS path describing where the element sat, not a handle.
+
+```jsonc
+{ "name": "browser_a11y", "arguments": { "min_impact": "serious" } }
+// → violation node { "ref": "e14", "target": "#no-alt", … }
+{ "name": "browser_locators", "arguments": { "selector": "ref=e14" } }
+// → "#no-alt" — the selector the fix is written against
+```
+
+A ref an earlier `browser_snapshot` issued is reused, never duplicated. Reports
+are bounded (`limit`, `nodes`, and a `truncated` flag) and a full-page audit
+routinely exceeds the spill threshold, so it lands in the artifact directory
+with a preview inline rather than in the context window. Refs remain
+live-session state and must never reach committed source.
 
 ### Tracing
 
