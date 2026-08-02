@@ -33,6 +33,20 @@ describe('a11y (axe-core wrapper)', () => {
     expect(v.nodes[0].target).toEqual(expect.any(Array));
   });
 
+  it('carries axe tags and the one-line help, so WCAG is answerable', async () => {
+    const report = await browser.a11y.audit();
+    const imageAlt = report.violations.find((v) => v.id === 'image-alt');
+    expect(imageAlt).toBeDefined();
+    // Raw axe tags, not a craftdriver severity scale: `wcag2a` is the
+    // conformance level and `wcag111` is success criterion 1.1.1. Both were
+    // dropped before, so no caller could report which criterion had failed.
+    expect(imageAlt!.tags).toContain('wcag2a');
+    expect(imageAlt!.tags).toContain('wcag111');
+    // `help` is the imperative one-liner; `description` is the longer gloss.
+    expect(imageAlt!.help).toMatch(/alternat/i);
+    expect(imageAlt!.help).not.toBe(imageAlt!.description);
+  });
+
   it('check() throws A11yError with violations and help URLs in the message', async () => {
     const err = (await browser.a11y.check().catch((e: unknown) => e)) as A11yError;
 
@@ -74,6 +88,31 @@ describe('a11y (axe-core wrapper)', () => {
     expect(report.violations.map((v) => v.id)).toContain('image-alt');
     // nothing below critical should leak through
     expect(new Set(report.violations.map((v) => v.impact))).toEqual(new Set(['critical']));
+  });
+
+  it('defaults to serious+, and reaches moderate findings only when asked', async () => {
+    // The default is a contract, not an accident. Widening it silently turns a
+    // team's green build red on a routine upgrade, so pin it in both
+    // directions — a change either way should have to edit this test.
+    // A serious finding on one side and a moderate one on the other pins the
+    // boundary at exactly `serious`. Asserting only the critical `image-alt`
+    // would pass just as happily if the default drifted up to `critical`.
+    const byDefault = (await browser.a11y.audit()).violations.map((v) => v.id);
+    expect(byDefault).toContain('color-contrast'); // serious — at the default
+    expect(byDefault).not.toContain('heading-order'); // moderate — below it
+
+    const everything = await browser.a11y.audit({ minImpact: 'minor' });
+    expect(everything.violations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'heading-order', impact: 'moderate' })])
+    );
+
+    // check() reads the same threshold, so a moderate finding is not a failure
+    // unless the caller lowered it.
+    await browser.a11y.check({ rules: ['heading-order'] });
+    const thrown = await browser.a11y
+      .check({ rules: ['heading-order'], minImpact: 'minor' })
+      .catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(A11yError);
   });
 
   it('scoping: #bad has violations, #good is clean and check() does not throw', async () => {

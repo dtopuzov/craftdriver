@@ -29,6 +29,19 @@
 
     <!-- Low-contrast text: triggers `color-contrast` (serious). -->
     <p class="bad-contrast" id="low-contrast">Hard to read text</p>
+
+    <!-- Long low-contrast prose: also `color-contrast`, but on an element a
+         snapshot deliberately leaves out — long-form reading belongs to the
+         `text` command, not to the action-oriented snapshot. So the audit has
+         to mint this one's ref itself; there is none to reuse. -->
+    <p class="bad-contrast" id="long-copy">
+      This paragraph is deliberately longer than the snapshot's short-text budget, so it never
+      appears there and the accessibility audit has to issue a reference for it on demand.
+    </p>
+
+    <!-- Skipping from h2 to h4 triggers `heading-order` (moderate). It pins
+         that the default audit is complete rather than serious+ only. -->
+    <h4 id="skipped-heading">Skipped heading level</h4>
   </section>
 
   <!-- ============================================================ -->
@@ -40,5 +53,26 @@
     <button id="named">Click me</button>
     <img id="with-alt" alt="placeholder pixel" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="1" height="1">
   </main>
+
+  <!-- ============================================================ -->
+  <!-- Violation behind an open shadow boundary                      -->
+  <!-- ============================================================ -->
+  <section id="shadow" aria-label="Shadow violations">
+    <h2>Shadow section</h2>
+    <a11y-card id="shadow-card"></a11y-card>
+  </section>
+
+  <script>
+    // Open on purpose. axe traverses open shadow trees and reports the target
+    // as a nested selector path rather than a flat one — the case a ref has to
+    // be minted through if a violation in a component is to be actionable.
+    customElements.define('a11y-card', class extends HTMLElement {
+      connectedCallback() {
+        if (this.shadowRoot) return;
+        this.attachShadow({ mode: 'open' }).innerHTML =
+          '<img id="shadow-no-alt" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="16" height="16">';
+      }
+    });
+  </script>
 </body>
 </html>

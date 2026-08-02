@@ -94,6 +94,9 @@ await browser.a11y.check({ minImpact: 'critical' });
 const report = await browser.a11y.audit({ minImpact: 'minor' });
 ```
 
+The CLI reports from `minor` instead, because it is used to *find* problems
+rather than to gate a build — see [From the CLI or an agent](#from-the-cli-or-an-agent).
+
 ## Scoping to an element
 
 Both `ElementHandle` and `Locator` expose `.a11y`. The audit context
@@ -128,7 +131,9 @@ interface A11yResult {
 interface A11yViolation {
   id: string;            // e.g. 'color-contrast'
   impact: 'minor' | 'moderate' | 'serious' | 'critical';
-  description: string;
+  description: string;   // the long gloss
+  help: string;          // the one-line imperative: 'Images must have alternative text'
+  tags: string[];        // axe's own tags — see below
   helpUrl: string;
   nodes: Array<{
     // A nested string[] is axe's selector path through open shadow roots.
@@ -138,6 +143,19 @@ interface A11yViolation {
   }>;
 }
 ```
+
+`tags` is axe's raw tag list, not a craftdriver invention — it mixes
+conformance levels (`wcag2a`, `wcag21aa`), success criteria (`wcag111` is
+1.1.1, `wcag2410` is 2.4.10) and categories (`cat.forms`). Filter for the
+prefix you care about:
+
+```ts
+const criteria = violation.tags.filter((t) => /^wcag\d\d\d+$/.test(t));
+```
+
+There is deliberately no craftdriver severity scale on top of it: axe's four
+impacts and its own tags are the model, and re-encoding them here would just be
+a second thing to keep in step with axe's rule catalogue.
 
 `check()` throws an `A11yError` whose `.violations` and `.result`
 fields carry the full report:
@@ -171,6 +189,43 @@ writeFileSync('a11y-report.json', JSON.stringify(report, null, 2));
 // Gate the run on the serious+ subset
 await browser.a11y.check({ minImpact: 'serious', ...PROJECT_A11Y });
 ```
+
+## From the CLI or an agent
+
+The API above is for *gating* — a check in a suite that fails a build. The
+counterpart is *fixing*, and that does not want a test file written first:
+
+```bash
+craftdriver a11y                 # whole page
+craftdriver a11y '#settings'     # one region
+```
+
+Same axe-core, same four impacts, same rule IDs. The one thing the CLI adds is
+that a violation can be acted on: every reported node carries a snapshot `ref`,
+so it feeds straight into `craftdriver locators ref=eN` and comes back as a
+durable selector for the source fix. axe's own `target` is a CSS path
+(`div > p:nth-child(3)`) — a position, not a handle — which is why the audit
+issues refs of its own rather than passing axe's string along.
+
+```bash
+craftdriver a11y                       # → ref=e14 on the offending <img>
+craftdriver locators ref=e14           # → #no-alt
+#   … add alt="…" in the source, reload …
+craftdriver a11y --check               # exits 1 while it is still broken
+```
+
+`--check` mirrors the API distinction between `audit()` and `check()`: without
+it the command reports findings and exits 0; with it the same findings produce
+an explicit pass/fail verdict and exit 1 when any are present. `--min-impact`
+is the single threshold for both modes. `--rules` and `--disable-rules` map
+across too. Output is bounded by `--limit` and `--nodes` and says so with
+`truncated`.
+
+Refs are live-session handles. They mean nothing in the next session, so
+**never put one in committed source** — that is what `locators` is for. Full
+flag reference and the two known gaps (shadow-boundary locators, iframes) are
+in [cli.md](./cli.md#accessibility-audit-then-fix); the equivalent MCP tool is
+`browser_a11y`.
 
 ## How it works (one paragraph)
 

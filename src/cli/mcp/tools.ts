@@ -19,10 +19,11 @@
  *   dispatcher did not, so the one tool that can rewrite a page never
  *   reported its changes.
  *
- * The set is kept deliberately smaller than the CLI's command list. Every tool
- * costs context in `tools/list` on every agent turn, so element actions that
- * share a signature are grouped behind one `action` argument instead of
- * becoming seven tools.
+ * The set is kept deliberately smaller than the CLI's command list. Eager MCP
+ * clients put every definition into model context; clients with tool search
+ * can defer schemas, but still benefit from a focused catalogue. Element
+ * actions that share a signature are therefore grouped behind one `action`
+ * argument instead of becoming seven tools.
  */
 import type { AgentDetailedResult, AgentSessionRunner } from '../agentSession.js';
 import { toInputSchema, validateArgs, type ParamSpecs } from './params.js';
@@ -352,6 +353,47 @@ export const TOOLS: ToolDef[] = [
     },
     annotations: readOnly('Durable selectors'),
     toDispatch: (a) => ({ cmd: 'locators', args: { selector: a.selector, limit: a.limit } }),
+  },
+  {
+    name: 'browser_a11y',
+    // Kept to roughly a sibling's length on purpose. Eager clients put every
+    // definition into context on every turn, so a tool most sessions never call
+    // must not be the largest entry in the catalogue — which this was, at more
+    // than double the next description.
+    description:
+      'axe-core audit of the page or one region. Only for accessibility/WCAG tasks, not ' +
+      'ordinary exploration. Violations carry snapshot refs: pass one to browser_locators ' +
+      'for a durable selector, fix, re-run. check=true adds a pass/fail verdict. Never edits.',
+    params: {
+      selector: { ...OPTIONAL_SELECTOR, description: 'Scope the audit to one element.' },
+      min_impact: {
+        type: 'string',
+        enum: ['minor', 'moderate', 'serious', 'critical'],
+        description: 'Lowest impact reported and checked. Default minor.',
+      },
+      check: { type: 'boolean', description: 'Add passed=false when any finding remains.' },
+      rules: { type: 'string', maxLength: 1024, description: 'Comma-separated rule IDs to run.' },
+      disable_rules: {
+        type: 'string',
+        maxLength: 1024,
+        description: 'Comma-separated rule IDs to skip. Excludes rules.',
+      },
+      limit: { type: 'number', min: 1, max: 100, integer: true },
+      nodes: { type: 'number', min: 1, max: 10, integer: true, description: 'Nodes per violation. Default 3.' },
+    },
+    annotations: readOnly('Accessibility audit'),
+    toDispatch: (a) => ({
+      cmd: 'a11y',
+      args: {
+        ...(a.selector ? { selector: a.selector } : {}),
+        minImpact: a.min_impact,
+        check: a.check,
+        rules: a.rules,
+        disableRules: a.disable_rules,
+        limit: a.limit,
+        nodes: a.nodes,
+      },
+    }),
   },
   {
     name: 'browser_screenshot',

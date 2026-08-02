@@ -79,6 +79,9 @@ pages
 page list | open [url] | select <index|id> | close <index|id>
 snapshot
 locators <selector>
+a11y [selector] [--min-impact minor|moderate|serious|critical]
+     [--rules id,id] [--disable-rules id,id] [--limit N] [--nodes N]
+     [--check]
 screenshot [-o out.png] [--full-page] [--selector selector]
 eval <javascript> [--observe=page|delta]
 back | forward | reload | status | quit
@@ -266,6 +269,34 @@ Each candidate is reported `unique`, `ambiguous`, or `missing`, ordered by
 durability (role + name, label, test id, unique text, minimal CSS). Use one
 reported `unique`. If none is, add a `data-testid` to the application rather
 than committing a positional selector.
+
+## Accessibility audits
+
+Reach for this only when the task is about accessibility, WCAG, or screen-reader
+behaviour. It is not part of the ordinary exploration loop.
+
+`a11y [selector]` runs axe-core over the page, or one region. Every violation
+node carries a `ref=eN`, so a finding is directly actionable — axe's own
+`target` is a CSS path describing a position, not a handle.
+
+```bash
+npx craftdriver a11y                      # violation → ref=e4
+npx craftdriver locators ref=e4           # ref → durable selector for the fix
+npx craftdriver a11y --check              # re-run; exits 1 until it is clean
+```
+
+An element an earlier snapshot already reffed keeps that same ref. `a11y`
+mirrors `browser.a11y.audit()` and exits `0` after reporting; `a11y --check`
+mirrors `browser.a11y.check()` and exits `1` when findings exist. Both default
+to all (`minor+`) violations, and `--min-impact` is their one shared threshold.
+Check mode uses the whole audit, not the truncated view. Output is bounded by
+`--limit` (violations) and `--nodes` (per violation) and sets `truncated` when
+anything was dropped.
+
+Refs from an audit are exploration state exactly like snapshot refs — convert
+with `locators` before writing anything into a test. `locators` cannot yet
+describe an element inside a shadow root, and violations inside iframes are
+reported without a ref.
 
 ## Output and failures
 

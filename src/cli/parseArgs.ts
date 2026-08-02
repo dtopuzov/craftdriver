@@ -75,6 +75,11 @@ COMMON COMMANDS
                                     (use ref=eN as a selector)
   locators <selector>               durable selectors for an element,
                                     each re-checked against the live page
+  a11y [selector] [--min-impact minor|moderate|serious|critical]
+       [--rules id,id] [--disable-rules id,id] [--limit N] [--nodes N]
+       [--check]
+                                    axe-core audit; each violation node
+                                    carries a ref; --check exits 1 on findings
   logs [list] [--kind console,error,request,response] [--level error]
        [--contains text] [--since N] [--limit N]
                                     what the page logged and requested
@@ -189,6 +194,11 @@ const KNOWN_FLAGS = [
   '--limit',
   '--offset',
   '--all',
+  '--nodes',
+  '--min-impact',
+  '--check',
+  '--rules',
+  '--disable-rules',
   '--dry-run',
   '--mcp',
   '--force',
@@ -259,6 +269,12 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
   focus: { min: 1, max: 1, usage: 'focus <selector>', options: ['observe'] },
   scroll: { min: 1, max: 1, usage: 'scroll <selector>', options: ['observe'] },
   locators: { min: 1, max: 1, usage: 'locators <selector>', options: ['limit'] },
+  a11y: {
+    min: 0,
+    max: 1,
+    usage: 'a11y [selector] [--min-impact serious] [--check]',
+    options: ['limit', 'nodes', 'minImpact', 'check', 'rules', 'disableRules'],
+  },
   upload: {
     min: 1,
     max: Infinity,
@@ -470,6 +486,9 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
   },
 };
 
+/** axe-core's severity buckets, in ascending order. Mirrors `A11yImpact`. */
+const A11Y_IMPACTS = ['minor', 'moderate', 'serious', 'critical'];
+
 const COMMAND_ALIASES: Record<string, string> = {
   open: 'go',
   goto: 'go',
@@ -489,7 +508,12 @@ const OPTION_FLAG: Record<string, string> = {
   contentType: '--content-type',
   deltaX: '--delta-x',
   deltaY: '--delta-y',
+  disableRules: '--disable-rules',
+  check: '--check',
   files: '--files',
+  minImpact: '--min-impact',
+  nodes: '--nodes',
+  rules: '--rules',
   force: '--force',
   fullPage: '--full-page',
   kind: '--kind',
@@ -672,7 +696,32 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
       if (typeof value !== 'number') return value;
       opts.offset = value;
       i += 1;
+    } else if (a === '--nodes') {
+      const value = takeNumber(a, i, { integer: true });
+      if (typeof value !== 'number') return value;
+      opts.nodes = value;
+      i += 1;
+    }
+    // Validated here as well as in the dispatcher: a typo'd impact should cost
+    // a usage error, not a daemon start and a browser launch.
+    else if (a === '--min-impact') {
+      const value = takeValue(a, i);
+      if (typeof value !== 'string') return value;
+      if (!A11Y_IMPACTS.includes(value.toLowerCase())) {
+        return usageError(
+          flags,
+          `${a}: expected one of ${A11Y_IMPACTS.join('|')}, got ${JSON.stringify(value)}`
+        );
+      }
+      opts.minImpact = value.toLowerCase();
+      i += 1;
+    } else if (a === '--rules' || a === '--disable-rules') {
+      const value = takeValue(a, i);
+      if (typeof value !== 'string') return value;
+      opts[a === '--rules' ? 'rules' : 'disableRules'] = value;
+      i += 1;
     } else if (a === '--all') opts.all = true;
+    else if (a === '--check') opts.check = true;
     else if (a === '--submit') opts.submit = true;
     else if (a === '--dry-run') opts['dry-run'] = true;
     else if (a === '--mcp') opts.mcp = true;
@@ -959,6 +1008,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     case 'locators':
       // craftdriver locators <selector> — durable selectors for a ref
       return { cmd: 'locators', args: { selector: rest[0], ...opts }, flags };
+
+    case 'a11y':
+      // craftdriver a11y [selector] — optional positional scopes the audit,
+      // mirroring `text [selector]` and the library's `locator(sel).a11y`.
+      return { cmd: 'a11y', args: { ...(rest[0] ? { selector: rest[0] } : {}), ...opts }, flags };
 
     case 'upload': {
       // craftdriver upload <selector> <file> [file...]

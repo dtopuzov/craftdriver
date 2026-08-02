@@ -26,8 +26,10 @@ import {
   peekDialog,
   probeRef,
   describeRefStatus,
+  mintRefs,
   SnapshotTracker,
 } from './snapshot.js';
+import type { A11yImpact, A11yOptions, A11yTarget, A11yViolation } from '../lib/a11y.js';
 import { locatorCandidates } from './locatorCandidates.js';
 import type { SessionJournal, JournalKind } from './journal.js';
 import { artifactRoot, resolveArtifactPath } from './artifactPaths.js';
@@ -241,6 +243,163 @@ const MAX_MOCK_BODY = 64 * 1024;
 /** Owned root for trace output, overridable like the state root. */
 function traceRoot(): string {
   return artifactRoot('traces', 'CRAFTDRIVER_TRACE_DIR');
+}
+
+// ---------------------------------------------------------------------------
+// Accessibility audits
+// ---------------------------------------------------------------------------
+/**
+ * Bounds on one audit report.
+ *
+ * A raw axe report on a real page is thousands of tokens, and `--limit` and
+ * `--nodes` multiply: 100 violations of 10 nodes is a 400 KB answer nobody can
+ * read. `MAX_A11Y_REPORT_NODES` is the bound that actually holds, because it
+ * caps the product rather than either factor.
+ */
+const MAX_A11Y_VIOLATIONS = 100;
+const MAX_A11Y_NODES = 10;
+const A11Y_DEFAULT_NODES = 3;
+const MAX_A11Y_REPORT_NODES = 50;
+/** axe's `html` is the element's opening tag — enough to recognise it. */
+const MAX_A11Y_HTML = 160;
+const MAX_A11Y_SUMMARY = 240;
+const MAX_A11Y_TARGET = 120;
+/** Rule filters come from untrusted input and go into axe's run options. */
+const MAX_A11Y_RULES = 50;
+const MAX_A11Y_RULE_ID = 64;
+
+const A11Y_IMPACTS: readonly A11yImpact[] = ['minor', 'moderate', 'serious', 'critical'];
+
+function a11yImpactOf(
+  args: Record<string, unknown> | undefined,
+  key: 'minImpact'
+): A11yImpact | undefined {
+  const raw = optStr(args, key);
+  if (!raw) return undefined;
+  const value = raw.toLowerCase();
+  if (!(A11Y_IMPACTS as readonly string[]).includes(value)) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `a11y: unknown impact ${JSON.stringify(raw)}`,
+      {
+        detail: { known: A11Y_IMPACTS },
+        hint: `expected one of: ${A11Y_IMPACTS.join(', ')}`,
+      }
+    );
+  }
+  return value as A11yImpact;
+}
+
+/** A comma-separated or array-valued list of axe rule IDs. */
+function a11yRulesOf(
+  args: Record<string, unknown> | undefined,
+  key: 'rules' | 'disableRules',
+  flag: string
+): string[] | undefined {
+  const raw = args?.[key];
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : [];
+  const ids = list
+    .map((id) => (typeof id === 'string' ? id.trim() : ''))
+    .filter((id) => id.length > 0);
+  if (ids.length === 0) return undefined;
+  if (ids.length > MAX_A11Y_RULES) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `a11y: too many rule IDs in ${flag} (${ids.length}; max ${MAX_A11Y_RULES})`
+    );
+  }
+  const oversized = ids.find((id) => id.length > MAX_A11Y_RULE_ID);
+  if (oversized !== undefined) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `a11y: rule ID is too long (${oversized.length} chars; max ${MAX_A11Y_RULE_ID})`
+    );
+  }
+  return ids;
+}
+
+/**
+ * Audit options, validated before anything launches a browser.
+ *
+ * The library throws for `rules` + `disableRules` too, but only once the audit
+ * is already running — which costs a launch to learn about a typo, and reports
+ * a usage mistake as a driver error.
+ */
+function a11yOptionsOf(
+  args: Record<string, unknown> | undefined
+): A11yOptions & { minImpact: A11yImpact } {
+  const rules = a11yRulesOf(args, 'rules', '--rules');
+  const disableRules = a11yRulesOf(args, 'disableRules', '--disable-rules');
+  if (rules && disableRules) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      'a11y: --rules and --disable-rules are mutually exclusive',
+      { hint: 'run only a rule set with --rules, or waive known rules with --disable-rules' }
+    );
+  }
+  // Deliberately lower than the library's `serious` default, and always sent
+  // explicitly so the two cannot drift. The library gates a build, where
+  // widening the net turns a green CI red; this command finds problems to fix,
+  // where a hidden finding is the failure. Measured on a documentation page:
+  // `serious` reported 1 violation, `minor` reported 3 — the extra two were
+  // `landmark-one-main` and `region`, both worth acting on.
+  const minImpact = a11yImpactOf(args, 'minImpact') ?? 'minor';
+  return {
+    ...(rules ? { rules } : {}),
+    ...(disableRules ? { disableRules } : {}),
+    minImpact,
+  };
+}
+
+/**
+ * axe's target path as one readable label.
+ *
+ * `>>>` separates open shadow boundaries, matching how the shadow-piercing
+ * combinator is conventionally written. It is a label for a human reading the
+ * report, not a selector to paste — that is what the `ref` is for.
+ */
+function a11yTargetLabel(target: A11yTarget[]): string {
+  return snippet(
+    target.map((part) => (Array.isArray(part) ? part.join(' >>> ') : String(part))).join(' >>> '),
+    MAX_A11Y_TARGET
+  );
+}
+
+/**
+ * The violating element's markup, as the *page* author wrote it.
+ *
+ * `data-craftdriver-ref` is our own diagnostic marker, stamped by whichever
+ * snapshot happened to run first. Leaving it in means handing an agent an
+ * attribute that is not in the source it is about to edit — and inviting it to
+ * "fix" one. The ref is reported beside the snippet, where it belongs.
+ */
+function a11yHtml(html: string): string {
+  return snippet(html.replace(/\s*data-craftdriver-ref="e\d+"/g, ''), MAX_A11Y_HTML);
+}
+
+/**
+ * axe writes a failure summary as a heading plus one indented line per way to
+ * fix it. Collapsing that to single spaces — which is what every other snippet
+ * in this file wants — runs the alternatives together into one sentence, so
+ * the line breaks become separators instead of disappearing.
+ */
+function a11ySummary(summary: string): string {
+  const lines = summary
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const joined = lines.slice(1).reduce(
+    // axe's heading line already ends in a colon, and a separator straight
+    // after it reads as punctuation noise ("Fix any of the following:;").
+    (acc, line) => acc + (acc.endsWith(':') ? ' ' : '; ') + line,
+    lines[0] ?? ''
+  );
+  return snippet(joined, MAX_A11Y_SUMMARY);
+}
+
+/** WCAG conformance and success-criterion tags, in axe's own spelling. */
+function wcagTags(violation: A11yViolation): string[] {
+  return (violation.tags ?? []).filter((tag) => tag.startsWith('wcag'));
 }
 
 const JOURNAL_KINDS: JournalKind[] = ['console', 'error', 'request', 'response'];
@@ -1608,6 +1767,109 @@ export async function dispatch(
         lines: snap.lines,
         documentId: snap.documentId,
         revision: snap.revision,
+      };
+    }
+
+    // ---- accessibility ---------------------------------------------------
+    // axe-core at page or element scope, with every reported node carrying a
+    // snapshot ref. That ref is the whole point: axe hands back a CSS *path*
+    // (`div > p:nth-child(3)`), which is a position rather than a handle. A
+    // ref goes straight into `locators` and comes back as a durable selector
+    // for the fix, so the loop closes without the agent guessing.
+    case 'a11y': {
+      const options = a11yOptionsOf(args);
+      const check = bool(args, 'check');
+      const limit = clampLimit(
+        int(args, 'limit', AGENT_DEFAULT_LIMIT),
+        AGENT_DEFAULT_LIMIT,
+        MAX_A11Y_VIOLATIONS
+      );
+      const perViolation = clampLimit(
+        int(args, 'nodes', A11Y_DEFAULT_NODES),
+        A11Y_DEFAULT_NODES,
+        MAX_A11Y_NODES
+      );
+      const sel = optStr(args, 'selector');
+
+      const b = await ctx.handle.get();
+      // Injecting and running axe is page script, so a modal would park the
+      // command on the driver's script timeout before failing.
+      const blocking = await peekDialog(b);
+      if (blocking !== null) {
+        throw new CraftdriverError(
+          ErrorCode.STATE_INVALID,
+          `cannot audit while a dialog is open: ${snippet(blocking, MAX_DIALOG_TEXT)}`,
+          { hint: 'accept or dismiss it first with `dialog accept` / `dialog dismiss`' }
+        );
+      }
+      const scope = sel ? (await firstElement(ctx, b, args, 'a11y')).el.a11y : b.a11y;
+      const report = await scope.audit(options);
+
+      // Order matters. The audit reads each node's `html`, and taking a
+      // snapshot stamps `data-craftdriver-ref` markers — so snapshotting first
+      // would put craftdriver's own diagnostic attribute into the evidence the
+      // agent is about to read. The baseline still has to be recorded before
+      // minting, because a ref only resolves against the document the tracker
+      // names, and it seeds the floor that keeps audit refs above the session
+      // high-water mark.
+      ctx.tracker.record(await takeSnapshot(b, ctx.tracker.minRef));
+
+      const shown = report.violations.slice(0, limit);
+      let truncated = report.violations.length > shown.length;
+      let budget = MAX_A11Y_REPORT_NODES;
+      const picked = shown.map((violation) => {
+        const nodes = violation.nodes.slice(0, Math.min(perViolation, budget));
+        if (nodes.length < violation.nodes.length) truncated = true;
+        budget -= nodes.length;
+        return { violation, nodes };
+      });
+
+      const minted = await mintRefs(
+        b,
+        picked.flatMap((entry) => entry.nodes.map((node) => node.target)),
+        ctx.tracker.minRef
+      );
+      // A ref the session cannot resolve is worse than none: the agent would
+      // spend a command discovering it is stale. Only hand out refs minted in
+      // the document the tracker's baseline actually names.
+      const usable =
+        minted.documentId !== null && minted.documentId === ctx.tracker.documentId
+          ? minted.refs
+          : minted.refs.map(() => null);
+      ctx.tracker.noteIssued(usable);
+
+      let cursor = 0;
+      const violations = picked.map(({ violation, nodes }) => ({
+        id: violation.id,
+        impact: violation.impact,
+        wcag: wcagTags(violation),
+        help: violation.help,
+        description: violation.description,
+        helpUrl: violation.helpUrl,
+        nodes: nodes.map((node) => {
+          const ref = usable[cursor++];
+          return {
+            ...(ref ? { ref } : {}),
+            target: a11yTargetLabel(node.target),
+            html: a11yHtml(node.html),
+            failureSummary: a11ySummary(node.failureSummary),
+          };
+        }),
+      }));
+
+      return {
+        ...(sel ? { scope: publicSelectorOf(args) } : {}),
+        minImpact: options.minImpact,
+        violations,
+        counts: {
+          violations: report.violations.length,
+          passes: report.passes,
+          incomplete: report.incomplete,
+        },
+        truncated,
+        // Check the whole filtered audit, never the bounded display slice: a
+        // small --limit must not turn a failed verification green.
+        ...(check ? { checked: true, passed: report.violations.length === 0 } : {}),
       };
     }
 
