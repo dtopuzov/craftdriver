@@ -57,6 +57,21 @@ Invoke the skill explicitly if the agent doesn't pick it up on its own:
 
 The portable phrasing — "Use the CraftDriver skill" — works everywhere.
 
+## Ask for an accessibility audit
+
+The same setup can run a useful audit without writing a test:
+
+> **Use the CraftDriver skill.** Audit `http://localhost:3000/checkout` for
+> serious and critical accessibility violations. For each finding, report the
+> rule, remediation link, and affected element. Fix the issues in the source,
+> rerun the audit in check mode, and summarize anything that remains. Do not
+> add a test unless I ask.
+
+The agent runs `craftdriver a11y --min-impact serious` through the CLI, or calls
+`browser_a11y` with `min_impact: "serious"` over MCP. In either case, each
+finding includes a live `ref=eN`; the agent resolves that ref to a durable
+locator before editing source and never commits the ref itself.
+
 ## What the agent does with the browser
 
 It is worth knowing, because it is what makes the output better than a guess:
@@ -121,7 +136,7 @@ that rots:
 - **It ran the test.** Ask for the command and its output if the report doesn't
   include them.
 
-## Two more prompts worth having
+## Another prompt worth having
 
 **Turn a bug report into a failing test:**
 
@@ -133,16 +148,6 @@ that rots:
 
 The console and network are captured from launch, so the agent asks after the
 fact instead of re-running the flow with devtools open.
-
-**Add an accessibility gate:**
-
-> Use the CraftDriver skill. Audit `http://localhost:3000/checkout` with
-> `browser.a11y.audit()`, list the serious and critical violations with the
-> elements they point at, and add a test gating this page with
-> `browser.a11y.check()`.
-
-Useful even when you weren't planning to automate anything — it is a fast
-manual-testing pass with a written-up result.
 
 ## Notes
 
