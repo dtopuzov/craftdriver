@@ -21,6 +21,6 @@ export default defineConfig({
     fileParallelism: false,
   },
   esbuild: {
-    target: 'node18',
+    target: 'node22',
   },
 });

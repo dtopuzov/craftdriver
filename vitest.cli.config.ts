@@ -48,6 +48,6 @@ export default defineConfig({
     exclude: [...configDefaults.exclude],
   },
   esbuild: {
-    target: 'node18',
+    target: 'node22',
   },
 });

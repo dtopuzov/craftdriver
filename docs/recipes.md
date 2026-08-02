@@ -55,9 +55,9 @@ For exact signatures, use the linked feature docs and the
 Give your coding agent a real browser so it writes tests against what your app
 actually renders, instead of guessing selectors from source.
 
-| Scenario             | Use when                                                                 | Recipe                                                                             |
-| -------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| AI-generated testing | Claude Code, Codex, or Copilot should explore the live app and add a test. | [Ask Your Agent To Write A Browser Test](./recipes/ask-an-agent-to-write-a-test.md) |
+| Scenario            | Use when                                                                                        | Recipe                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| AI-assisted testing | Claude Code, Codex, or Copilot should explore the live app, add a test, or audit accessibility. | [Ask Your Agent To Write A Browser Test](./recipes/ask-an-agent-to-write-a-test.md) |
 
 ## Quality Gates And Debugging
 

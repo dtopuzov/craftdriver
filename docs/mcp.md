@@ -194,6 +194,9 @@ routinely exceeds the spill threshold, so it lands in the artifact directory
 with a preview inline rather than in the context window. Refs remain
 live-session state and must never reach committed source.
 
+For a copy/paste prompt that lets an agent run this audit-and-fix loop, see
+[Ask for an accessibility audit](./recipes/ask-an-agent-to-write-a-test.md#ask-for-an-accessibility-audit).
+
 ### Tracing
 
 ```jsonc

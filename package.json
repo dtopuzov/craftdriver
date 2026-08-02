@@ -73,7 +73,7 @@
   },
   "homepage": "https://dtopuzov.github.io/craftdriver/",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "files": [
     "dist",
@@ -87,35 +87,35 @@
   ],
   "sideEffects": false,
   "devDependencies": {
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
-    "@types/node": "^20.0.0",
+    "@semantic-release/changelog": "^7.0.0",
+    "@semantic-release/git": "^11.0.1",
+    "@types/node": "^26.1.2",
     "@types/pngjs": "6.0.5",
     "@types/ws": "^8.18.1",
     "@types/yazl": "^3.3.1",
-    "@typescript-eslint/parser": "^8.1.0",
-    "eslint": "^9.8.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "eslint": "^10.8.0",
     "http-server": "^14.1.1",
-    "prettier": "^3.3.3",
+    "prettier": "^3.9.6",
     "rimraf": "^6.1.3",
-    "semantic-release": "^25.0.5",
-    "typescript": "^5.0.0",
+    "semantic-release": "^25.0.8",
+    "typescript": "^6.0.3",
     "vitepress": "^1.6.4",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "axe-core": "^4.12.1",
     "pngjs": "7.0.0",
-    "ws": "^8.21.0",
+    "ws": "^8.21.1",
     "yazl": "^3.3.1"
   },
   "overrides": {
-    "brace-expansion": "5.0.7",
-    "ip-address": "10.1.1",
-    "npm": "^11.18.0",
-    "undici": "7.28.0",
+    "brace-expansion": "5.0.9",
+    "ip-address": "10.4.0",
+    "npm": "^12.0.2",
+    "undici": "8.9.0",
     "vitepress": {
-      "vite": "6.4.3"
+      "vite": "7.3.6"
     }
   }
 }

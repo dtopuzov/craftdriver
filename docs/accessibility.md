@@ -195,6 +195,10 @@ await browser.a11y.check({ minImpact: 'serious', ...PROJECT_A11Y });
 The API above is for *gating* — a check in a suite that fails a build. The
 counterpart is *fixing*, and that does not want a test file written first:
 
+To delegate the audit-and-fix loop, copy the short prompt from
+[Ask Your Coding Agent To Write A Browser Test](./recipes/ask-an-agent-to-write-a-test.md#ask-for-an-accessibility-audit).
+It works with either the CraftDriver CLI skill or MCP.
+
 ```bash
 craftdriver a11y                 # whole page
 craftdriver a11y '#settings'     # one region
