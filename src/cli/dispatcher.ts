@@ -337,6 +337,12 @@ function a11yOptionsOf(
       { hint: 'run only a rule set with --rules, or waive known rules with --disable-rules' }
     );
   }
+  // Deliberately lower than the library's `serious` default, and always sent
+  // explicitly so the two cannot drift. The library gates a build, where
+  // widening the net turns a green CI red; this command finds problems to fix,
+  // where a hidden finding is the failure. Measured on a documentation page:
+  // `serious` reported 1 violation, `minor` reported 3 — the extra two were
+  // `landmark-one-main` and `region`, both worth acting on.
   const minImpact = a11yImpactOf(args, 'minImpact') ?? 'minor';
   return {
     ...(rules ? { rules } : {}),

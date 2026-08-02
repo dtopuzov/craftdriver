@@ -22,7 +22,6 @@ describe('a11y (axe-core wrapper)', () => {
     const ids = report.violations.map((v) => v.id);
     expect(ids).toContain('image-alt');
     expect(ids).toContain('button-name');
-    expect(ids).toContain('heading-order');
     expect(typeof report.passes).toBe('number');
     expect(typeof report.incomplete).toBe('number');
     expect(typeof report.inapplicable).toBe('number');
@@ -91,20 +90,26 @@ describe('a11y (axe-core wrapper)', () => {
     expect(new Set(report.violations.map((v) => v.impact))).toEqual(new Set(['critical']));
   });
 
-  it('reports every impact by default and allows callers to raise the threshold', async () => {
-    const all = await browser.a11y.audit();
-    expect(all.violations).toEqual(
+  it('defaults to serious+, and reaches moderate findings only when asked', async () => {
+    // The default is a contract, not an accident. Widening it silently turns a
+    // team's green build red on a routine upgrade, so pin it in both
+    // directions — a change either way should have to edit this test.
+    const byDefault = (await browser.a11y.audit()).violations.map((v) => v.id);
+    expect(byDefault).toContain('image-alt'); // critical — guards a vacuous pass
+    expect(byDefault).not.toContain('heading-order'); // moderate — below the default
+
+    const everything = await browser.a11y.audit({ minImpact: 'minor' });
+    expect(everything.violations).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'heading-order', impact: 'moderate' })])
     );
 
-    const checked = (await browser.a11y
-      .check({ rules: ['heading-order'] })
-      .catch((e: unknown) => e)) as A11yError;
-    expect(checked).toBeInstanceOf(A11yError);
-    expect(checked.violations.map((v) => v.id)).toEqual(['heading-order']);
-
-    const serious = await browser.a11y.audit({ minImpact: 'serious' });
-    expect(serious.violations.map((v) => v.id)).not.toContain('heading-order');
+    // check() reads the same threshold, so a moderate finding is not a failure
+    // unless the caller lowered it.
+    await browser.a11y.check({ rules: ['heading-order'] });
+    const thrown = await browser.a11y
+      .check({ rules: ['heading-order'], minImpact: 'minor' })
+      .catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(A11yError);
   });
 
   it('scoping: #bad has violations, #good is clean and check() does not throw', async () => {

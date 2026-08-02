@@ -19,7 +19,7 @@ export interface A11yOptions {
   disableRules?: string[];
   /** Only run these rule IDs. Mutually exclusive with `disableRules`. */
   rules?: string[];
-  /** Minimum impact reported. Defaults to `'minor'` (all axe violations). */
+  /** Minimum impact reported. Defaults to `'serious'`. */
   minImpact?: A11yImpact;
   /** Escape hatch: raw axe-core run options merged last (overrides everything else). */
   axeOptions?: Record<string, unknown>;
@@ -181,7 +181,7 @@ export class A11y {
   /** Run an accessibility audit and return the report. */
   async audit(options: A11yOptions = {}): Promise<A11yResult> {
     const axeOptions = buildAxeRunOptions(options);
-    const minImpact = options.minImpact ?? 'minor';
+    const minImpact = options.minImpact ?? 'serious';
     const withContext = this.source.withContext ?? (<T>(fn: () => Promise<T>) => fn());
 
     return withContext(async () => {

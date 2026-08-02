@@ -12,7 +12,7 @@ import { Browser } from 'craftdriver';
 const browser = await Browser.launch({ browserName: 'chrome' });
 await browser.navigateTo('https://example.com');
 
-await browser.a11y.check();         // throws on any violation (minor+ by default)
+await browser.a11y.check();         // throws on any serious+ violation
 const report = await browser.a11y.audit(); // returns the raw report
 console.log(report.violations);
 await browser.quit();
@@ -83,16 +83,19 @@ you need exotic axe configuration (custom rule sets, locale, etc.).
 
 ## Filtering by impact
 
-The default `minor` threshold includes every axe violation. Raise it when a
-project deliberately gates only higher-impact findings:
+Default reports only include `serious` and `critical` violations.
+Tune the threshold per call:
 
 ```ts
 // CI gate: only fail PRs on critical issues
 await browser.a11y.check({ minImpact: 'critical' });
 
-// Report serious and critical findings only
-const report = await browser.a11y.audit({ minImpact: 'serious' });
+// Debug everything
+const report = await browser.a11y.audit({ minImpact: 'minor' });
 ```
+
+The CLI reports from `minor` instead, because it is used to *find* problems
+rather than to gate a build — see [From the CLI or an agent](#from-the-cli-or-an-agent).
 
 ## Scoping to an element
 

@@ -396,6 +396,15 @@ and never belongs in committed source.** Run `locators` first.
 | `--nodes N`             | Nodes per violation. Default 3.                                         |
 | `--check`               | Return a pass/fail verdict and exit 1 when a reported violation exists. |
 
+**The CLI reports from `minor`; the library's `a11y.audit()` reports from
+`serious`.** That difference is deliberate, and measured: on a normal
+documentation page, a `serious` threshold showed 1 finding where `minor` showed
+3 — the two it hid were `landmark-one-main` and `region`, exactly the
+structural problems this command exists to find. The library defaults higher
+because it *gates a build*, where widening the net turns someone's green CI red.
+The CLI defaults lower because it is used to *find and fix*, where a hidden
+finding is the failure. Pass `--min-impact serious` for the library's view.
+
 Output is bounded by default — a raw axe report on a real page is thousands of
 tokens — and `truncated` says when something was dropped. Check mode uses the
 whole audit, not the truncated view, so a small `--limit` cannot turn a failed
