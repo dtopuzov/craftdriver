@@ -4,7 +4,7 @@
 [![npm version](https://img.shields.io/npm/v/craftdriver.svg)](https://www.npmjs.com/package/craftdriver)
 [![npm downloads](https://img.shields.io/npm/dm/craftdriver.svg)](https://www.npmjs.com/package/craftdriver)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-2563eb.svg)](https://dtopuzov.github.io/craftdriver/)
-[![Node.js >=18](https://img.shields.io/badge/node-%3E%3D18-43853d.svg)](https://nodejs.org/)
+[![Node.js >=22](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f59e0b.svg)](./LICENSE)
 
 Crafted Node.js browser automation built on W3C WebDriver and BiDi.

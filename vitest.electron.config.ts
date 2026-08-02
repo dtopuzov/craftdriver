@@ -18,5 +18,5 @@ export default defineConfig({
     maxWorkers: 1,
     fileParallelism: false,
   },
-  esbuild: { target: 'node18' },
+  esbuild: { target: 'node22' },
 });

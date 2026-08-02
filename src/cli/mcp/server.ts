@@ -184,9 +184,9 @@ export async function runMcpServer(opts: McpServerOptions): Promise<void> {
   // Grid/cloud. Fail fast at startup, not on first browser use.
   assertLocalOnlyLaunch(opts.launch as unknown as Record<string, unknown>);
 
-  const input = opts.input ?? process.stdin;
-  const output = opts.output ?? process.stdout;
-  const signalSource = opts.signalSource ?? process;
+  const input: NodeJS.ReadableStream = opts.input ?? process.stdin;
+  const output: NodeJS.WritableStream = opts.output ?? process.stdout;
+  const signalSource: McpSignalSource = opts.signalSource ?? process;
   const session =
     opts.sessionFactory?.() ??
     new AgentSession({
