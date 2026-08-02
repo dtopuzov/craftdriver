@@ -356,43 +356,30 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'browser_a11y',
+    // Kept to roughly a sibling's length on purpose. Eager clients put every
+    // definition into context on every turn, so a tool most sessions never call
+    // must not be the largest entry in the catalogue — which this was, at more
+    // than double the next description.
     description:
-      'Audit the page or a region with axe-core. Call only when the task is about ' +
-      'accessibility, WCAG, or screen readers — not as part of ordinary exploration. ' +
-      'Set check=true for an explicit pass/fail verification; omit it for a report. ' +
-      'Violations carry snapshot refs — pass one to browser_locators to get a durable ' +
-      'selector for the fix, then re-run to verify. Reports rule id, impact, WCAG tags and ' +
-      'help URL; bounded by default, and `truncated` says when something was dropped. ' +
-      'Reports only, never edits the page.',
+      'axe-core audit of the page or one region. Only for accessibility/WCAG tasks, not ' +
+      'ordinary exploration. Violations carry snapshot refs: pass one to browser_locators ' +
+      'for a durable selector, fix, re-run. check=true adds a pass/fail verdict. Never edits.',
     params: {
       selector: { ...OPTIONAL_SELECTOR, description: 'Scope the audit to one element.' },
       min_impact: {
         type: 'string',
         enum: ['minor', 'moderate', 'serious', 'critical'],
-        description: 'Lowest impact reported or checked. Defaults to minor.',
+        description: 'Lowest impact reported and checked. Default minor.',
       },
-      check: {
-        type: 'boolean',
-        description: 'Return passed=false when any finding meets min_impact.',
-      },
-      rules: {
-        type: 'string',
-        maxLength: 1024,
-        description: 'Comma-separated axe rule IDs to run exclusively.',
-      },
+      check: { type: 'boolean', description: 'Add passed=false when any finding remains.' },
+      rules: { type: 'string', maxLength: 1024, description: 'Comma-separated rule IDs to run.' },
       disable_rules: {
         type: 'string',
         maxLength: 1024,
-        description: 'Comma-separated axe rule IDs to skip. Mutually exclusive with rules.',
+        description: 'Comma-separated rule IDs to skip. Excludes rules.',
       },
       limit: { type: 'number', min: 1, max: 100, integer: true },
-      nodes: {
-        type: 'number',
-        min: 1,
-        max: 10,
-        integer: true,
-        description: 'Nodes reported per violation. Defaults to 3.',
-      },
+      nodes: { type: 'number', min: 1, max: 10, integer: true, description: 'Nodes per violation. Default 3.' },
     },
     annotations: readOnly('Accessibility audit'),
     toDispatch: (a) => ({

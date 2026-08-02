@@ -75,13 +75,6 @@ For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
 first.
 
-## Accessibility
-
-Only for accessibility, WCAG, or screen-reader tasks, use `a11y` to report or
-`a11y --check` to verify. Findings carry `ref=eN`; convert with `locators`
-before editing or writing a test. For filters and the `audit()` / `check()` API
-mapping, read [cli.md](cli.md#accessibility-audits).
-
 ## Writing or debugging committed tests
 
 Only when the request asks for test source, inspect the repository's existing

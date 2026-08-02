@@ -94,9 +94,12 @@ describe('a11y (axe-core wrapper)', () => {
     // The default is a contract, not an accident. Widening it silently turns a
     // team's green build red on a routine upgrade, so pin it in both
     // directions — a change either way should have to edit this test.
+    // A serious finding on one side and a moderate one on the other pins the
+    // boundary at exactly `serious`. Asserting only the critical `image-alt`
+    // would pass just as happily if the default drifted up to `critical`.
     const byDefault = (await browser.a11y.audit()).violations.map((v) => v.id);
-    expect(byDefault).toContain('image-alt'); // critical — guards a vacuous pass
-    expect(byDefault).not.toContain('heading-order'); // moderate — below the default
+    expect(byDefault).toContain('color-contrast'); // serious — at the default
+    expect(byDefault).not.toContain('heading-order'); // moderate — below it
 
     const everything = await browser.a11y.audit({ minImpact: 'minor' });
     expect(everything.violations).toEqual(
