@@ -223,6 +223,16 @@ function checkSessionUsage(parsed: ParsedCommand): number {
     );
     return 2;
   }
+  // A single daemon command has nothing to continue past. Accepting the flag
+  // there would read as "keep going on failure" while changing nothing.
+  if (!parsed.flags.ephemeral && parsed.flags.continueOnError) {
+    process.stderr.write(
+      'error: --continue-on-error applies to an --ephemeral script\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  a single command has no later steps to skip\n'
+    );
+    return 2;
+  }
   if (!parsed.flags.ephemeral) return 0;
   if (parsed.flags.session !== undefined) {
     process.stderr.write(
@@ -277,6 +287,13 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
         writeErr(toWireError(e));
         return 2;
       }
+      // Parse the whole script before running any of it. A typo on line 7
+      // used to be found only after lines 1-6 had already navigated and
+      // filled, leaving a half-driven browser behind for a fault that was
+      // knowable up front. Every syntax problem is reported, not just the
+      // first, so one pass fixes the script.
+      const steps: ParsedCommand[] = [];
+      let usageFailed = false;
       for (const raw of lines.split('\n')) {
         const line = raw.trim();
         if (!line || line.startsWith('#')) continue;
@@ -290,7 +307,7 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
         const parseFailure = formatParseFailure(sub, line);
         if (parseFailure) {
           process.stderr.write(parseFailure);
-          rc = Math.max(rc, 2);
+          usageFailed = true;
           continue;
         }
         const ignoredLaunchFlag = ephemeralLineLaunchFlag(sub.flags);
@@ -299,15 +316,37 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
             `error: ${ignoredLaunchFlag} cannot be set inside an ephemeral script in: ${line}\n` +
               `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`
           );
-          rc = Math.max(rc, 2);
+          usageFailed = true;
           continue;
         }
         if (sub.cmd.startsWith('__')) continue;
+        steps.push(sub);
+      }
+      // Nothing has touched the browser yet — the session launches lazily on
+      // the first dispatch — so a rejected script costs no launch at all.
+      if (usageFailed) return 2;
+
+      for (const [index, sub] of steps.entries()) {
         const result = await safeDispatch(session, sub);
         // Keep the worst status across the batch. `||` used to be safe when
         // success was always 0, but `exists` now returns 1 on a miss and
         // would overwrite a usage error (2) recorded earlier.
         rc = Math.max(rc, emitInProc(sub, result));
+        if (result.ok || parsed.flags.continueOnError) continue;
+        // Stop here. The remaining lines were written for a page state this
+        // script never reached, and running them anyway yields output that
+        // reads like an application answer — "Missing credentials" for a form
+        // that was never filled — rather than the selector failure it is.
+        const skipped = steps.length - index - 1;
+        if (skipped > 0) {
+          process.stderr.write(
+            `error: stopped at failed step ${index + 1} of ${steps.length}; ` +
+              `${skipped} later ${skipped === 1 ? 'command' : 'commands'} not run\n` +
+              `hint: fix the failing step, or pass --continue-on-error if the ` +
+              `commands are independent\n`
+          );
+        }
+        break;
       }
     } else {
       const result = await safeDispatch(session, parsed);
@@ -323,6 +362,7 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
 function ephemeralLineLaunchFlag(flags: GlobalFlags): string | null {
   if (flags.session !== undefined) return '--session';
   if (flags.ephemeral) return '--ephemeral';
+  if (flags.continueOnError) return '--continue-on-error';
   if (flags.headless === true) return '--headless';
   if (flags.headless === false) return '--headed';
   if (flags.launch.browserName !== undefined) return '--browser';

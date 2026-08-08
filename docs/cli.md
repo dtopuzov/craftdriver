@@ -42,6 +42,14 @@ text "#result"
 ' | npx craftdriver --ephemeral
 ```
 
+Every line is parsed before any of them runs, so a typo on the last line costs
+you a message instead of a half-driven browser. Execution then **stops at the
+first command that fails**, because the lines after it were written for a page
+state the script never reached — running them anyway produces the application's
+own words ("Missing credentials") for what was really a broken selector. The
+stderr note says which step stopped it and how many were skipped. Pass
+`--continue-on-error` when the commands genuinely are independent probes.
+
 ## Commands
 
 ```
@@ -124,6 +132,7 @@ That is every command. Global flags are:
 --headless | --headed                      override the default
 --session <name>                           route to a named browser
 --ephemeral                                one browser for one script on stdin
+--continue-on-error                        ephemeral: run on past a failed line
 --timeout <ms>                             per-command wait (default 5000)
 --json | --pretty                          force output format
 --help | --version

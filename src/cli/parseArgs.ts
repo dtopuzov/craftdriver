@@ -21,6 +21,15 @@ export interface GlobalFlags {
   json?: boolean;
   pretty?: boolean;
   ephemeral?: boolean;
+  /**
+   * Run every remaining line of an ephemeral script after one fails.
+   *
+   * Off by default: a script whose third line failed has left the browser in a
+   * state its fourth line was never written for, and running on produces
+   * application-shaped output ("Missing credentials") for what is actually a
+   * broken selector. Opt in only for independent probes.
+   */
+  continueOnError?: boolean;
   help?: boolean;
   version?: boolean;
   launch: LaunchOptions;
@@ -156,6 +165,8 @@ MCP SERVER (for hosted / sandboxed AI agents)
 EPHEMERAL MODE (sandboxed agents)
   craftdriver --ephemeral < script.txt
   (one command per line; same syntax as on the CLI)
+  Every line is parsed before any runs, and the script stops at the first
+  command that fails. Use --continue-on-error for independent probes.
 
 SELECTOR SYNTAX
   CSS by default. Prefix to switch kind:
@@ -170,6 +181,7 @@ FLAGS
   --viewport <width>x<height>       override the 1280x800 agent viewport for go
   --session <name>                  named daemon session (default: default)
   --ephemeral                       no daemon; read commands from stdin
+  --continue-on-error               ephemeral: run on past a failed line
 
 EXIT CODES
   0 success    1 assertion/timeout/no-match    2 usage error
@@ -186,6 +198,7 @@ const KNOWN_FLAGS = [
   '--json',
   '--pretty',
   '--ephemeral',
+  '--continue-on-error',
   '--headless',
   '--headed',
   '--browser',
@@ -662,6 +675,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     else if (a === '--json') flags.json = true;
     else if (a === '--pretty') flags.pretty = true;
     else if (a === '--ephemeral') flags.ephemeral = true;
+    else if (a === '--continue-on-error') flags.continueOnError = true;
     else if (a === '--headless') flags.headless = true;
     else if (a === '--headed') flags.headless = false;
     else if (a === '--browser') {

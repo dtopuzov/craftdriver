@@ -42,9 +42,13 @@ interface RunResult {
 }
 
 /** Run a newline-separated script through one ephemeral browser. */
-async function runCli(script: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+async function runCli(
+  script: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  extraArgs: string[] = []
+): Promise<RunResult> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn('node', [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME], {
+    const child = spawn('node', [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME, ...extraArgs], {
       env: { ...process.env, ...extraEnv, HEADLESS: 'true' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -456,6 +460,66 @@ describe('CLI end-to-end flows', () => {
 
     expect(run.exitCode).toBe(2);
     expect(run.stderr).toContain('unknown command "clik"');
+  }, E2E_TIMEOUT);
+
+  it('stops an ephemeral script at the first failed command', async () => {
+    // The script used to run on: the failed fill left #username empty, the
+    // form was submitted anyway, and the last line returned the application's
+    // own "Missing credentials" — an app-shaped answer to what was really a
+    // broken selector. Collapsing the steps must not collapse the evidence.
+    const run = await runCli(`
+      go ${EXAMPLES_BASE_URL}/login.html
+      fill #not-a-field alice --timeout 500
+      fill #password hunter2
+      click #submit
+      text #result
+    `);
+
+    expect(run.exitCode).toBe(1);
+    expect(run.lines).toHaveLength(2);
+    expect(run.lines[0].ok).toBe(true);
+    expect(run.lines[1].ok).toBe(false);
+    expect(run.stderr).toContain('stopped at failed step 2 of 5');
+    expect(run.stderr).toContain('3 later commands not run');
+  }, E2E_TIMEOUT);
+
+  it('runs past a failed command with --continue-on-error', async () => {
+    const run = await runCli(
+      `
+      go ${EXAMPLES_BASE_URL}/login.html
+      fill #not-a-field alice --timeout 500
+      text h1
+    `,
+      {},
+      ['--continue-on-error']
+    );
+
+    expect(run.exitCode).toBe(1);
+    expect(run.lines).toHaveLength(3);
+    expect(run.lines[1].ok).toBe(false);
+    expect(run.lines[2].ok).toBe(true);
+  }, E2E_TIMEOUT);
+
+  it('parses the whole ephemeral script before running any of it', async () => {
+    // A typo on the last line used to be found only after the earlier lines
+    // had already navigated and filled, leaving a half-driven browser behind
+    // for a fault that was knowable without launching one.
+    const run = await runCli(`
+      go ${EXAMPLES_BASE_URL}/login.html
+      fill #username alice
+      clik #submit
+    `);
+
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr).toContain('unknown command "clik"');
+    expect(run.lines).toHaveLength(0);
+  }, E2E_TIMEOUT);
+
+  it('rejects --continue-on-error outside an ephemeral script', async () => {
+    const run = await runCliOnce(['status', '--continue-on-error']);
+
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr).toContain('--continue-on-error applies to an --ephemeral script');
   }, E2E_TIMEOUT);
 
   it('rejects launch and session flags inside an ephemeral script', async () => {
