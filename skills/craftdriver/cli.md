@@ -42,6 +42,14 @@ since the last observation). `documentChange` is `same`, `changed`, or
 `unknown`; unknown means no preceding observed document exists. The default
 stays compact and does not snapshot after every action.
 
+Every observed result carries `errors` and `logCursor` alongside the delta:
+`errors` counts the errors the page logged since the previous observation
+(uncaught exceptions and `console.error`), and `logCursor` is the `--since`
+value that reads exactly those entries. Treat a non-zero count as a reason to
+run `logs --kind error --since <logCursor>` before reporting the action as
+successful — `(no a11y changes)` alone does not mean the page was happy.
+`logsDropped` means entries were evicted, so the count is a lower bound.
+
 The daemon uses a Unix socket and is not available on Windows. On Windows, or in
 a sandbox that cannot keep a background process, use the configured MCP server
 for a persistent agent session, or send the whole flow in one `--ephemeral`

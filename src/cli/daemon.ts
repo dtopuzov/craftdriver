@@ -264,6 +264,14 @@ export function renderObservedResult(detailed: AgentDetailedResult, observe: unk
   if (observe === 'page' && detailed.page) result.page = detailed.page;
   else if (observe === 'page' && detailed.delta) result.warning = detailed.delta;
   if (observe === 'delta' && detailed.delta) result.delta = detailed.delta;
+  // Flat rather than nested, and on both observation kinds: this is a
+  // tripwire, and an agent should not have to know where to look for it. An
+  // action that changed no a11y node can still have made the page throw.
+  if (detailed.logs) {
+    result.errors = detailed.logs.errors;
+    result.logCursor = detailed.logs.logCursor;
+    if (detailed.logs.logsDropped !== undefined) result.logsDropped = detailed.logs.logsDropped;
+  }
   return result;
 }
 

@@ -20,6 +20,15 @@ import {
   MAX_BATCH_STEPS,
 } from '../../src/cli/batch.js';
 import { compileScript } from '../../src/cli/script.js';
+import { renderObservedResult } from '../../src/cli/daemon.js';
+
+const PAGE = {
+  url: 'https://x.test/',
+  title: 'x',
+  documentId: 'd1',
+  revision: 1,
+  documentChange: 'same' as const,
+};
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -399,5 +408,58 @@ describe('rendering a batch for a human', () => {
     expect(text).toContain('element exists but is not displayed');
     expect(text).toContain('stopped at step 2 of 2; 1 later step not run');
     expect(text).toContain('+ e22: text "saved"');
+  });
+});
+
+
+describe('the error tripwire on an observation', () => {
+  it('is absent, not zero, when the session cannot capture logs', async () => {
+    // A Classic session has no journal events at all. Reporting `errors: 0`
+    // there would be an all-clear nobody checked.
+    const { browser } = fakeBrowser();
+    const session = sessionWith({ browser });
+
+    const outcome = await session.runBatch({
+      observe: 'delta',
+      steps: [{ cmd: 'click', args: {} }],
+    });
+
+    expect(outcome.logs).toBeUndefined();
+    await session.close();
+  });
+});
+
+describe('rendering an observation for a transport', () => {
+  it('adds the tripwire to both observation kinds, flat', () => {
+    const detailed = {
+      value: { ok: true },
+      delta: '+ e1: text "saved"',
+      logs: { errors: 1, logCursor: 8 },
+    };
+
+    expect(renderObservedResult(detailed, 'delta')).toEqual({
+      ok: true,
+      delta: '+ e1: text "saved"',
+      errors: 1,
+      logCursor: 8,
+    });
+    expect(renderObservedResult({ ...detailed, page: PAGE }, 'page')).toMatchObject({
+      errors: 1,
+      logCursor: 8,
+    });
+  });
+
+  it('reports an evicted window so the count is not read as exact', () => {
+    const rendered = renderObservedResult(
+      { value: {}, logs: { errors: 0, logCursor: 3, logsDropped: 40 } },
+      'delta',
+    ) as Record<string, unknown>;
+
+    expect(rendered.logsDropped).toBe(40);
+  });
+
+  it('leaves an unobserved result alone', () => {
+    expect(renderObservedResult({ value: { ok: true }, logs: { errors: 9, logCursor: 1 } }, undefined))
+      .toEqual({ ok: true });
   });
 });

@@ -499,3 +499,41 @@ describe('browser_batch on the wire', () => {
     expect(message.error?.message).toMatch(expected);
   });
 });
+
+describe('the error tripwire on an MCP observation', () => {
+  it('states the count even when nothing on the page changed', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const captured = collectOutput(output);
+    const runDetailed = vi.fn().mockResolvedValue({
+      value: { ok: true },
+      logs: { errors: 1, logCursor: 8 },
+    });
+    const session: AgentSessionRunner = {
+      run: vi.fn(async (command) => (await runDetailed(command)).value),
+      runDetailed,
+      runBatch: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const running = runMcpServer({
+      launch: {},
+      input,
+      output,
+      sessionFactory: () => session,
+      signalSource: new EventEmitter(),
+    });
+
+    input.end(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'browser_click', arguments: { selector: '#btn' } },
+    }) + '\n');
+    await running;
+
+    // No delta at all, and the tripwire still reaches the model: an action
+    // that changed no a11y node can still have made the page throw.
+    const blocks = captured.lines()[0].result?.content as Array<{ text: string }>;
+    expect(blocks.at(-1)?.text).toBe('errors: 1 (logCursor 8)');
+  });
+});

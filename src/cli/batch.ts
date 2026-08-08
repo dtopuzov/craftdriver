@@ -19,6 +19,7 @@
  */
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { boundValue, truncateUtf8, utf8Bytes } from './bounds.js';
+import { formatLogTripwire, type LogTripwire } from './journal.js';
 
 /** One command in a batch, already parsed and validated by its surface. */
 export interface BatchStep {
@@ -80,6 +81,12 @@ export interface BatchOutcome {
   /** The single observation, when one was requested and taken. */
   delta?: string;
   page?: BatchPageInfo;
+  /**
+   * Whether any step made the application log an error, and the cursor that
+   * reads them. Present whenever an observation was requested — a batch that
+   * skipped its snapshot still answers this, because it costs no round trip.
+   */
+  logs?: LogTripwire;
 }
 
 /**
@@ -256,6 +263,7 @@ export function renderBatchOutcome(outcome: BatchOutcome): string {
   }
   if (outcome.delta) lines.push('', outcome.delta);
   if (outcome.page) lines.push('', `page: ${outcome.page.title} — ${outcome.page.url}`);
+  if (outcome.logs) lines.push(formatLogTripwire(outcome.logs));
   if (outcome.steps.find((s) => !s.ok)?.error?.recoverySnapshot) {
     lines.push('', 'recovery snapshot:', outcome.steps.find((s) => !s.ok)!.error!.recoverySnapshot!);
   }

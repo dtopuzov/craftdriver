@@ -66,6 +66,12 @@ snapshot, so do not follow it with another snapshot.
 `same`, `changed`, or `unknown`. `unknown` means there was no preceding observed
 document and must not be treated as `same`.
 
+Every observed result also carries `errors` — errors the page logged since the
+previous observation — and `logCursor`. `errors: 0` is the all-clear; anything
+higher means read them with `logs --kind error --since <logCursor>` before
+trusting the action. A delta of `(no a11y changes)` is not an all-clear on its
+own: an action can throw without changing a visible node.
+
 On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
 only when recovery context is unavailable or more context is genuinely needed.
 Actions auto-wait; use `wait` only for a specific asynchronous selector or load

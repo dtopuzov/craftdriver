@@ -201,6 +201,23 @@ CLI agent sessions start at a 1280x800 desktop layout so responsive pages expose
 their primary controls. `go URL --viewport WIDTHxHEIGHT` overrides it before
 that navigation when the task intentionally targets another responsive size.
 
+Every observed result also carries an **error tripwire**: `errors`, the number
+of errors (uncaught exceptions and `console.error` alike) the page logged since
+the previous observation, and `logCursor`, the value to pass as `--since` to
+read exactly those entries. An action can make the application throw while
+changing nothing an a11y snapshot can see, and `(no a11y changes)` then reads
+as all-clear; the counter closes that hole for a handful of tokens instead of a
+defensive `logs` call after every action. `errors: 0` is an affirmative answer,
+so the fields are omitted entirely — never reported as zero — when the session
+cannot capture logs at all. `logsDropped` appears only when the journal evicted
+entries inside the window, which makes the count a lower bound.
+
+```bash
+$ npx craftdriver click '#btn-console-error' --observe=delta
+{"ok":true,"result":{"ok":true,"delta":"(no a11y changes)","errors":1,"logCursor":8}}
+$ npx craftdriver logs --kind error --since 8
+```
+
 `--observe=page` returns URL, title, document identity, revision, and
 `documentChange` after a mutation. The state is `same`, `changed`, or `unknown`;
 `unknown` means there was no preceding observed document and must not be treated

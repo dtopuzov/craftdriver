@@ -15,7 +15,7 @@ import {
   SnapshotTracker,
   type SnapshotShape,
 } from './snapshot.js';
-import { SessionJournal } from './journal.js';
+import { SessionJournal, type LogTripwire } from './journal.js';
 import { AGENT_DEFAULT_VIEWPORT, type AgentViewport } from './defaults.js';
 import { truncateUtf8, utf8Bytes } from './bounds.js';
 import {
@@ -49,6 +49,12 @@ export interface AgentDetailedResult {
   value: AgentResult;
   /** Rendered diff (or full snapshot on a document change). */
   delta?: string;
+  /**
+   * Whether the action made the application log an error, and where to read
+   * it. Absent when this session cannot capture logs at all (a Classic
+   * session has no journal), which is deliberately different from `errors: 0`.
+   */
+  logs?: LogTripwire;
   snapshot?: SnapshotShape | null;
   /** Cheap-to-render state from the same atomic post-action snapshot. */
   page?: {
@@ -154,6 +160,14 @@ export class AgentSession implements AgentSessionRunner {
   private tail: Promise<void> = Promise.resolve();
   private state: 'open' | 'closing' | 'closed' = 'open';
   private closePromise: Promise<void> | null = null;
+  /**
+   * Journal cursor as of the previous observation.
+   *
+   * The tripwire answers "did *this* action log an error", so it counts from
+   * here rather than from the start of the session — a total would keep
+   * reporting the same error long after it was read and dealt with.
+   */
+  private lastLogCursor = 0;
 
   constructor(options: AgentSessionOptions) {
     const baseLaunch = options.launch ?? (() => Browser.launch(options.launchOptions));
@@ -295,7 +309,12 @@ export class AgentSession implements AgentSessionRunner {
       }
 
       const skipped = steps.length - results.length;
-      const observation = observe && sawMutation && !recovered ? await this.captureObservation() : null;
+      const observation =
+        observe && sawMutation && !recovered ? await this.captureObservation() : null;
+      // The tripwire is a journal read, not a snapshot, so it still answers
+      // "did any step in this batch make the application throw" on the paths
+      // that skipped the snapshot — a recovery snapshot, a read-only batch.
+      const logs = observation?.logs ?? (observe ? this.takeLogTripwire().logs : undefined);
       return {
         ok: skipped === 0 && results.every((step) => step.ok),
         steps: boundBatchSteps(results),
@@ -311,6 +330,7 @@ export class AgentSession implements AgentSessionRunner {
           : observation?.delta
             ? { delta: observation.delta }
             : {}),
+        ...(logs ? { logs } : {}),
       };
     });
     this.tail = result.then(
@@ -318,6 +338,25 @@ export class AgentSession implements AgentSessionRunner {
       () => undefined
     );
     return result;
+  }
+
+  /**
+   * The error tripwire for everything since the previous observation, moving
+   * the baseline forward as it reports.
+   *
+   * Called exactly once per observation — it is a read *and* an advance, so
+   * calling it twice would report the second window as empty.
+   */
+  private takeLogTripwire(): { logs?: LogTripwire } {
+    // No capture at all (a Classic session has no journal events) is not the
+    // same answer as "no errors", so say nothing rather than say zero.
+    if (!this.journal.isCapturing) return {};
+    const since = this.lastLogCursor;
+    const { errors, dropped } = this.journal.countErrorsSince(since);
+    this.lastLogCursor = this.journal.cursor;
+    return {
+      logs: { errors, logCursor: since, ...(dropped > 0 ? { logsDropped: dropped } : {}) },
+    };
   }
 
   /** Dispatch one command, with the navigation fence and ref recovery. */
@@ -353,12 +392,24 @@ export class AgentSession implements AgentSessionRunner {
     // thing it actually needs to know here.
     const dialog = await peekDialog(browser);
     if (dialog !== null) {
-      return { delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)` };
+      return {
+        delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)`,
+        ...this.takeLogTripwire(),
+      };
     }
 
     const before = this.ctx.tracker.current;
     const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
-    if (!snap) return { delta: 'post-action snapshot unavailable', snapshot: null };
+    // Counted after the snapshot, not before it: the round trip is a few tens
+    // of milliseconds during which an error the action caused can still
+    // arrive over BiDi. Reading the journal itself costs no round trip.
+    if (!snap) {
+      return {
+        delta: 'post-action snapshot unavailable',
+        snapshot: null,
+        ...this.takeLogTripwire(),
+      };
+    }
 
     // Ordinary failures throw above. A failed action on a previously issued
     // ref is the one exception: its attached recovery snapshot advances the
@@ -367,6 +418,7 @@ export class AgentSession implements AgentSessionRunner {
     const snapshot = this.ctx.tracker.current;
     return {
       ...(delta ? { delta } : {}),
+      ...this.takeLogTripwire(),
       snapshot,
       ...(snapshot
         ? {

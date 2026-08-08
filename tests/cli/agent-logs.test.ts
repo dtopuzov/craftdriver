@@ -7,6 +7,7 @@
  */
 import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
 import { AgentSession } from '../../src/cli/agentSession';
+import { renderObservedResult } from '../../src/cli/daemon';
 import { ErrorCode } from '../../src/lib/errors';
 import type { JournalEntry } from '../../src/cli/journal';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from '../utils';
@@ -133,5 +134,61 @@ describe('console and network journal', () => {
 
   it('reports that capture is live', async () => {
     expect((await logs()).capturing).toBe(true);
+  }, 120_000);
+});
+
+describe('the error tripwire in an observation', () => {
+  let session: AgentSession;
+
+  beforeAll(() => {
+    session = new AgentSession({ launchOptions: { browserName: BROWSER_NAME } });
+  });
+
+  afterAll(async () => {
+    await session.close();
+  });
+
+  beforeEach(async () => {
+    await session.run({ cmd: 'go', args: { url: FIXTURE } });
+  });
+
+  /** The observation an agent actually receives, as the transports render it. */
+  const observe = async (selector: string): Promise<Record<string, unknown>> =>
+    renderObservedResult(
+      await session.runDetailed({ cmd: 'click', args: { selector }, observe: 'delta' }),
+      'delta',
+    ) as Record<string, unknown>;
+
+  it('reports an error the action caused, on an action that changed no a11y node', async () => {
+    const result = await observe('#btn-console-error');
+
+    // The defect this closes: the delta says "(no a11y changes)" — nothing
+    // visible happened — while the application logged an error. An agent
+    // reading only the delta reasonably concludes all-clear.
+    expect(result.errors).toBe(1);
+    expect(result.logCursor).toEqual(expect.any(Number));
+
+    // And the cursor it hands back reads exactly the window it counted.
+    const page = (await session.run({
+      cmd: 'logs',
+      args: { action: 'list', kind: 'error', since: result.logCursor },
+    })) as LogsPage;
+    expect(page.entries).toHaveLength(1);
+    expect(JSON.stringify(page.entries)).toContain('via console.error');
+  }, 120_000);
+
+  it('counts an uncaught exception too, not just console.error', async () => {
+    const result = await observe('#btn-throw-error');
+    expect(result.errors).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('says zero rather than nothing on a clean action', async () => {
+    await observe('#btn-console-error');
+    // Second observation, quiet action: the count is per-action, so the
+    // previous error must not still be reported here.
+    const result = await observe('#btn-console-log');
+
+    expect(result.errors).toBe(0);
+    expect(result).toHaveProperty('logCursor');
   }, 120_000);
 });

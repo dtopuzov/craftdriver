@@ -21,6 +21,7 @@ import {
   type ToolDef,
 } from './tools.js';
 import { renderBatchOutcome, type BatchOutcome } from '../batch.js';
+import { formatLogTripwire, type LogTripwire } from '../journal.js';
 import { renderFull, type SnapshotShape } from '../snapshot.js';
 import { BoundedLineReader, MAX_FRAME_BYTES } from '../lineReader.js';
 import { boundToolResult, resolveMaxResponseBytes, truncateUtf8 } from './bounds.js';
@@ -179,6 +180,7 @@ interface RouterContext {
 interface ToolInvocation {
   value: unknown;
   delta?: string;
+  logs?: LogTripwire;
 }
 
 export async function runMcpServer(opts: McpServerOptions): Promise<void> {
@@ -355,6 +357,7 @@ export async function routeJsonRpcMethod(
               artifacts: ctx.snapshotState.artifacts,
               spillBytes: ctx.snapshotState.spillBytes,
               delta: invocation.delta,
+              logs: invocation.logs,
               maxResponseBytes: ctx.snapshotState.maxResponseBytes,
             })
           );
@@ -404,7 +407,11 @@ async function invokeTool(
     throw error;
   }
   if (!snapshotState.snapshotsOn) return { value: detailed.value };
-  return { value: detailed.value, ...(detailed.delta ? { delta: detailed.delta } : {}) };
+  return {
+    value: detailed.value,
+    ...(detailed.delta ? { delta: detailed.delta } : {}),
+    ...(detailed.logs ? { logs: detailed.logs } : {}),
+  };
 }
 
 /**
@@ -438,6 +445,8 @@ interface ToolResultContext {
   artifacts: ArtifactStore;
   spillBytes: number;
   delta?: string;
+  /** The error tripwire from the same observation as `delta`. */
+  logs?: LogTripwire;
   /** Cap on the complete serialized result; defaults from the environment. */
   maxResponseBytes?: number;
 }
@@ -462,12 +471,17 @@ export async function serializeToolSuccess(
   }
   content.push({ type: 'text', text: primaryText });
 
-  if (ctx.delta) {
-    content.push({
-      type: 'text',
-      text: await maybeSpill(ctx.delta, 'snapshot.txt', ctx.artifacts, ctx.spillBytes),
-    });
-  }
+  // One observation block: what changed, then whether the page complained.
+  // The tripwire goes in even when there is no delta — an action that changed
+  // no a11y node and threw an exception is precisely the case an empty
+  // observation used to report as all-clear.
+  const observation = [
+    ctx.delta ? await maybeSpill(ctx.delta, 'snapshot.txt', ctx.artifacts, ctx.spillBytes) : '',
+    ctx.logs ? formatLogTripwire(ctx.logs) : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  if (observation) content.push({ type: 'text', text: observation });
 
   // Bound the complete response, not just the content blocks. Spilling a
   // large value to an artifact while attaching the same value in full as

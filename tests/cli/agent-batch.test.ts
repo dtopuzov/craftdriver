@@ -105,6 +105,23 @@ describe('a batch drives a real page', () => {
     });
   });
 
+  it('reports whether any step made the application throw', async () => {
+    const outcome = await session.runBatch({
+      observe: 'delta',
+      steps: [
+        { cmd: 'go', args: { url: `${EXAMPLES_BASE_URL}/console-errors.html` } },
+        { cmd: 'click', args: { selector: '#btn-console-log' } },
+        { cmd: 'click', args: { selector: '#btn-console-error' } },
+      ],
+    });
+
+    // One observation covers the whole batch, so an error from an unobserved
+    // middle step is exactly what would otherwise go unnoticed.
+    expect(outcome.ok).toBe(true);
+    expect(outcome.logs?.errors).toBe(1);
+    expect(outcome.logs?.logCursor).toEqual(expect.any(Number));
+  });
+
   it('attaches a recovery snapshot when a step spends a stale ref', async () => {
     await session.run({ cmd: 'go', args: { url: ACTIONS } });
     const snapshot = (await session.run({ cmd: 'snapshot' })) as { lines: string[] };

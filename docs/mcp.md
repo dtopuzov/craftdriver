@@ -429,6 +429,13 @@ Every tool returns a content array. Tools that can change the page —
   since the old lines describe a page that no longer exists.
 - **A blocking dialog** replaces the snapshot with `dialog open: <message>`,
   because script cannot run behind a modal. Handle it with `browser_dialog`.
+- **An error tripwire** closes the observation: `errors: 1 (logCursor 8)` — the
+  number of errors (uncaught exceptions and `console.error`) the page logged
+  since the previous observation, and the cursor to pass to `browser_logs` as
+  `since` to read them. It is stated even when the count is zero and even when
+  nothing changed, because an action that changed no a11y node can still have
+  made the application throw, and silence there reads as all-clear. The line is
+  absent only when the session cannot capture logs at all.
 - `selector` echoes back the selector you passed, not the compiled WebDriver
   query — so `ref=e7` stays `ref=e7` and `role=button[name=Save]` stays
   readable. Error messages still name the compiled query

@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { Browser } from '../../src/lib/browser.js';
 import {
   SessionJournal,
+  formatLogTripwire,
   MAX_JOURNAL_ENTRIES,
   MAX_ENTRY_TEXT,
   type JournalEntry,
@@ -356,5 +357,56 @@ describe('entry shape', () => {
     const entry = journal.query().entries[0] as JournalEntry;
     expect(typeof entry.time).toBe('string');
     expect(() => JSON.stringify(entry)).not.toThrow();
+  });
+});
+
+describe('the error tripwire', () => {
+  it('counts uncaught exceptions and console.error alike, since a cursor', () => {
+    fake.emitLog(consoleMsg('chatter'));
+    fake.emitLog(jsError('boom'));
+    fake.emitLog(consoleMsg('shouted', 'error', 'error'));
+
+    // Both spellings of "an error", exactly as `logs --kind error` counts them.
+    expect(journal.countErrorsSince(0)).toEqual({ errors: 2, dropped: 0 });
+
+    const cursor = journal.cursor;
+    expect(cursor).toBe(3);
+    // Nothing new since: the tripwire must not keep re-reporting an error the
+    // agent has already been told about.
+    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 0, dropped: 0 });
+
+    fake.emitLog(jsError('again'));
+    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 1, dropped: 0 });
+  });
+
+  it('reports eviction inside the window, so a count is never silently low', () => {
+    fake.emitLog(jsError('the one that got away'));
+    const cursor = 0;
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES + 5; i++) fake.emitLog(consoleMsg(`m${i}`));
+
+    const counted = journal.countErrorsSince(cursor);
+    // The error fell off the end of the buffer. Reporting 0 with no further
+    // qualification would be exactly the silent all-clear this exists to stop.
+    expect(counted.errors).toBe(0);
+    expect(counted.dropped).toBeGreaterThan(0);
+  });
+
+  it('says nothing rather than zero when capture never started', () => {
+    const classic = new SessionJournal();
+    classic.attach(fakeBrowser({ bidi: false }).browser);
+    expect(classic.isCapturing).toBe(false);
+  });
+});
+
+describe('formatting the tripwire', () => {
+  it('states a clean result rather than staying silent', () => {
+    expect(formatLogTripwire({ errors: 0, logCursor: 8 })).toBe('errors: 0 (logCursor 8)');
+  });
+
+  it('names the count, the cursor, and any hole in it', () => {
+    expect(formatLogTripwire({ errors: 2, logCursor: 8 })).toBe('errors: 2 (logCursor 8)');
+    expect(formatLogTripwire({ errors: 2, logCursor: 8, logsDropped: 30 })).toContain(
+      '30 entries evicted',
+    );
   });
 });

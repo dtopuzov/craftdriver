@@ -105,6 +105,47 @@ export interface JournalPage {
   truncated: boolean;
 }
 
+/**
+ * The error tripwire carried by an observation.
+ *
+ * An action can make the application throw while changing nothing an a11y
+ * snapshot can see, and the observation then reported `(no a11y changes)` —
+ * which reads as "all clear". The alternative was for an agent to spend a
+ * `logs` call after every single action, doubling the round trips batching
+ * exists to remove. This is the cheap middle: not the log contents, just
+ * enough to decide whether reading them is worth a call, and the cursor that
+ * reads exactly the window counted.
+ */
+export interface LogTripwire {
+  /**
+   * Errors since the previous observation — uncaught exceptions and
+   * `console.error` alike, matching what `logs --kind error` returns.
+   */
+  errors: number;
+  /** Pass as `--since` (CLI) or `since` (MCP) to read that same window. */
+  logCursor: number;
+  /**
+   * Entries evicted inside the window, which makes `errors` a lower bound.
+   * Absent — not zero — in the ordinary case where nothing was lost.
+   */
+  logsDropped?: number;
+}
+
+/**
+ * One line for the surfaces that render text rather than JSON.
+ *
+ * Emitted even when the count is zero: the hole this closes is an observation
+ * that *implied* all-clear by saying nothing, so silence is exactly the answer
+ * to avoid.
+ */
+export function formatLogTripwire(logs: LogTripwire): string {
+  const dropped =
+    logs.logsDropped !== undefined
+      ? `; ${logs.logsDropped} entries evicted, so this is a lower bound`
+      : '';
+  return `errors: ${logs.errors} (logCursor ${logs.logCursor}${dropped})`;
+}
+
 function truncate(text: string): string {
   if (text.length <= MAX_ENTRY_TEXT) return text;
   return `${text.slice(0, MAX_ENTRY_TEXT)}… (${text.length - MAX_ENTRY_TEXT} more chars)`;
@@ -309,6 +350,32 @@ export class SessionJournal {
       this.droppedTotal++;
       this.highestDroppedSeq = gone.seq;
     }
+  }
+
+  /** Highest `seq` issued so far — the value a reader passes back as `since`. */
+  get cursor(): number {
+    return this.nextSeq - 1;
+  }
+
+  /**
+   * Count errors after `since`, without materialising them.
+   *
+   * Counting rather than querying is the point: this runs after every observed
+   * action, and the caller has explicitly not asked for the entries. `dropped`
+   * is reported for the same reason eviction is reported everywhere else here
+   * — "no errors" and "the errors fell off the end of the buffer" must not
+   * look alike.
+   */
+  countErrorsSince(since = 0): { errors: number; dropped: number } {
+    const q: JournalQuery = { since, kinds: ['error'] };
+    let errors = 0;
+    for (const entry of this.entries) {
+      if (matchesQuery(entry, q)) errors++;
+    }
+    return {
+      errors,
+      dropped: this.highestDroppedSeq > since ? this.highestDroppedSeq - since : 0,
+    };
   }
 
   query(q: JournalQuery = {}): JournalPage {
