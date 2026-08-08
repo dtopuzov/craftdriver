@@ -100,6 +100,11 @@ next selector comes from the previous step's delta, the flow crosses a
 navigation or a wizard step, an intermediate result decides whether to continue
 at all, or you need a fresh snapshot or ref.
 
+End the script with an `expect` step when there is an outcome worth checking —
+otherwise a batch can only tell you that every step ran, never that the
+application did the right thing. See
+[Assertions](#assertions--a-verdict-not-a-reading).
+
 The exit status is 0 when every step passed, and otherwise the status the first
 failing step would have produced on its own. A script that fails to parse exits
 2 before a daemon or browser is started. `run` needs the daemon, so it is
@@ -134,6 +139,13 @@ craftdriver text [selector] [--limit N]
 craftdriver attr <selector> <name>
 craftdriver value <selector>
 craftdriver is visible|enabled|checked <selector>
+
+craftdriver expect visible <selector>  # assert, with a verdict: exit 1 on
+                                       # failure. See "Assertions" below
+craftdriver expect text <selector> '<expected>'
+craftdriver expect text <selector> --contains '<substring>'
+craftdriver expect url '<expected>' | craftdriver expect url --contains '<substring>'
+craftdriver expect no-errors [--since N]
 
 craftdriver wait <selector> [--state visible|hidden|attached|detached] [--timeout ms]
 craftdriver wait load [--state load|domcontentloaded|networkidle]
@@ -257,6 +269,68 @@ or `value` reads is usually the smallest evidence path. Use `--observe=delta`
 when the next action depends on discovering what changed.
 
 Run `craftdriver --help` for the full list.
+
+## Assertions — a verdict, not a reading
+
+`find`, `exists`, `text` and `is` are **reads**: they answer, exit 0 whatever
+the answer is, and leave the judgement to you. `is visible '#gone'` reporting
+`{"result":false}` is a successful command.
+
+`expect` is the other half — the same auto-waiting the library's matchers do,
+but it **fails**: exit 1, an `EXPECT_MISMATCH`, and a message that names the
+selector, what was expected and what was actually there.
+
+```bash
+npx craftdriver expect visible 'testid=welcome'
+npx craftdriver expect text 'testid=welcome' --contains 'Welcome'
+npx craftdriver expect url --contains '/dashboard'
+npx craftdriver expect no-errors
+```
+
+Pass the expected value as an argument for an exact match, or `--contains` for
+a substring — one or the other, never both. `visible`, `text` and `url` poll
+until the deadline (`--timeout`, default 5 s), so there is no need to `wait`
+first.
+
+Failures are diagnosed rather than merely reported, because "the selector is
+wrong" and "the element is behind a modal" need different next moves:
+
+```bash
+$ npx craftdriver expect visible '#display-none-self'
+error: expected #display-none-self to be visible, but it is hidden after 5000ms (1 element matches, none displayed)
+code:  EXPECT_MISMATCH
+hint:  The element exists but never became visible — open the view containing it (modal, accordion, tab) first.
+
+$ npx craftdriver expect visible '#dispaly-none-self'
+error: expected #dispaly-none-self to be visible, but nothing matched it within 5000ms
+code:  EXPECT_MISMATCH
+hint:  The selector matched zero elements. Check it against `snapshot`, or use testid= / role= for a durable one.
+```
+
+`expect no-errors` fails if the page logged any error — uncaught exceptions and
+`console.error` alike — and quotes the first few, so the verdict is actionable
+without a follow-up `logs` call. It counts from the start of the session;
+narrow it to one window with `--since N`, using the `logCursor` an observation
+already gave you. Unlike the other three it does not poll: waiting for the
+*absence* of an error could only ever burn the whole timeout, so it reports
+what has been captured when it runs. Use `logs wait` to wait for a specific
+message. On a session that cannot capture logs at all it fails with
+`STATE_INVALID` rather than passing — "nobody was listening" must not read as
+"nothing happened".
+
+**This is what makes a batch able to check its outcome.** Without an assertion
+step, `craftdriver run` can report that all four steps executed and nothing
+about whether the application did the right thing. A failed `expect` stops the
+steps after it, so the run does not continue against a page that is already
+wrong:
+
+```bash
+cat <<'EOF' | npx craftdriver run --session shopper
+fill '#nickname' mitko
+click '#save'
+expect text '#log' --contains saved --observe=delta
+EOF
+```
 
 ## Selector syntax
 
@@ -536,6 +610,10 @@ code:  NO_MATCH
 | `0`  | success (or `exists` matched at least one element, or an `a11y` report)          |
 | `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero / failed `a11y --check` |
 | `2`  | usage error (missing argument, unknown command)                                  |
+
+A failed `expect` is the `1` row: `EXPECT_MISMATCH`. A malformed one — an
+unknown check, or an expected value given both ways — is the `2` row, and is
+rejected before a daemon or browser is started.
 
 ## Fail-fast defaults
 

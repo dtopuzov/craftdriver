@@ -137,6 +137,7 @@ command the CLI also has — there are no MCP-only browser semantics.
 | `browser_exists`        | **0-wait probe.** Returns `{exists, count}` in one roundtrip.       |
 | `browser_wait`          | Wait for a selector state or a load state.                          |
 | `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.   |
+| `browser_expect`        | **Assert with a verdict.** `visible`/`text`/`url`/`no-errors`.      |
 | `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.    |
 | `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref. |
 | `browser_a11y`          | **axe audit/check.** Findings carry actionable refs.                |
@@ -184,6 +185,21 @@ never heals, retries, or substitutes a selector.
 Batch only what is already known. Return and look whenever the next selector
 comes from the previous step's result, the flow crosses a navigation or a
 decision, or a fresh snapshot is needed.
+
+End a batch with `browser_expect` when there is an outcome worth checking.
+Without it a batch can report that every step *executed*, never that the
+result was the wanted one — and a failed assertion stops the steps after it,
+so the run does not continue against a page that is already wrong.
+
+```jsonc
+{ "tool": "browser_expect", "arguments": { "what": "text", "selector": "#result", "contains": "Welcome" } }
+```
+
+`what=visible|text|url` auto-wait like every other craftdriver wait and fail
+with the selector, the expected value, and what was actually there.
+`what=no-errors` fails if the page logged any error, which pairs with the
+`errors` counter in the observation envelope: the counter tells the agent
+whether to look, the assertion decides the run.
 
 This is deliberately not an arbitrary-code tool. Playwright's `browser_run_code`
 was renamed `browser_run_code_unsafe` after a remote-code-execution report,

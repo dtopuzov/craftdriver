@@ -459,6 +459,75 @@ describe('CLI command mapping', () => {
     });
   });
 
+  describe('expect', () => {
+    it('maps each check onto the dispatcher command', () => {
+      expect(parse('expect visible #welcome')).toMatchObject({
+        cmd: 'expect',
+        args: { what: 'visible', selector: '#welcome' },
+      });
+      expect(parse('expect text #welcome --contains Welcome').args).toMatchObject({
+        what: 'text',
+        selector: '#welcome',
+        contains: 'Welcome',
+      });
+      expect(parse('expect text #welcome Welcome').args).toMatchObject({
+        what: 'text',
+        selector: '#welcome',
+        expected: 'Welcome',
+      });
+      expect(parse('expect url --contains /dashboard').args).toMatchObject({
+        what: 'url',
+        contains: '/dashboard',
+      });
+      // No selector for url: the expected value is the first argument, and
+      // reading it as one would silently assert on the wrong thing.
+      expect(parse('expect url http://x.test/a').args).toMatchObject({
+        what: 'url',
+        expected: 'http://x.test/a',
+      });
+      expect(parse('expect url http://x.test/a').args.selector).toBeUndefined();
+      expect(parse('expect no-errors --since 4').args).toMatchObject({
+        what: 'no-errors',
+        since: 4,
+      });
+    });
+
+    it('accepts --observe, because a batch may only observe on its last step', () => {
+      expect(parse('expect visible #welcome --observe=delta').args.observe).toBe('delta');
+    });
+
+    it('rejects a check the surface does not have', () => {
+      expect(parse('expect')).toMatchObject({
+        cmd: '__usage_error__',
+        args: { message: 'expect: missing required argument' },
+      });
+      expect(parse('expect enabled #save')).toMatchObject({
+        cmd: '__usage_error__',
+        args: { message: 'expect: unknown action "enabled"' },
+      });
+    });
+
+    it('rejects an option that means nothing for the chosen check', () => {
+      expect(parse('expect visible #x --contains y')).toMatchObject({
+        cmd: '__usage_error__',
+        args: { message: '--contains is not valid for expect visible' },
+      });
+      expect(parse('expect no-errors --contains boom')).toMatchObject({ cmd: '__usage_error__' });
+      expect(parse('expect visible #x --since 3')).toMatchObject({ cmd: '__usage_error__' });
+      expect(parse('expect url --since 3')).toMatchObject({ cmd: '__usage_error__' });
+    });
+
+    it('requires the expected value to be quoted rather than absorbing the tail', () => {
+      // `fill` joins its trailing words; an assertion must not. An extra token
+      // folded into an expected value changes what is being asserted, and the
+      // failure then reads like a problem with the page.
+      const parsed = parse('expect text #log saved changes');
+      expect(parsed.cmd).toBe('__usage_error__');
+      expect(parsed.args.message).toBe('expect text: unexpected argument "changes"');
+      expect(parsed.args.usage).toContain("expect text <selector> '<expected>'");
+    });
+  });
+
   describe('upload', () => {
     it('collects positional files as a list', () => {
       const parsed = parse('upload #f a.txt b.txt');

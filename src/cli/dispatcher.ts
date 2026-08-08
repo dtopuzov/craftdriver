@@ -31,6 +31,14 @@ import {
 } from './snapshot.js';
 import type { A11yImpact, A11yOptions, A11yTarget, A11yViolation } from '../lib/a11y.js';
 import { locatorCandidates } from './locatorCandidates.js';
+import {
+  EXPECT_MODES,
+  expectNoErrors,
+  expectText,
+  expectUrl,
+  expectVisible,
+  type ExpectMatch,
+} from './expectVerdict.js';
 import type { SessionJournal, JournalKind } from './journal.js';
 import { artifactRoot, resolveArtifactPath } from './artifactPaths.js';
 import {
@@ -424,6 +432,41 @@ function parseKinds(args: Record<string, unknown> | undefined): JournalKind[] | 
     });
   }
   return kinds as JournalKind[];
+}
+
+/**
+ * The expected value for an `expect text` / `expect url`, and how to compare.
+ *
+ * Validated here as well as in `parseArgs`, because a socket peer or an MCP
+ * client reaches the dispatcher without ever passing through the CLI's own
+ * argument table. Requiring exactly one spelling rules out the reading where
+ * `--contains` silently wins over a positional the caller also typed.
+ */
+function expectMatchOf(args: Record<string, unknown> | undefined, what: string): ExpectMatch {
+  // Read raw rather than through `optStr`, which folds `''` into "absent":
+  // `expect text '#log' ''` — assert the field is empty — is a real check.
+  const raw = args?.expected;
+  const exact = typeof raw === 'string' ? raw : undefined;
+  const contains = optStr(args, 'contains');
+  if (typeof args?.contains === 'string' && contains === undefined) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `expect ${what}: --contains needs a substring; every value contains ""`
+    );
+  }
+  if (exact !== undefined && contains !== undefined) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `expect ${what}: give an expected value or --contains, not both`
+    );
+  }
+  if (contains !== undefined) return { kind: 'contains', value: contains };
+  if (exact !== undefined) return { kind: 'exact', value: exact };
+  throw new CraftdriverError(
+    ErrorCode.INVALID_ARGUMENT,
+    `expect ${what}: missing the expected value`,
+    { hint: `pass it as an argument for an exact match, or --contains for a substring` }
+  );
 }
 
 export interface DispatchContext {
@@ -1245,6 +1288,39 @@ export async function dispatch(
             `is: unknown state "${what}". Expected: visible | enabled | checked`
           );
       }
+    }
+
+    // ---- assertions ------------------------------------------------------
+    // `is` and `exists` are reads: they answer, and the caller decides what
+    // that means. `expect` returns a verdict — it fails the command, and so
+    // stops a batch at the step whose outcome was wrong.
+    case 'expect': {
+      const what = str(args, 'what');
+      if (what === 'no-errors') {
+        // Launch on demand, like `logs`: asking whether the page errored
+        // before anything else should start capture, not report an empty
+        // history — and the barrier below needs a live connection anyway.
+        const b = await ctx.handle.get();
+        return expectNoErrors(b, ctx.journal, int(args, 'since', 0));
+      }
+      const timeout = ms(args);
+      if (what === 'url') {
+        const b = await ctx.handle.get();
+        return expectUrl(b, expectMatchOf(args, what), timeout);
+      }
+      if (what === 'visible' || what === 'text') {
+        const by = await selectorOf(ctx, args);
+        // Read the match before launching: a call missing both `--contains`
+        // and its expected value is a usage error, not a browser launch.
+        const match = what === 'text' ? expectMatchOf(args, what) : undefined;
+        const b = await ctx.handle.get();
+        const target = { by, selector: publicSelectorOf(args), timeout };
+        return what === 'visible' ? expectVisible(b, target) : expectText(b, target, match!);
+      }
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `expect: unknown check "${what}". Expected: ${EXPECT_MODES.join(' | ')}`
+      );
     }
 
     // ---- wait ------------------------------------------------------------

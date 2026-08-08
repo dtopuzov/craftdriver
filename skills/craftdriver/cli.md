@@ -81,6 +81,10 @@ text [selector] [--limit N]
 attr <selector> <name>
 value <selector>
 is visible|enabled|checked <selector>
+expect visible <selector>
+expect text <selector> '<expected>' | expect text <selector> --contains '<sub>'
+expect url '<expected>' | expect url --contains '<sub>'
+expect no-errors [--since N]
 wait <selector> [--state visible|hidden|attached|detached] [--timeout ms]
 wait load [--state load|domcontentloaded|networkidle]
 pages
@@ -138,6 +142,44 @@ Exit status is 0 when every step passed, otherwise the status the first failing
 step would have produced alone. A script that fails to parse exits 2 before
 anything is started. `run` needs the daemon, so on Windows use the MCP
 `browser_batch` tool instead.
+
+## Check the outcome, not just the steps
+
+`find`, `exists`, `text` and `is` are reads: they answer and exit 0 whatever
+the answer is. `expect` returns a verdict — it auto-waits and then *fails*,
+exit 1, with the selector, the expected value and what was actually there.
+
+```bash
+npx craftdriver expect visible 'testid=welcome'
+npx craftdriver expect text 'testid=welcome' --contains 'Welcome'
+npx craftdriver expect url --contains '/dashboard'
+npx craftdriver expect no-errors
+```
+
+Give the expected value as an argument for an exact match or `--contains` for a
+substring — one or the other. Failures are diagnosed: "nothing matched it"
+means fix the selector, "it is hidden" means open the modal, accordion or tab
+containing it first.
+
+**End a batch with an `expect` step whenever the flow has an outcome worth
+checking.** Without one a batch reports that every step executed, never that
+the application did the right thing — and a failed assertion stops the steps
+after it, so nothing runs on against a page that is already wrong.
+
+```bash
+npx craftdriver run --session shopper <<'EOF'
+fill '#nickname' mitko
+click '#save'
+expect text '#log' --contains saved --observe=delta
+EOF
+```
+
+`expect no-errors` fails if the page logged an error and quotes the first few,
+so it pairs with the `errors` counter in an observation: the counter says
+whether to look, the assertion decides the run. It counts from the start of the
+session — narrow it with `--since N` using a `logCursor` you already have — and
+it reads what has been captured rather than waiting, so use `logs wait` when
+you need to wait for a specific message.
 
 ## Named sessions
 

@@ -32,6 +32,7 @@ export default defineConfig({
       'tests/cli/agent-a11y.test.ts',
       'tests/cli/agent-batch.test.ts',
       'tests/cli/agent-actions.test.ts',
+      'tests/cli/agent-expect.test.ts',
       'tests/cli/agent-pages.test.ts',
       'tests/cli/agent-logs.test.ts',
       'tests/cli/agent-mock.test.ts',

@@ -327,6 +327,42 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'browser_expect',
+    // The counterpart to browser_read: a read answers, an expectation returns
+    // a verdict and *fails*. That is what lets a batch report the outcome was
+    // right rather than only that every step executed — so an assertion is
+    // usually the step a batch should end on.
+    description:
+      'Assert page state and FAIL if it does not hold — auto-waited, unlike the reads. ' +
+      'what=visible|text|url need a selector and/or expected|contains; what=no-errors fails ' +
+      'if the page logged errors. Prefer this over browser_read when you want a verdict, and ' +
+      'end a browser_batch with it to check the outcome rather than just the execution.',
+    params: {
+      what: { type: 'string', required: true, enum: ['visible', 'text', 'url', 'no-errors'] },
+      selector: { ...OPTIONAL_SELECTOR, description: `${SELECTOR.description} Required for visible/text.` },
+      expected: { type: 'string', description: 'Exact value, for what=text|url.' },
+      contains: { type: 'string', description: 'Substring instead of an exact value.' },
+      since: {
+        type: 'number',
+        min: 0,
+        description: 'what=no-errors: only count errors after this logCursor. Default: the whole session.',
+      },
+      timeout: TIMEOUT,
+    },
+    annotations: readOnly('Assert page state'),
+    toDispatch: (a) => ({
+      cmd: 'expect',
+      args: {
+        what: a.what,
+        ...(a.selector !== undefined ? { selector: a.selector } : {}),
+        ...(a.expected !== undefined ? { expected: a.expected } : {}),
+        ...(a.contains !== undefined ? { contains: a.contains } : {}),
+        ...(a.since !== undefined ? { since: a.since } : {}),
+        ...(a.timeout !== undefined ? { timeout: a.timeout } : {}),
+      },
+    }),
+  },
+  {
     name: 'browser_wait',
     description:
       'Wait for a selector to become visible/hidden/attached/detached, or for a load state ' +

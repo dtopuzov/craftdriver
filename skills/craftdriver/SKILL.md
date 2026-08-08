@@ -92,7 +92,8 @@ start before it touches the browser; five as a batch measured 0.54 s against
 npx craftdriver run <<'EOF'
 fill ref=e7 alice
 fill ref=e9 hunter2
-click ref=e11 --observe=delta
+click ref=e11
+expect text '#result' --contains 'Welcome' --observe=delta
 EOF
 ```
 
@@ -100,6 +101,11 @@ The batch stops at the first failed step and reports which one; each step
 reports its own `ok` and duration; `--observe` goes on the last step only,
 where `delta` accumulates what the earlier steps changed. Nothing is retried or
 substituted.
+
+End with an `expect` step when the flow has an outcome worth checking:
+`expect visible|text|url|no-errors` auto-wait and then *fail* (exit 1), where
+`find`/`exists`/`text`/`is` only report. Without one, a batch tells you every
+step ran — never that the application did the right thing.
 
 Stop batching — return and look — whenever the next selector comes from the
 previous step's delta, the flow crosses a navigation or a wizard step, an

@@ -225,7 +225,13 @@ export class AgentSession implements AgentSessionRunner {
 
     const result = this.tail.then(async (): Promise<AgentDetailedResult> => {
       const value = await this.dispatchOne(command);
-      if ((!this.autoSnapshot && !command.observe) || !isMutating(command.cmd)) return { value };
+      // An explicit `--observe` always observes; auto-snapshot still skips
+      // reads, which is what keeps a browsing loop from paying for a snapshot
+      // after every `text` or `exists`. The two were folded together while no
+      // non-mutating command accepted the flag — `expect` does, because a
+      // batch may only carry its one observation on the last step, and the
+      // step worth ending on is the one that asserts the outcome.
+      if (!command.observe && (!this.autoSnapshot || !isMutating(command.cmd))) return { value };
       const observation = await this.captureObservation();
       return observation ? { value, ...observation } : { value };
     });

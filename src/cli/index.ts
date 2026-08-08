@@ -813,6 +813,23 @@ function prettyResult(cmd: string, result: unknown): string {
     const body = blocks.length > 0 ? ['', blocks.join('\n\n')] : [];
     return [head, ...body, ...(trailer.length > 0 ? ['', ...trailer] : [])].join('\n');
   }
+  // Only the passing case reaches here — a failed expectation throws, and is
+  // rendered by the error path with its message, code and hint.
+  if (cmd === 'expect' && typeof r.matcher === 'string') {
+    if (r.matcher === 'no-errors') {
+      const dropped =
+        typeof r.logsDropped === 'number'
+          ? `; ${r.logsDropped} entries evicted, so this is a lower bound`
+          : '';
+      return `✓ no errors (logCursor ${r.logCursor as number}${dropped})`;
+    }
+    const comparison =
+      r.expected !== undefined
+        ? ` ${r.mode === 'contains' ? 'contains' : 'is'} "${r.expected as string}"`
+        : '';
+    const target = r.selector !== undefined ? ` ${r.selector as string}` : '';
+    return `✓ ${r.matcher as string}${target}${comparison}`;
+  }
   if (cmd === 'snapshot' && Array.isArray(r.lines)) {
     const header = `page: ${(r.title as string) || '(untitled)'} — ${(r.url as string) || '(no url)'}`;
     const lines = r.lines as string[];
