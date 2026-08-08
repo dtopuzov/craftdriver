@@ -50,6 +50,61 @@ own words ("Missing credentials") for what was really a broken selector. The
 stderr note says which step stopped it and how many were skipped. Pass
 `--continue-on-error` when the commands genuinely are independent probes.
 
+## One round trip for commands you already know
+
+Every CLI call is a separate OS process, and the process is most of the cost:
+measured on this machine against a warm daemon, five operations
+(`go` → `fill` → `check` → `select` → `click`) took **1.85 s as five
+invocations while the browser work inside them was 237 ms**. `craftdriver run`
+spends that process cost once — the same five steps take **0.54 s, a 3.4x
+improvement** — and, for an agent, collapses five turns into one.
+
+```bash
+cat <<'EOF' | npx craftdriver run --session shopper
+fill '#nickname' mitko
+check #newsletter
+select #plan pro
+click #save --observe=delta
+EOF
+```
+
+It is the `--ephemeral` script syntax against a live daemon session rather than
+a throwaway browser, so there is no second command language: the same
+selectors, the same flags, the same error codes.
+
+```json
+{"ok":true,"result":{"ok":true,"ran":4,"skipped":0,
+  "steps":[{"index":0,"cmd":"fill","ok":true,"durationMs":71,"result":{"ok":true,"selector":"#nickname"}},
+           {"index":1,"cmd":"check","ok":true,"durationMs":59,"result":{"ok":true,"checked":true}},
+           {"index":2,"cmd":"select","ok":true,"durationMs":14,"result":{"ok":true,"value":"pro"}},
+           {"index":3,"cmd":"click","ok":true,"durationMs":42,"result":{"ok":true}}],
+  "delta":"…"}}
+```
+
+What a batch guarantees:
+
+- **One session queue slot.** Nothing else addressing that session runs between
+  the steps, so the page you reasoned about is the page the next step acts on.
+- **It stops at the first failure**, reporting `failedStep` and `skipped`.
+  `--continue-on-error` opts out, for independent probes.
+- **Per-step `ok` and `durationMs`**, never a single collapsed "it worked".
+- **One observation, not one per step.** Put `--observe` on the last step;
+  `--observe=delta` there accumulates what the earlier steps changed. It is
+  refused on any other step.
+- **A failed step carries its `recoverySnapshot`** when the error had one.
+- **No healing, no retry, no substituted selector** — ever. A batch executes
+  what you wrote and reports what happened.
+
+Batch only what you already know. Return and look between steps whenever the
+next selector comes from the previous step's delta, the flow crosses a
+navigation or a wizard step, an intermediate result decides whether to continue
+at all, or you need a fresh snapshot or ref.
+
+The exit status is 0 when every step passed, and otherwise the status the first
+failing step would have produced on its own. A script that fails to parse exits
+2 before a daemon or browser is started. `run` needs the daemon, so it is
+unavailable on Windows — use the MCP `browser_batch` tool there.
+
 ## Commands
 
 ```
@@ -121,6 +176,7 @@ craftdriver daemon start|status|stop
 craftdriver session list               # open sessions and the limit
 craftdriver session close [name]       # quit one session's browser
 
+craftdriver run < script.txt           # several known commands, one round trip
 craftdriver init [--agent claude|codex|copilot|all] [--dry-run] [--mcp]
 craftdriver mcp                        # speak MCP on stdio
 ```
@@ -132,7 +188,7 @@ That is every command. Global flags are:
 --headless | --headed                      override the default
 --session <name>                           route to a named browser
 --ephemeral                                one browser for one script on stdin
---continue-on-error                        ephemeral: run on past a failed line
+--continue-on-error                        run/ephemeral: go on past a failed step
 --timeout <ms>                             per-command wait (default 5000)
 --json | --pretty                          force output format
 --help | --version

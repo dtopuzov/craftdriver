@@ -108,6 +108,7 @@ COMMON COMMANDS
   state list                        saved state names
   screenshot [-o file.png] [--full-page] [--selector S]
   eval <js> [--observe page|delta]  advanced; evaluate JS on active page
+  run < script.txt                  several known commands, one round trip
   back | forward | reload | status | quit
 
 KEYBOARD / MOUSE / DIALOGS / UPLOAD
@@ -162,6 +163,22 @@ MCP SERVER (for hosted / sandboxed AI agents)
       { "mcpServers": { "craftdriver": {
           "command": "npx", "args": ["--no-install", "craftdriver", "mcp"] } } }
 
+BATCH (one round trip for commands you already know)
+  craftdriver run < script.txt      run the script against the daemon session
+  craftdriver run --session shopper < script.txt
+
+  Same one-command-per-line syntax as --ephemeral, against a live session
+  instead of a throwaway browser. The whole batch takes one session slot, so
+  nothing interleaves; it stops at the first failed step and reports which one
+  and how many were skipped; each step reports its own ok and duration; and
+  the batch returns one observation, not one per step — put --observe on the
+  last step, where =delta accumulates what the earlier steps changed.
+
+  Batch only what you already know. Return and look whenever the next selector
+  comes from the previous step, the flow crosses a navigation or a decision,
+  or you need a fresh snapshot. A batch never heals, retries or substitutes a
+  selector.
+
 EPHEMERAL MODE (sandboxed agents)
   craftdriver --ephemeral < script.txt
   (one command per line; same syntax as on the CLI)
@@ -181,7 +198,7 @@ FLAGS
   --viewport <width>x<height>       override the 1280x800 agent viewport for go
   --session <name>                  named daemon session (default: default)
   --ephemeral                       no daemon; read commands from stdin
-  --continue-on-error               ephemeral: run on past a failed line
+  --continue-on-error               run/ephemeral: go on past a failed step
 
 EXIT CODES
   0 success    1 assertion/timeout/no-match    2 usage error
@@ -362,6 +379,7 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
     options: ['agent', 'dry-run', 'mcp', 'force'],
   },
   mcp: { min: 0, max: 0, usage: 'mcp' },
+  run: { min: 0, max: 0, usage: 'run < script.txt' },
 };
 
 /**
@@ -1229,6 +1247,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
 
     case 'mcp':
       return { cmd: 'mcp', args: { ...opts }, flags };
+
+    case 'run':
+      // craftdriver run < script.txt — the script itself arrives on stdin,
+      // one command per line, in the syntax the rest of this parser accepts.
+      return { cmd: 'run', args: { ...opts }, flags };
 
     default:
       return { cmd: '__unknown__', args: { cmd: cmd0 }, flags };

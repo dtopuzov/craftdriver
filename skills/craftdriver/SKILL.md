@@ -75,6 +75,31 @@ For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
 first.
 
+## Spend one call, not one per command
+
+When every selector and action is already known, send them as one batch instead
+of one command per turn. Each separate invocation costs ~300 ms of process
+start before it touches the browser; five as a batch measured 0.54 s against
+1.85 s.
+
+```bash
+npx craftdriver run <<'EOF'
+fill ref=e7 alice
+fill ref=e9 hunter2
+click ref=e11 --observe=delta
+EOF
+```
+
+The batch stops at the first failed step and reports which one; each step
+reports its own `ok` and duration; `--observe` goes on the last step only,
+where `delta` accumulates what the earlier steps changed. Nothing is retried or
+substituted.
+
+Stop batching — return and look — whenever the next selector comes from the
+previous step's delta, the flow crosses a navigation or a wizard step, an
+intermediate result decides whether to continue at all, or a fresh snapshot or
+ref is needed. Add `--session NAME` on the `run` command, never on a step.
+
 ## Writing or debugging committed tests
 
 Only when the request asks for test source, inspect the repository's existing

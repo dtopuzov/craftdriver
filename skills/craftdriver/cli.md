@@ -84,6 +84,7 @@ a11y [selector] [--min-impact minor|moderate|serious|critical]
      [--check]
 screenshot [-o out.png] [--full-page] [--selector selector]
 eval <javascript> [--observe=page|delta]
+run < script.txt   (one command per line; see "Batching known commands")
 back | forward | reload | status | quit
 daemon start | status | stop
 session list | close [name]
@@ -94,6 +95,41 @@ mock add <pattern> [--status N] [--body S] | block <pattern>
      | list | remove <id> | clear
 trace start [name] [--no-screenshots] | stop [--zip] | status
 ```
+
+## Batching known commands
+
+`run` sends a whole script of already-known commands to the live session in one
+process, one round trip. Measured on a five-step flow: 1.85 s as five
+invocations, 0.54 s as one batch, with 237 ms of that actual browser work.
+
+```bash
+npx craftdriver run --session shopper <<'EOF'
+fill '#nickname' mitko
+check #newsletter
+select #plan pro
+click #save --observe=delta
+EOF
+```
+
+Same script syntax as `--ephemeral`, against the daemon session rather than a
+throwaway browser. The batch is one session queue slot, so nothing interleaves.
+It stops at the first failed step and reports `failedStep` and `skipped`; pass
+`--continue-on-error` only for genuinely independent probes. Every step returns
+its own `ok`, `durationMs` and result. It returns one observation, not one per
+step: put `--observe` on the last step — it is refused anywhere else — and
+`--observe=delta` there accumulates what the earlier steps changed. A failed
+step keeps its `recoverySnapshot`. Nothing is ever retried, healed, or
+substituted.
+
+Batch only what is already known. Return and look between steps whenever the
+next selector comes from the previous step's delta, the flow crosses a
+navigation or a wizard step, an intermediate result decides whether to continue,
+or a fresh snapshot or ref is needed.
+
+Exit status is 0 when every step passed, otherwise the status the first failing
+step would have produced alone. A script that fails to parse exits 2 before
+anything is started. `run` needs the daemon, so on Windows use the MCP
+`browser_batch` tool instead.
 
 ## Named sessions
 

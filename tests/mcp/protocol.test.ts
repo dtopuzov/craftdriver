@@ -45,6 +45,7 @@ function fakeSession(): AgentSessionRunner {
     // The real session captures the post-action snapshot inside the same
     // operation; a fake with no browser simply has no delta to report.
     runDetailed: vi.fn(async (command) => ({ value: await run(command) })),
+    runBatch: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -130,6 +131,7 @@ describe('MCP wire characterization', () => {
     const session: AgentSessionRunner = {
       run: vi.fn(async (command) => (await runDetailed(command)).value),
       runDetailed,
+      runBatch: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
     };
     const running = runMcpServer({
@@ -244,6 +246,7 @@ describe('MCP wire characterization', () => {
     const session: AgentSessionRunner = {
       run: vi.fn(async (command) => (await runDetailed(command)).value),
       runDetailed,
+      runBatch: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
     };
     const running = runMcpServer({
@@ -379,5 +382,120 @@ describe('MCP wire characterization', () => {
     input.end('\n' + JSON.stringify({ jsonrpc: '2.0', id: 10, method: 'ping' }) + '\n');
     await running;
     expect(captured.lines().at(-1)).toEqual({ jsonrpc: '2.0', id: 10, result: {} });
+  });
+});
+
+describe('browser_batch on the wire', () => {
+  function batchSession(outcome: unknown) {
+    const runBatch = vi.fn().mockResolvedValue(outcome);
+    return {
+      session: {
+        run: vi.fn(),
+        runDetailed: vi.fn(),
+        runBatch,
+        close: vi.fn().mockResolvedValue(undefined),
+      } as AgentSessionRunner,
+      runBatch,
+    };
+  }
+
+  async function call(session: AgentSessionRunner, args: unknown) {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const captured = collectOutput(output);
+    const running = runMcpServer({
+      launch: {},
+      input,
+      output,
+      snapshot: 'none',
+      sessionFactory: () => session,
+      signalSource: new EventEmitter(),
+    });
+    input.end(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'browser_batch', arguments: args },
+    }) + '\n');
+    await running;
+    return captured.lines()[0];
+  }
+
+  it('compiles steps through the tools they name and runs them in one batch', async () => {
+    const outcome = {
+      ok: true,
+      ran: 2,
+      skipped: 0,
+      steps: [
+        { index: 0, cmd: 'go', ok: true, durationMs: 49 },
+        { index: 1, cmd: 'fill', ok: true, durationMs: 80 },
+      ],
+      delta: '+ e12: textbox "Nickname" value="alice"',
+    };
+    const { session, runBatch } = batchSession(outcome);
+
+    const message = await call(session, {
+      steps: [
+        { tool: 'browser_navigate', arguments: { url: 'https://example.com' } },
+        { tool: 'browser_fill', arguments: { selector: 'ref=e4', value: 'alice' } },
+      ],
+      observe: 'delta',
+    });
+
+    // One call, not two: this is the round trip the tool exists to collapse.
+    expect(runBatch).toHaveBeenCalledTimes(1);
+    expect(runBatch.mock.calls[0][0]).toMatchObject({
+      observe: 'delta',
+      steps: [
+        { cmd: 'go', args: { url: 'https://example.com' } },
+        { cmd: 'fill', args: { selector: 'ref=e4', value: 'alice' } },
+      ],
+    });
+    expect(message.result?.structuredContent).toMatchObject({ result: outcome });
+    expect(message.result?.content?.[0]?.text).toContain('1 ✓ go  49ms');
+    expect(message.result?.isError).toBeUndefined();
+  });
+
+  it('marks a batch with a failed step as an error, keeping the steps that ran', async () => {
+    const outcome = {
+      ok: false,
+      ran: 1,
+      skipped: 1,
+      failedStep: 0,
+      steps: [
+        { index: 0, cmd: 'click', ok: false, durationMs: 4980, error: { code: 'TIMEOUT', message: 'nope' } },
+      ],
+    };
+    const { session } = batchSession(outcome);
+
+    const message = await call(session, {
+      steps: [{ tool: 'browser_click', arguments: { selector: '#pay' } }],
+    });
+
+    expect(message.result?.isError).toBe(true);
+    expect(message.result?.structuredContent).toMatchObject({ result: { failedStep: 0 } });
+  });
+
+  it.each([
+    ['an unknown tool', { steps: [{ tool: 'browser_teleport', arguments: {} }] }, /unknown tool/],
+    [
+      'arguments the named tool refuses',
+      { steps: [{ tool: 'browser_fill', arguments: { selector: '#a' } }] },
+      /missing required argument "value"/,
+    ],
+    [
+      'a batch inside a batch',
+      { steps: [{ tool: 'browser_batch', arguments: { steps: [] } }] },
+      /cannot be used as a batch step/,
+    ],
+    ['an empty batch', { steps: [] }, /no steps to run/],
+  ])('refuses %s before touching the session', async (_label, args, expected) => {
+    const { session, runBatch } = batchSession({});
+
+    const message = await call(session, args);
+
+    expect(runBatch).not.toHaveBeenCalled();
+    expect(message.error?.code).toBe(-32602);
+    expect(message.error?.message).toMatch(expected);
   });
 });

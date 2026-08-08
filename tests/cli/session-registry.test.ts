@@ -28,6 +28,7 @@ function fakeSession(): AgentSessionRunner & { name?: string } {
   return {
     run: vi.fn(async (command) => ({ cmd: command.cmd, args: command.args ?? {} })),
     runDetailed: vi.fn(async (command) => ({ value: { cmd: command.cmd, args: command.args ?? {} } })),
+    runBatch: vi.fn(),
     close: vi.fn().mockResolvedValue(undefined),
   };
 }

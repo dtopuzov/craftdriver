@@ -17,6 +17,13 @@ import { dirname, resolve } from 'path';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { AgentSession, type AgentSessionRunner } from './agentSession.js';
 import { parseArgv, HELP_TEXT, type ParsedCommand, type GlobalFlags } from './parseArgs.js';
+import { compileScript, formatParseFailure } from './script.js';
+import {
+  renderBatchOutcome,
+  type BatchOutcome,
+  type BatchStep,
+  MAX_BATCH_STEPS,
+} from './batch.js';
 import { DaemonClient } from './client.js';
 import { runDaemon, toWireError, renderObservedResult } from './daemon.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
@@ -153,9 +160,19 @@ export async function main(argv: string[]): Promise<number> {
   if (parsed.flags.ephemeral) return runEphemeral(parsed);
 
   // ------------------------------------------------------------------
-  // Single command via daemon. Auto-start if needed.
+  // Batch or single command via daemon. Auto-start if needed.
   // ------------------------------------------------------------------
   if (!daemonSupported()) return unsupportedDaemon();
+
+  // Compile before the daemon starts: a script with a typo on line 7 should
+  // cost neither a daemon nor a browser.
+  let batch: BatchStep[] | null = null;
+  if (parsed.cmd === 'run') {
+    const compiled = await compileBatch();
+    if (typeof compiled === 'number') return compiled;
+    batch = compiled;
+  }
+
   if (!(await DaemonClient.isRunning())) {
     const ok = await autoStartDaemon(parsed.flags);
     if (!ok) {
@@ -165,6 +182,8 @@ export async function main(argv: string[]): Promise<number> {
       return 1;
     }
   }
+
+  if (batch) return runBatchCommand(parsed, session, batch);
 
   const client = new DaemonClient({ session });
   try {
@@ -179,32 +198,6 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 const SESSION_SUBCOMMANDS = new Set(['session:list', 'session:close']);
-
-/** Render parser pseudo-commands consistently in one-shot and stdin modes. */
-function formatParseFailure(parsed: ParsedCommand, line?: string): string | null {
-  const context = line ? ` in: ${line}` : '';
-  if (parsed.cmd === '__unknown__') {
-    return `error: unknown command "${parsed.args.cmd as string}"${context}\nrun: craftdriver --help\n`;
-  }
-  if (parsed.cmd === '__unknown_flag__') {
-    const flag = parsed.args.flag as string;
-    const suggestion = parsed.args.suggestion as string | undefined;
-    return (
-      `error: unknown flag "${flag}"${context}\n` +
-      (suggestion ? `did you mean: ${suggestion}\n` : '') +
-      'run: craftdriver --help\n'
-    );
-  }
-  if (parsed.cmd === '__usage_error__') {
-    const usage = parsed.args.usage as string | undefined;
-    return (
-      `error: ${parsed.args.message as string}${context}\n` +
-      (usage ? `usage: ${usage}\n` : '') +
-      'run: craftdriver --help\n'
-    );
-  }
-  return null;
-}
 
 /**
  * Reject session usage the daemon cannot honour, before it is attempted.
@@ -225,11 +218,22 @@ function checkSessionUsage(parsed: ParsedCommand): number {
   }
   // A single daemon command has nothing to continue past. Accepting the flag
   // there would read as "keep going on failure" while changing nothing.
-  if (!parsed.flags.ephemeral && parsed.flags.continueOnError) {
+  if (!parsed.flags.ephemeral && parsed.cmd !== 'run' && parsed.flags.continueOnError) {
     process.stderr.write(
-      'error: --continue-on-error applies to an --ephemeral script\n' +
+      'error: --continue-on-error applies to a `run` batch or an --ephemeral script\n' +
         'code:  INVALID_ARGUMENT\n' +
         'hint:  a single command has no later steps to skip\n'
+    );
+    return 2;
+  }
+  // Both modes run a script; combining them asks for a live session and a
+  // throwaway browser at once. `--ephemeral` alone already batches, in its
+  // own browser.
+  if (parsed.cmd === 'run' && parsed.flags.ephemeral) {
+    process.stderr.write(
+      'error: `run` executes against a daemon session and cannot be combined with --ephemeral\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  pipe the same script to `craftdriver --ephemeral` for a throwaway browser\n'
     );
     return 2;
   }
@@ -280,51 +284,18 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
       // Reading stdin can fail on the size cap. Report it the way every other
       // CLI failure is reported rather than letting the rejection escape as an
       // unhandled stack trace from the bin shim's top-level await.
-      let lines: string;
+      let source: string;
       try {
-        lines = await readAllStdin();
+        source = await readAllStdin();
       } catch (e) {
         writeErr(toWireError(e));
         return 2;
       }
-      // Parse the whole script before running any of it. A typo on line 7
-      // used to be found only after lines 1-6 had already navigated and
-      // filled, leaving a half-driven browser behind for a fault that was
-      // knowable up front. Every syntax problem is reported, not just the
-      // first, so one pass fixes the script.
-      const steps: ParsedCommand[] = [];
-      let usageFailed = false;
-      for (const raw of lines.split('\n')) {
-        const line = raw.trim();
-        if (!line || line.startsWith('#')) continue;
-        const tokens = tokenize(line);
-        const sub = parseArgv(tokens);
-        if (!sub) continue;
-        // A malformed line must not pass silently. Skipping every `__…`
-        // pseudo-command meant `click #pay --forse` did nothing at all and the
-        // script still exited 0 — the same silent-typo failure strict flag
-        // parsing exists to prevent, just moved onto this path.
-        const parseFailure = formatParseFailure(sub, line);
-        if (parseFailure) {
-          process.stderr.write(parseFailure);
-          usageFailed = true;
-          continue;
-        }
-        const ignoredLaunchFlag = ephemeralLineLaunchFlag(sub.flags);
-        if (ignoredLaunchFlag) {
-          process.stderr.write(
-            `error: ${ignoredLaunchFlag} cannot be set inside an ephemeral script in: ${line}\n` +
-              `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`
-          );
-          usageFailed = true;
-          continue;
-        }
-        if (sub.cmd.startsWith('__')) continue;
-        steps.push(sub);
-      }
+      const { steps, errors } = compileScript(source, { mode: 'ephemeral' });
+      for (const error of errors) process.stderr.write(error);
       // Nothing has touched the browser yet — the session launches lazily on
       // the first dispatch — so a rejected script costs no launch at all.
-      if (usageFailed) return 2;
+      if (errors.length > 0) return 2;
 
       for (const [index, sub] of steps.entries()) {
         const result = await safeDispatch(session, sub);
@@ -358,15 +329,90 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
   return rc;
 }
 
-/** Launch/session choices apply to the script's one browser, not one line. */
-function ephemeralLineLaunchFlag(flags: GlobalFlags): string | null {
-  if (flags.session !== undefined) return '--session';
-  if (flags.ephemeral) return '--ephemeral';
-  if (flags.continueOnError) return '--continue-on-error';
-  if (flags.headless === true) return '--headless';
-  if (flags.headless === false) return '--headed';
-  if (flags.launch.browserName !== undefined) return '--browser';
-  return null;
+// ---------------------------------------------------------------------------
+// Batch mode — `craftdriver run`
+// ---------------------------------------------------------------------------
+/**
+ * Compile the stdin script into steps, or return the exit code to stop with.
+ *
+ * Separate from sending it so the whole script is known good before anything
+ * starts a daemon: five operations against a warm daemon cost 2.05 s as five
+ * invocations and ~0.45 s as one batch, and none of that saving is worth
+ * spending on a script that was never going to run.
+ */
+async function compileBatch(): Promise<BatchStep[] | number> {
+  let source: string;
+  try {
+    source = await readAllStdin();
+  } catch (e) {
+    writeErr(toWireError(e));
+    return 2;
+  }
+  const { steps, errors } = compileScript(source, { mode: 'batch' });
+  for (const error of errors) process.stderr.write(error);
+  if (errors.length > 0) return 2;
+  if (steps.length === 0) {
+    process.stderr.write(
+      'error: run: no commands on stdin\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  pipe one command per line: `craftdriver run < script.txt`\n'
+    );
+    return 2;
+  }
+  if (steps.length > MAX_BATCH_STEPS) {
+    process.stderr.write(
+      `error: run: too many steps (${steps.length}; max ${MAX_BATCH_STEPS})\n` +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  split the flow, and look at the page between the halves\n'
+    );
+    return 2;
+  }
+  return steps.map((step) => ({ cmd: step.cmd, args: step.args }));
+}
+
+async function runBatchCommand(
+  parsed: ParsedCommand,
+  session: string,
+  steps: BatchStep[]
+): Promise<number> {
+  // The observation belongs to the batch, not to the step that happened to
+  // ask for it — `compileScript` has already refused it anywhere but last.
+  const last = steps[steps.length - 1];
+  const observe = last.args.observe;
+  const request = {
+    steps: steps.map((step) => {
+      const { observe: _dropped, ...args } = step.args;
+      return { cmd: step.cmd, args };
+    }),
+    ...(parsed.flags.continueOnError ? { continueOnError: true } : {}),
+    ...(observe === 'page' || observe === 'delta' ? { observe } : {}),
+  };
+
+  const client = new DaemonClient({ session });
+  let resp;
+  try {
+    resp = await client.send('batch', request);
+  } catch (e) {
+    process.stderr.write('error: ' + ((e as Error).message ?? String(e)) + '\ncode:  DRIVER_ERROR\n');
+    return 1;
+  }
+  if (!resp.ok) {
+    writeErr(resp.error);
+    return exitCodeFor(resp.error.code);
+  }
+
+  const outcome = resp.result as BatchOutcome;
+  if (shouldJson(parsed)) {
+    process.stdout.write(JSON.stringify({ ok: outcome.ok, result: outcome }) + '\n');
+  } else {
+    process.stdout.write(renderBatchOutcome(outcome) + '\n');
+  }
+  if (outcome.ok) return 0;
+  // The transport succeeded; a step did not. Report the first failure's code
+  // the way the same command would report it on its own, so a batch and a
+  // single command cannot disagree about what a NO_MATCH is worth.
+  const failed = outcome.steps.find((step) => !step.ok);
+  return failed?.error ? exitCodeFor(failed.error.code) : 1;
 }
 
 interface DispatchOutcome {
@@ -807,39 +853,8 @@ function formatWcag(tags: string[]): string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function tokenize(line: string): string[] {
-  // Minimal shell-like tokeniser: supports single/double quotes.
-  const out: string[] = [];
-  let cur = '';
-  let quote: string | null = null;
-  for (const ch of line) {
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-        continue;
-      }
-      cur += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === ' ' || ch === '\t') {
-      if (cur) {
-        out.push(cur);
-        cur = '';
-      }
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
 /**
- * Read the whole ephemeral script from stdin, bounded.
+ * Read the whole script from stdin, bounded.
  *
  * It is accumulated in memory before the first command runs, so an unbounded
  * pipe could exhaust the process before it did any work. The cap is far above

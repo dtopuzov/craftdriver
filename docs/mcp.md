@@ -147,12 +147,50 @@ command the CLI also has — there are no MCP-only browser semantics.
 | `browser_trace`         | Record a run to an owned directory; `zip` for a Vibium archive.     |
 | `browser_screenshot`    | Capture PNG to a file under the artifact dir; never inlined.        |
 | `browser_status`        | Browser up? Which URL is active?                                    |
+| `browser_batch`         | **Several known tool calls in one round trip.** See below.          |
 | `browser_advanced_eval` | Evaluate JS in the page. Last resort.                               |
 
 Each tool carries MCP `annotations` — `title`, `readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint` — and they are accurate:
 a tool marked read-only never dispatches a command the dispatcher treats as
 page-mutating, which is asserted by test rather than by review.
+
+### One turn, several known calls
+
+Every MCP tool call is one agent turn, and there is no shell to chain in.
+`browser_batch` runs several calls you already know against the same session
+in one turn. A step is an ordinary tool name and its ordinary arguments — the
+batch introduces no second argument language, and each step is validated
+against the schema its own tool advertises.
+
+```jsonc
+{ "name": "browser_batch", "arguments": {
+  "steps": [
+    { "tool": "browser_fill",  "arguments": { "selector": "ref=e4", "value": "alice" } },
+    { "tool": "browser_fill",  "arguments": { "selector": "ref=e6", "value": "hunter2" } },
+    { "tool": "browser_click", "arguments": { "selector": "ref=e7" } }
+  ],
+  "observe": "delta"
+} }
+```
+
+The batch runs in **one session queue slot**, so nothing interleaves; it
+**stops at the first failure** (`continue_on_error` opts out) and reports
+`failedStep` and `skipped`; every step reports its own `ok` and `durationMs`;
+it returns **one observation, not one per step**, with `delta` accumulating
+what every step changed; and a failed step keeps its `recoverySnapshot`. It
+never heals, retries, or substitutes a selector.
+
+Batch only what is already known. Return and look whenever the next selector
+comes from the previous step's result, the flow crosses a navigation or a
+decision, or a fresh snapshot is needed.
+
+This is deliberately not an arbitrary-code tool. Playwright's `browser_run_code`
+was renamed `browser_run_code_unsafe` after a remote-code-execution report,
+because it executes caller-supplied JavaScript in the server process.
+craftdriver has no equivalent surface: `browser_advanced_eval` runs in the
+page, not in the driver, and a batch step is just a validated tool call. See
+[There is no arbitrary-code tool](./agents.md#there-is-no-arbitrary-code-tool).
 
 ### Debugging with evidence
 

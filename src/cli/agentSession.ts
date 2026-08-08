@@ -18,6 +18,13 @@ import {
 import { SessionJournal } from './journal.js';
 import { AGENT_DEFAULT_VIEWPORT, type AgentViewport } from './defaults.js';
 import { truncateUtf8, utf8Bytes } from './bounds.js';
+import {
+  boundBatchSteps,
+  type BatchOutcome,
+  type BatchRequest,
+  type BatchStepResult,
+} from './batch.js';
+import { toWireError } from './wireError.js';
 
 export interface AgentCommand {
   cmd: string;
@@ -119,6 +126,8 @@ async function withRefRecovery(
 export interface AgentSessionRunner {
   run(command: AgentCommand): Promise<AgentResult>;
   runDetailed(command: AgentCommand): Promise<AgentDetailedResult>;
+  /** Run several known commands in one queue slot. See {@link BatchRequest}. */
+  runBatch(request: BatchRequest): Promise<BatchOutcome>;
   close(): Promise<void>;
 }
 
@@ -201,71 +210,107 @@ export class AgentSession implements AgentSessionRunner {
     }
 
     const result = this.tail.then(async (): Promise<AgentDetailedResult> => {
-      const args = command.args ?? {};
-      let value: AgentResult;
-      try {
-        value = isObservedSubmit(command, this.autoSnapshot)
-          ? await (
-              await this.ctx.handle.get()
-            )[INTERNAL_RUN_WITH_NAVIGATION_FENCE](() =>
-              this.dispatcher(this.ctx, command.cmd, args)
-            )
-          : await this.dispatcher(this.ctx, command.cmd, args);
-      } catch (error) {
-        throw await withRefRecovery(this.ctx, command, error);
-      }
+      const value = await this.dispatchOne(command);
       if ((!this.autoSnapshot && !command.observe) || !isMutating(command.cmd)) return { value };
-      // Only if a browser is actually up: a fake dispatcher (or a command
-      // that never needed a browser) must not cause a launch here.
-      const browser = this.ctx.handle.peek();
-      if (!browser) return { value };
+      const observation = await this.captureObservation();
+      return observation ? { value, ...observation } : { value };
+    });
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
 
-      // A modal dialog blocks script execution, so snapshotting behind one
-      // stalls for the full WebDriver script timeout (measured: 60s) and
-      // then fails anyway. Probing costs ~2ms and tells the agent the one
-      // thing it actually needs to know here.
-      const dialog = await peekDialog(browser);
-      if (dialog !== null) {
-        return {
-          value,
-          delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)`,
+  /**
+   * Run several known commands in one queue slot.
+   *
+   * The queue slot is the point. Five commands sent one at a time are five
+   * slots, and anything else addressing this session can land between them —
+   * so the page an agent reasons about is not necessarily the page its next
+   * step acts on. A batch is indivisible: nothing interleaves, and the single
+   * observation at the end describes the whole flow.
+   *
+   * What a batch deliberately does not do: heal, retry or substitute a
+   * selector. A failed step stops the rest (unless the caller opted out) and
+   * carries whatever recovery snapshot the error already had. Choosing a
+   * replacement target is the agent's decision, not the batch's.
+   */
+  runBatch(request: BatchRequest): Promise<BatchOutcome> {
+    if (this.state !== 'open') {
+      return Promise.reject(
+        new CraftdriverError(
+          ErrorCode.STATE_INVALID,
+          'AgentSession is closing or closed; it cannot accept new commands'
+        )
+      );
+    }
+
+    const result = this.tail.then(async (): Promise<BatchOutcome> => {
+      const { steps, observe } = request;
+      const results: BatchStepResult[] = [];
+      let failedStep: number | undefined;
+      let sawMutation = false;
+      // A ref failure already took a snapshot to build its recovery context,
+      // which advanced the baseline. Observing again would render an empty
+      // delta and cost a second snapshot for it.
+      let recovered = false;
+
+      for (const [index, step] of steps.entries()) {
+        const command: AgentCommand = {
+          cmd: step.cmd,
+          args: step.args,
+          // Only the last step can be observed, so only it needs the
+          // navigation fence that keeps a submit-and-navigate from racing
+          // the snapshot that follows it.
+          ...(observe && index === steps.length - 1 ? { observe } : {}),
         };
+        const started = performance.now();
+        try {
+          const value = await this.dispatchOne(command);
+          results.push({
+            index,
+            cmd: step.cmd,
+            ok: true,
+            durationMs: Math.round(performance.now() - started),
+            result: value,
+          });
+          if (isMutating(step.cmd)) sawMutation = true;
+        } catch (error) {
+          const wire = toWireError(error);
+          results.push({
+            index,
+            cmd: step.cmd,
+            ok: false,
+            durationMs: Math.round(performance.now() - started),
+            error: wire,
+          });
+          failedStep ??= index;
+          recovered ||= wire.recoverySnapshot !== undefined;
+          // Stop here. The remaining steps were written for a page state this
+          // batch never reached, and running them anyway produces output that
+          // reads like an application answer rather than a step that failed.
+          if (!request.continueOnError) break;
+        }
       }
 
-      const before = this.ctx.tracker.current;
-      const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
-      if (!snap) {
-        return {
-          value,
-          delta: 'post-action snapshot unavailable',
-          snapshot: null,
-        };
-      }
-      // Ordinary failures throw above. A failed action on a previously issued
-      // ref is the one exception: its attached recovery snapshot advances the
-      // baseline so the new refs in that error are immediately usable.
-      const delta = this.ctx.tracker.advance(snap);
-      const snapshot = this.ctx.tracker.current;
+      const skipped = steps.length - results.length;
+      const observation = observe && sawMutation && !recovered ? await this.captureObservation() : null;
       return {
-        value,
-        ...(delta ? { delta } : {}),
-        snapshot,
-        ...(snapshot
-          ? {
-              page: {
-                url: snapshot.url,
-                title: snapshot.title,
-                documentId: snapshot.documentId,
-                revision: snapshot.revision,
-                documentChange:
-                  before === null
-                    ? 'unknown'
-                    : before.documentId === snapshot.documentId
-                      ? 'same'
-                      : 'changed',
-              },
-            }
-          : {}),
+        ok: skipped === 0 && results.every((step) => step.ok),
+        steps: boundBatchSteps(results),
+        ran: results.length,
+        skipped,
+        ...(failedStep !== undefined ? { failedStep } : {}),
+        // `page` is the richer answer and `delta` the cheaper one, but a
+        // dialog or a failed snapshot only ever produces the note in `delta`
+        // — so a `page` request falls back to it rather than reporting
+        // nothing at all about why there is no page.
+        ...(observe === 'page' && observation?.page
+          ? { page: observation.page }
+          : observation?.delta
+            ? { delta: observation.delta }
+            : {}),
       };
     });
     this.tail = result.then(
@@ -273,6 +318,73 @@ export class AgentSession implements AgentSessionRunner {
       () => undefined
     );
     return result;
+  }
+
+  /** Dispatch one command, with the navigation fence and ref recovery. */
+  private async dispatchOne(command: AgentCommand): Promise<AgentResult> {
+    const args = command.args ?? {};
+    try {
+      return isObservedSubmit(command, this.autoSnapshot)
+        ? await (
+            await this.ctx.handle.get()
+          )[INTERNAL_RUN_WITH_NAVIGATION_FENCE](() => this.dispatcher(this.ctx, command.cmd, args))
+        : await this.dispatcher(this.ctx, command.cmd, args);
+    } catch (error) {
+      throw await withRefRecovery(this.ctx, command, error);
+    }
+  }
+
+  /**
+   * The one post-action snapshot, taken inside the caller's queue slot.
+   *
+   * Null means there was no browser to look at. Every other outcome — a
+   * blocking dialog, a snapshot that could not be taken — is reported, because
+   * "nothing changed" and "nothing could be seen" are different answers.
+   */
+  private async captureObservation(): Promise<Omit<AgentDetailedResult, 'value'> | null> {
+    // Only if a browser is actually up: a fake dispatcher (or a command
+    // that never needed a browser) must not cause a launch here.
+    const browser = this.ctx.handle.peek();
+    if (!browser) return null;
+
+    // A modal dialog blocks script execution, so snapshotting behind one
+    // stalls for the full WebDriver script timeout (measured: 60s) and
+    // then fails anyway. Probing costs ~2ms and tells the agent the one
+    // thing it actually needs to know here.
+    const dialog = await peekDialog(browser);
+    if (dialog !== null) {
+      return { delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)` };
+    }
+
+    const before = this.ctx.tracker.current;
+    const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
+    if (!snap) return { delta: 'post-action snapshot unavailable', snapshot: null };
+
+    // Ordinary failures throw above. A failed action on a previously issued
+    // ref is the one exception: its attached recovery snapshot advances the
+    // baseline so the new refs in that error are immediately usable.
+    const delta = this.ctx.tracker.advance(snap);
+    const snapshot = this.ctx.tracker.current;
+    return {
+      ...(delta ? { delta } : {}),
+      snapshot,
+      ...(snapshot
+        ? {
+            page: {
+              url: snapshot.url,
+              title: snapshot.title,
+              documentId: snapshot.documentId,
+              revision: snapshot.revision,
+              documentChange:
+                before === null
+                  ? 'unknown'
+                  : before.documentId === snapshot.documentId
+                    ? 'same'
+                    : 'changed',
+            },
+          }
+        : {}),
+    };
   }
 
   close(): Promise<void> {

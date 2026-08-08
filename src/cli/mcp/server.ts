@@ -13,12 +13,14 @@ import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
 import { AgentSession, type AgentSessionRunner } from '../agentSession.js';
 import {
   TOOLS,
+  compileBatchRequest,
   getTool,
   inputSchemaFor,
   validateToolArgs,
   runToolDetailed,
   type ToolDef,
 } from './tools.js';
+import { renderBatchOutcome, type BatchOutcome } from '../batch.js';
 import { renderFull, type SnapshotShape } from '../snapshot.js';
 import { BoundedLineReader, MAX_FRAME_BYTES } from '../lineReader.js';
 import { boundToolResult, resolveMaxResponseBytes, truncateUtf8 } from './bounds.js';
@@ -326,11 +328,14 @@ export async function routeJsonRpcMethod(
         if (!tool) return rpcError(id, -32602, `tools/call: unknown tool "${name}"`);
 
         let validated: Record<string, unknown>;
+        let batch: ReturnType<typeof compileBatchRequest> | null = null;
         try {
           // Validate before the session queue: a malformed call should not
           // wait behind a slow browser action to be told it was malformed,
-          // and nothing invalid should reach the dispatcher at all.
+          // and nothing invalid should reach the dispatcher at all. A batch
+          // is compiled here too, so one bad step costs no browser work.
           validated = validateToolArgs(tool, args);
+          if (tool.name === 'browser_batch') batch = compileBatchRequest(validated);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           return rpcError(id, -32602, message, {
@@ -339,6 +344,10 @@ export async function routeJsonRpcMethod(
         }
 
         try {
+          if (batch) {
+            const outcome = await ctx.session.runBatch(batch);
+            return ok(id, await serializeBatchOutcome(outcome, ctx.snapshotState));
+          }
           const invocation = await invokeTool(ctx.session, tool, validated, ctx.snapshotState);
           return ok(
             id,
@@ -396,6 +405,33 @@ async function invokeTool(
   }
   if (!snapshotState.snapshotsOn) return { value: detailed.value };
   return { value: detailed.value, ...(detailed.delta ? { delta: detailed.delta } : {}) };
+}
+
+/**
+ * Render a batch: one text block of per-step lines, one observation.
+ *
+ * `structuredContent` carries the whole outcome whether or not a step failed
+ * — the per-step timings and the failure are the point of the tool, and a
+ * client that only reads the error would lose the four steps that did run.
+ */
+async function serializeBatchOutcome(
+  outcome: BatchOutcome,
+  state: SnapshotState
+): Promise<ToolCallResult> {
+  const text = await maybeSpill(
+    renderBatchOutcome(outcome),
+    'batch.txt',
+    state.artifacts,
+    state.spillBytes
+  );
+  return boundToolResult(
+    {
+      content: [{ type: 'text' as const, text }],
+      structuredContent: { result: outcome },
+      ...(outcome.ok ? {} : { isError: true }),
+    },
+    state.maxResponseBytes
+  );
 }
 
 interface ToolResultContext {

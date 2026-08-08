@@ -197,6 +197,12 @@ real logic — custom waits, sequencing, dynamic interception — write it with 
 [library API](./browser-api.md) in a test file, where it is reviewed, versioned
 and diffable, rather than generated into a prompt.
 
+The round-trip cost such a tool is usually reached for has its own answer:
+`craftdriver run` (and the `browser_batch` tool) runs several *validated*
+commands in one trip, keeping per-step results and stopping at the first
+failure. Collapsing the round trips does not require collapsing the
+evidence — see [batching](./cli.md#one-round-trip-for-commands-you-already-know).
+
 ## Optional MCP
 
 The CLI plus the installed skill needs no MCP. If your host prefers structured

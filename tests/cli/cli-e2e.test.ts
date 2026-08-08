@@ -515,11 +515,13 @@ describe('CLI end-to-end flows', () => {
     expect(run.lines).toHaveLength(0);
   }, E2E_TIMEOUT);
 
-  it('rejects --continue-on-error outside an ephemeral script', async () => {
+  it('rejects --continue-on-error on a command with no later steps', async () => {
     const run = await runCliOnce(['status', '--continue-on-error']);
 
     expect(run.exitCode).toBe(2);
-    expect(run.stderr).toContain('--continue-on-error applies to an --ephemeral script');
+    expect(run.stderr).toContain(
+      '--continue-on-error applies to a `run` batch or an --ephemeral script'
+    );
   }, E2E_TIMEOUT);
 
   it('rejects launch and session flags inside an ephemeral script', async () => {
