@@ -34,6 +34,14 @@ usage. Adjectives ("fast", "robust") are not evidence.
 - **Test pyramid honesty.** Browser-driving integration tests are the product
   truth — keep them primary. Pure-logic modules (selector parsing,
   serialization, timing math) get fast unit tests so failures localize.
+- **Run the touched gate, not everything.** Match the change to its gate:
+  `test:cli` for CLI/MCP work, `test:electron`, `test:recipes`, `test:safari`,
+  or a single `vitest run tests/<file>.test.ts`. The full suite is ~15 minutes
+  and CI runs it on every push, so running it locally buys a slower loop and a
+  fresh chance to hit an unrelated flake. Reach for it only when you cannot
+  name the affected area. Widening scope is not extra rigour — say which gate
+  you ran and why it covers the change.
+  (Integration tests need the examples server: `npm run serve` on :8080.)
 - **Flake policy.** A flaky test is a bug in the library or the test, never
   "weather." Quarantine + tracking issue + triage. **Zero automatic retries in
   CI** — retries bury the exact races users will hit (the "execution contexts

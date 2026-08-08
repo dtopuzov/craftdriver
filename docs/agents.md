@@ -173,8 +173,29 @@ so `click role=button[name=Sign in]` is three arguments and a usage error, while
 `click "role=button[name=Sign in]"` is one selector.
 
 Each line returns one JSON object, and a failed command exits non-zero — so this
-also works as a CI smoke step. The alternative for a host that wants structured
-tool calls is [MCP](#optional-mcp).
+also works as a CI smoke step. The script stops at the first failed command, so
+what you read is the failure, not the confusing output of four more commands run
+against a page that never got there. The alternative for a host that wants
+structured tool calls is [MCP](#optional-mcp).
+
+## There is no arbitrary-code tool
+
+`craftdriver eval <js>` runs its argument **in the page**, through
+`page.evaluate()`. It is a last resort for inspection, and it is the only
+code-execution surface craftdriver offers.
+
+There is deliberately no equivalent of a "run this function against the driver"
+tool. Handing an agent a callback that executes in the automation process is
+remote code execution by another name: the agent reads a web page, the page
+contains instructions, and the instructions become code running with your
+shell's privileges. Playwright renamed its own version to
+`browser_run_code_unsafe` and now documents it as RCE-equivalent and suitable
+only for trusted clients, after exactly that escape was demonstrated.
+
+So there is no flag to enable and no capability to audit here. When a flow needs
+real logic — custom waits, sequencing, dynamic interception — write it with the
+[library API](./browser-api.md) in a test file, where it is reviewed, versioned
+and diffable, rather than generated into a prompt.
 
 ## Optional MCP
 
