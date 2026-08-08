@@ -59,6 +59,47 @@ describe('error codes', () => {
     );
   });
 
+  // The browser-level actions used to report a bare
+  // `TIMEOUT: Wait timed out after 4980ms` for both of the cases below — no
+  // selector, no state, nothing separating "your selector is wrong" from
+  // "it's there but hidden". Both codes are documented, and this is the path
+  // the CLI and MCP surfaces call, so the diagnosis has to survive it.
+  describe('browser-level actions diagnose a failed visibility wait', () => {
+    beforeEach(async () => {
+      await browser.evaluate(() => {
+        const el = document.createElement('input');
+        el.id = 'hidden-input';
+        el.style.display = 'none';
+        document.body.appendChild(el);
+      });
+    });
+
+    const actions = {
+      click: (b: Browser, sel: string) => b.click(sel),
+      fill: (b: Browser, sel: string) => b.fill(sel, 'x'),
+      clear: (b: Browser, sel: string) => b.clear(sel),
+    } as const;
+
+    for (const [name, action] of Object.entries(actions)) {
+      it(`browser.${name}() on a hidden element throws TIMEOUT_WAITING_VISIBLE`, async () => {
+        const err = await expectCraftdriverError(
+          () => action(browser, '#hidden-input'),
+          ErrorCode.TIMEOUT_WAITING_VISIBLE
+        );
+        expect(err.message).toContain('#hidden-input');
+        expect(err.detail).toMatchObject({ matched: 1 });
+      });
+
+      it(`browser.${name}() on a missing element throws NO_MATCH`, async () => {
+        const err = await expectCraftdriverError(
+          () => action(browser, '#definitely-not-here'),
+          ErrorCode.NO_MATCH
+        );
+        expect(err.detail).toMatchObject({ matched: 0 });
+      });
+    }
+  });
+
   it('expect() failure throws EXPECT_MISMATCH', async () => {
     await expectCraftdriverError(
       () => browser.locator('h1').expect().toHaveText('this is not the heading'),
