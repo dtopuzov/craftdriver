@@ -159,8 +159,9 @@ starting the driver, and it's tuned to stay out of the way:
   browser to yesterday's cached ChromeDriver.
 - **A local Chrome session timeout gets one fresh-process retry.** CraftDriver
   stops the unresponsive driver and makes one controlled second launch. If it
-  also fails, `DRIVER_ERROR.detail.sessionAttempts` retains each driver path,
-  version, endpoint, error, and bounded stdout/stderr tail. Remote WebDriver and
+  also fails, `DRIVER_ERROR.detail.sessionAttempts` retains each attempt's
+  phase, driver path/version, available endpoint, error, and bounded
+  stdout/stderr tail. Remote WebDriver and
   Electron sessions are not retried because a timed-out request or app launch
   can already have created external state.
 - **Point at a driver explicitly to skip resolution entirely.** If you set
