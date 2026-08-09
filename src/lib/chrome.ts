@@ -43,6 +43,10 @@ export class ChromeService extends DriverService {
     this.browserPath = browserPath;
   }
 
+  override allowsFreshSessionRetry(): boolean {
+    return true;
+  }
+
   /**
    * Resolve the driver binary path. ElectronService overrides this seam to use
    * Electron-specific driver resolution instead of the system-Chrome chain.

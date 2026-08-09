@@ -80,6 +80,12 @@ export class ElectronService extends ChromeService {
     this.appBinaryPath = appBinaryPath;
   }
 
+  // A timed-out Electron launch can leave the application running and has its
+  // own diagnostic path. Do not apply the system-Chrome fresh-process policy.
+  override allowsFreshSessionRetry(): boolean {
+    return false;
+  }
+
   /**
    * chromedriver spawns the Electron app inheriting this env, so scrub
    * `ELECTRON_RUN_AS_NODE`: when it's set the app runs as plain Node.js instead
