@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/dtopuzov/craftdriver/compare/v1.12.0...v1.13.0) (2026-08-09)
+
+
+### Features
+
+* **agent:** release AI tooling improvements ([dc70b15](https://github.com/dtopuzov/craftdriver/commit/dc70b15c235f089e6f2ee07b02f365dedc2628aa))
+
 # [1.12.0](https://github.com/dtopuzov/craftdriver/compare/v1.11.0...v1.12.0) (2026-08-02)
 
 
