@@ -13,6 +13,8 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
+    "audit": "npm audit --omit=dev",
+    "audit:all": "npm audit",
     "test": "HEADLESS=true vitest run",
     "test:firefox": "BROWSER_NAME=firefox HEADLESS=true vitest run",
     "test:chrome": "BROWSER_NAME=chrome vitest run",
@@ -98,7 +100,7 @@
     "http-server": "^14.1.1",
     "prettier": "^3.9.6",
     "rimraf": "^6.1.3",
-    "semantic-release": "^25.0.8",
+    "semantic-release": "^25.0.9",
     "typescript": "^6.0.3",
     "vitepress": "^1.6.4",
     "vitest": "^4.1.10"
@@ -110,10 +112,6 @@
     "yazl": "^3.3.1"
   },
   "overrides": {
-    "brace-expansion": "5.0.9",
-    "ip-address": "10.4.0",
-    "npm": "^12.0.2",
-    "undici": "8.9.0",
     "vitepress": {
       "vite": "7.3.6"
     }
