@@ -72,6 +72,10 @@ export {
 
 // Driver services — expose for users who need custom binary paths / ports
 export { ChromeService, type ChromeServiceOptions } from './lib/chrome.js';
+export {
+  inspectChromeDriverResolution,
+  type ChromeDriverResolutionInfo,
+} from './lib/driverManager.js';
 export { ElectronService, type ElectronServiceOptions } from './lib/electron.js';
 export { FirefoxService, type FirefoxServiceOptions } from './lib/firefox.js';
 export { SafariService, type SafariServiceOptions } from './lib/safari.js';
