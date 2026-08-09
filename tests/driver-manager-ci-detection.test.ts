@@ -111,7 +111,7 @@ describe('driver manager — CI-provided driver directories', () => {
       // didn't throw or get misused — not that the rest of the chain works.
       process.env.CRAFTDRIVER_OFFLINE = '1';
 
-      await expect(resolveChromeDriver()).rejects.toThrow(/no chromedriver was found/i);
+      await expect(resolveChromeDriver()).rejects.toThrow(/no compatible chromedriver was found/i);
     });
 
     it('is unaffected when CHROMEWEBDRIVER is unset', async () => {

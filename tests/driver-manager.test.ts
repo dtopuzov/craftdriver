@@ -13,7 +13,7 @@
  *   4. DriverService startup diagnostics — the generic service base class
  *      drains output, keeps a bounded tail, and reports an early exit.
  */
-import { describe, it, beforeAll, afterAll, afterEach, expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, afterEach, expect } from 'vitest';
 import http from 'http';
 import fs from 'fs';
 import os from 'os';
@@ -171,6 +171,8 @@ describe('driver manager — concurrent resolution', () => {
       'CHROMEDRIVER_PATH',
       'SE_CHROMEDRIVER',
       'CRAFTDRIVER_SKIP_PATH_PROBE',
+      'CHROMEWEBDRIVER',
+      'GECKOWEBDRIVER',
     ]);
 
     // Skip the PATH probe so a pre-installed chromedriver (CI runners, nvm envs)
@@ -305,7 +307,21 @@ describe('chromedriver auto-resolution cache recovery', () => {
   const envCacheDir = process.env.CRAFTDRIVER_CACHE_DIR;
   const envOffline = process.env.CRAFTDRIVER_OFFLINE;
   const envSkipPathProbe = process.env.CRAFTDRIVER_SKIP_PATH_PROBE;
+  const driverOverrideKeys = [
+    'CRAFTDRIVER_CHROMEDRIVER_PATH',
+    'CRAFTDRIVER_DRIVER_PATH',
+    'CHROMEDRIVER_PATH',
+    'SE_CHROMEDRIVER',
+    'CHROMEWEBDRIVER',
+  ];
+  const driverOverrideEnv = Object.fromEntries(
+    driverOverrideKeys.map((key) => [key, process.env[key]])
+  );
   let cacheDir: string | undefined;
+
+  beforeEach(() => {
+    for (const key of driverOverrideKeys) delete process.env[key];
+  });
 
   afterEach(() => {
     if (envCacheDir === undefined) {
@@ -317,6 +333,11 @@ describe('chromedriver auto-resolution cache recovery', () => {
     else process.env.CRAFTDRIVER_OFFLINE = envOffline;
     if (envSkipPathProbe === undefined) delete process.env.CRAFTDRIVER_SKIP_PATH_PROBE;
     else process.env.CRAFTDRIVER_SKIP_PATH_PROBE = envSkipPathProbe;
+    for (const key of driverOverrideKeys) {
+      const value = driverOverrideEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
     cacheDir = undefined;
   });
