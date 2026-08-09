@@ -23,13 +23,10 @@ Craftdriver resolves the WebDriver binary through a chain — first match wins:
 Downloaded drivers are cached in `~/.cache/craftdriver`, and so is the
 *resolution itself* — which driver path to use. Within the
 `CRAFTDRIVER_DRIVER_TTL` window (default 24 h), craftdriver reuses the
-resolved path directly and skips the system-browser probes it would
-otherwise run on **every** launch: launching the browser binary just to read
-its version string, and a `PATH` lookup. Both are blocking calls, so caching
-the resolution measurably speeds up launch — most noticeably when several
-browsers start in parallel (see [Performance](#performance)). After the TTL
-expires, or if Chrome reports that the cached chromedriver is for the wrong
-major version after a browser upgrade, the driver is re-resolved and
+resolved path only when its recorded browser major matches the currently
+selected Chrome. Chrome's version is read once per process; the cache then
+skips repeated `PATH` lookup and download resolution. After the TTL expires,
+or immediately after a Chrome major upgrade, the driver is re-resolved and
 re-downloaded if needed. Only the driver binary is ever downloaded, never the
 browser itself. Explicit configuration (steps 1–4) always takes precedence over
 the cache.
@@ -155,10 +152,17 @@ Most of the time `Browser.launch()` spends is the browser process starting up
 library can do about it). The part craftdriver *does* control is resolving and
 starting the driver, and it's tuned to stay out of the way:
 
-- **Driver resolution is cached** (see above). Without a cache, resolving a
-  chromedriver means launching your Chrome binary just to read its version
-  string — a blocking call of a few hundred milliseconds on *every* launch.
-  The TTL cache skips that after the first launch.
+- **Driver resolution is cached** (see above). CraftDriver reads the selected
+  Chrome version once per process, verifies that a fresh cache entry was
+  resolved for the same browser major, and reuses the matching driver. A Chrome
+  update therefore invalidates stale metadata instead of sending the new
+  browser to yesterday's cached ChromeDriver.
+- **A local Chrome session timeout gets one fresh-process retry.** CraftDriver
+  stops the unresponsive driver and makes one controlled second launch. If it
+  also fails, `DRIVER_ERROR.detail.sessionAttempts` retains each driver path,
+  version, endpoint, error, and bounded stdout/stderr tail. Remote WebDriver and
+  Electron sessions are not retried because a timed-out request or app launch
+  can already have created external state.
 - **Point at a driver explicitly to skip resolution entirely.** If you set
   `CRAFTDRIVER_CHROMEDRIVER_PATH` / `CRAFTDRIVER_GECKODRIVER_PATH` (or pass
   `chromeService: new ChromeService({ binaryPath })`), craftdriver uses it

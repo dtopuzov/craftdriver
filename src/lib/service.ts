@@ -9,7 +9,7 @@ import { DRIVER_READINESS_TIMEOUT_MS, DRIVER_READINESS_POLL_INTERVAL_MS } from '
 const DRIVER_OUTPUT_TAIL_BYTES = 64 * 1024;
 const DRIVER_OUTPUT_LABEL_BYTES = Buffer.byteLength('[stdout]\n\n[stderr]\n', 'utf8');
 const DRIVER_OUTPUT_TAIL_BYTES_PER_STREAM = Math.floor(
-  (DRIVER_OUTPUT_TAIL_BYTES - DRIVER_OUTPUT_LABEL_BYTES) / 2,
+  (DRIVER_OUTPUT_TAIL_BYTES - DRIVER_OUTPUT_LABEL_BYTES) / 2
 );
 
 export interface DriverServiceOptions {
@@ -70,6 +70,16 @@ export class DriverService {
   }
 
   /**
+   * Whether a timed-out local `POST /session` may be retried after replacing
+   * this driver process. Disabled by default: remote sessions never use a
+   * service, Firefox has its own readiness retry, and Safari/Electron need
+   * browser-specific evidence before an automatic second launch is safe.
+   */
+  allowsFreshSessionRetry(): boolean {
+    return false;
+  }
+
+  /**
    * Returns the bounded tail of driver stdout/stderr captured since the latest
    * start attempt. This is primarily useful when attaching startup diagnostics
    * to test-runner artifacts.
@@ -91,7 +101,7 @@ export class DriverService {
     this.ready = false;
 
     // Assign a free port if not specified
-    const port = this.opts.port ?? await findFreePort();
+    const port = this.opts.port ?? (await findFreePort());
     this.endpoint = {
       protocol: 'http',
       hostname: this.opts.hostname,
