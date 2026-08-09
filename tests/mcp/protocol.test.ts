@@ -536,4 +536,49 @@ describe('the error tripwire on an MCP observation', () => {
     const blocks = captured.lines()[0].result?.content as Array<{ text: string }>;
     expect(blocks.at(-1)?.text).toBe('errors: 1 (logCursor 8)');
   });
+
+  it('qualifies the count it shows the model, rather than stating a bare zero', async () => {
+    // The model reads this line and nothing else about the logs. A zero that
+    // was never confirmed, or a loss the journal can only bound, has to say so
+    // here or it says nothing at all.
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const captured = collectOutput(output);
+    const runDetailed = vi.fn().mockResolvedValue({
+      value: { ok: true },
+      logs: {
+        errors: 0,
+        logCursor: 8,
+        logsDropped: 501,
+        logsDroppedExact: false,
+        logsSettled: false,
+      },
+    });
+    const session: AgentSessionRunner = {
+      run: vi.fn(async (command) => (await runDetailed(command)).value),
+      runDetailed,
+      runBatch: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const running = runMcpServer({
+      launch: {},
+      input,
+      output,
+      sessionFactory: () => session,
+      signalSource: new EventEmitter(),
+    });
+
+    input.end(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'browser_click', arguments: { selector: '#btn' } },
+    }) + '\n');
+    await running;
+
+    const blocks = captured.lines()[0].result?.content as Array<{ text: string }>;
+    const tripwire = blocks.at(-1)?.text ?? '';
+    expect(tripwire).toContain('up to 501 evicted');
+    expect(tripwire).toContain('would not confirm delivery');
+  });
 });

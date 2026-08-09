@@ -37,6 +37,7 @@ import {
 } from './init.js';
 import { runMcpServer } from './mcp/server.js';
 import { validateSessionName } from './sessionRegistry.js';
+import { negativeVerdict } from './verdict.js';
 import type { LaunchOptions } from '../lib/browser.js';
 
 /**
@@ -302,8 +303,13 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
         // Keep the worst status across the batch. `||` used to be safe when
         // success was always 0, but `exists` now returns 1 on a miss and
         // would overwrite a usage error (2) recorded earlier.
-        rc = Math.max(rc, emitInProc(sub, result));
-        if (result.ok || parsed.flags.continueOnError) continue;
+        const stepRc = emitInProc(sub, result);
+        rc = Math.max(rc, stepRc);
+        // `stepRc` rather than `result.ok`: `exists` matching nothing and a
+        // failed `a11y --check` do not throw, but they are documented to exit
+        // 1, and "stops at the first command that fails" has to mean the same
+        // thing for them as for a NO_MATCH.
+        if (stepRc === 0 || parsed.flags.continueOnError) continue;
         // Stop here. The remaining lines were written for a page state this
         // script never reached, and running them anyway yields output that
         // reads like an application answer — "Missing credentials" for a form
@@ -386,6 +392,9 @@ async function runBatchCommand(
     }),
     ...(parsed.flags.continueOnError ? { continueOnError: true } : {}),
     ...(observe === 'page' || observe === 'delta' ? { observe } : {}),
+    // The CLI has exit statuses, so a step that answered no is a step that
+    // failed here — the same rule `--ephemeral` applies line by line.
+    stopOnVerdict: true,
   };
 
   const client = new DaemonClient({ session });
@@ -410,7 +419,11 @@ async function runBatchCommand(
   if (outcome.ok) return 0;
   // The transport succeeded; a step did not. Report the first failure's code
   // the way the same command would report it on its own, so a batch and a
-  // single command cannot disagree about what a NO_MATCH is worth.
+  // single command cannot disagree about what a NO_MATCH is worth. `exists`
+  // matching nothing and a failed `a11y --check` are among those failures:
+  // the request asked for `stopOnVerdict`, so the session has already marked
+  // them, and the same script cannot pass as a batch while failing as an
+  // `--ephemeral` run.
   const failed = outcome.steps.find((step) => !step.ok);
   return failed?.error ? exitCodeFor(failed.error.code) : 1;
 }
@@ -441,7 +454,7 @@ async function safeDispatch(
 function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
   if (outcome.ok) {
     writeOk(parsed, outcome.value);
-    return successExitCode(parsed, outcome.value);
+    return successExitCode(parsed.cmd, outcome.value);
   }
   writeErr(outcome.error!);
   return exitCodeFor(outcome.error!.code);
@@ -450,24 +463,14 @@ function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
 /**
  * Exit code for a command that succeeded.
  *
- * `exists` is a probe: the call succeeds, but "nothing matched" has to
- * reach the shell as a non-zero status because agents script around it.
- * Shared by the ephemeral and daemon paths so one command cannot report
- * two different contracts depending on how it was run.
+ * `exists` is a probe and `a11y --check` an opt-in assertion: both return a
+ * result and both have to reach the shell as a non-zero status. The rule they
+ * share lives in `verdict.ts`, so the single command, the `--ephemeral` script
+ * and the `run` batch cannot end up with three readings of the same answer.
  */
-function successExitCode(parsed: ParsedCommand, result: unknown): number {
-  if (parsed.cmd === 'exists') {
-    const r = result as { exists?: boolean } | null;
-    return r && r.exists === false ? 1 : 0;
-  }
-  // `a11y` is a report by default, so findings do not make the command fail.
-  // `--check` explicitly opts into the assertion-like exit status while still
-  // returning the actionable report.
-  if (parsed.cmd === 'a11y') {
-    const r = result as { checked?: boolean; passed?: boolean } | null;
-    return r && r.checked === true && r.passed === false ? 1 : 0;
-  }
-  return 0;
+function successExitCode(cmd: string, result: unknown): number {
+  const verdict = negativeVerdict(cmd, result);
+  return verdict ? exitCodeFor(verdict.code) : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +709,7 @@ function emitResponse(
 ): number {
   if (resp.ok) {
     writeOk(parsed, resp.result);
-    return successExitCode(parsed, resp.result);
+    return successExitCode(parsed.cmd, resp.result);
   }
   writeErr(resp.error);
   return exitCodeFor(resp.error.code);
@@ -816,13 +819,9 @@ function prettyResult(cmd: string, result: unknown): string {
   // Only the passing case reaches here — a failed expectation throws, and is
   // rendered by the error path with its message, code and hint.
   if (cmd === 'expect' && typeof r.matcher === 'string') {
-    if (r.matcher === 'no-errors') {
-      const dropped =
-        typeof r.logsDropped === 'number'
-          ? `; ${r.logsDropped} entries evicted, so this is a lower bound`
-          : '';
-      return `✓ no errors (logCursor ${r.logCursor as number}${dropped})`;
-    }
+    // A pass carries no eviction note any more: a window with evicted errors
+    // is not a pass, it is `STATE_INVALID` on the error path.
+    if (r.matcher === 'no-errors') return `✓ no errors (logCursor ${r.logCursor as number})`;
     const comparison =
       r.expected !== undefined
         ? ` ${r.mode === 'contains' ? 'contains' : 'is'} "${r.expected as string}"`

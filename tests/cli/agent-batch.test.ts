@@ -262,6 +262,28 @@ describe('`craftdriver run` through the shipped binary', () => {
     expect(result.skipped).toBe(1);
   });
 
+  it('fails the run when a step executed fine and answered no', async () => {
+    // `exists` matching nothing exits 1 as a single command and inside an
+    // --ephemeral script. A batch reporting 0 for it would make the same
+    // script pass or fail depending only on how it was run.
+    const script = [
+      `go ${ACTIONS}`,
+      'exists #definitely-not-here',
+      "fill '#nickname' never-reached",
+    ].join('\n');
+
+    const { code, stdout } = await cli(['run', '--session', 'batchverdict'], script);
+    expect(code).toBe(1);
+
+    const { ok, result } = JSON.parse(stdout.trim()) as { ok: boolean; result: BatchOutcome };
+    expect(ok).toBe(false);
+    expect(result.failedStep).toBe(1);
+    expect(result.skipped).toBe(1);
+    // The answer survives alongside the verdict.
+    expect(result.steps[1].result).toMatchObject({ exists: false });
+    expect(result.steps[1].error?.code).toBe(ErrorCode.NO_MATCH);
+  });
+
   it('rejects a bad script before it starts anything', async () => {
     const { code, stdout, stderr } = await cli(['run'], 'click #pay --forse\n');
     expect(code).toBe(2);

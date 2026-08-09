@@ -125,10 +125,36 @@ export interface LogTripwire {
   /** Pass as `--since` (CLI) or `since` (MCP) to read that same window. */
   logCursor: number;
   /**
-   * Entries evicted inside the window, which makes `errors` a lower bound.
-   * Absent — not zero — in the ordinary case where nothing was lost.
+   * *Error* entries evicted inside the window, which makes `errors` a lower
+   * bound. Absent — not zero — in the ordinary case where nothing was lost.
+   *
+   * Deliberately not "entries evicted": a busy page evicts network rows
+   * constantly, and reporting those made every observation on a chatty page
+   * claim its error count was unreliable when no error had been lost at all.
+   * Counting the errors specifically is what lets `expect no-errors` treat a
+   * hole as undecidable rather than as noise.
    */
   logsDropped?: number;
+  /**
+   * Present, and false, when `logsDropped` is an upper bound rather than a
+   * figure — the window reaches back past the evicted errors the journal still
+   * has sequence numbers for.
+   *
+   * It takes more than {@link MAX_JOURNAL_ENTRIES} evicted errors to get here,
+   * so it is rare; it is carried anyway because a number an agent quotes into
+   * a report should not be more precise than the thing that produced it.
+   */
+  logsDroppedExact?: false;
+  /**
+   * Present, and false, when the ordering barrier could not be taken — the
+   * driver would not answer, so events the action caused may not have been
+   * delivered yet.
+   *
+   * `errors: 0` is an affirmative answer everywhere else on this surface, and
+   * an unsettled zero is not one. Reported rather than omitted so a *non*-zero
+   * count, which is still true, is not thrown away with it.
+   */
+  logsSettled?: false;
 }
 
 /**
@@ -139,11 +165,29 @@ export interface LogTripwire {
  * to avoid.
  */
 export function formatLogTripwire(logs: LogTripwire): string {
+  const count =
+    logs.logsDroppedExact === false ? `up to ${logs.logsDropped}` : `${logs.logsDropped}`;
   const dropped =
     logs.logsDropped !== undefined
-      ? `; ${logs.logsDropped} entries evicted, so this is a lower bound`
+      ? `; ${count} evicted before they could be read, so this is a lower bound`
       : '';
-  return `errors: ${logs.errors} (logCursor ${logs.logCursor}${dropped})`;
+  const unsettled =
+    logs.logsSettled === false
+      ? '; the driver would not confirm delivery, so a late error may be missing'
+      : '';
+  return `errors: ${logs.errors} (logCursor ${logs.logCursor}${dropped}${unsettled})`;
+}
+
+/**
+ * Is this entry one a caller asking for "errors" means?
+ *
+ * The union `logs --kind error` matches: a thrown exception is kind `error`,
+ * and a `console.error` is kind `console` at level `error`. One definition,
+ * because the filter and the eviction accounting disagreeing about what an
+ * error is would make the tripwire quietly wrong rather than visibly broken.
+ */
+function isErrorEntry(entry: JournalEntry): boolean {
+  return entry.kind === 'error' || ('level' in entry && entry.level === 'error');
 }
 
 function truncate(text: string): string {
@@ -180,9 +224,7 @@ function matchesQuery(entry: JournalEntry, q: JournalQuery): boolean {
   if (q.kinds && q.kinds.length > 0) {
     const wantsError = q.kinds.includes('error');
     // `console.error` is kind `console`; a caller asking for errors wants it.
-    const isErrorish =
-      entry.kind === 'error' || ('level' in entry && entry.level === 'error');
-    if (!q.kinds.includes(entry.kind) && !(wantsError && isErrorish)) return false;
+    if (!q.kinds.includes(entry.kind) && !(wantsError && isErrorEntry(entry))) return false;
   }
 
   if (q.level && (!('level' in entry) || entry.level !== q.level)) return false;
@@ -206,6 +248,29 @@ export class SessionJournal {
   private droppedTotal = 0;
   /** Highest `seq` that has been evicted, so a reader can detect a hole. */
   private highestDroppedSeq = 0;
+  /**
+   * `seq` of every evicted *error*, newest last.
+   *
+   * A single total would not do: a caller asks about a window (`since`), and
+   * how many errors were lost inside one cannot be recovered from a lifetime
+   * count. The list is capped like the buffer itself, so it answers exactly
+   * for any window that starts at or after {@link forgottenErrorMaxSeq} —
+   * every window a caller can realistically hold a cursor for.
+   */
+  private droppedErrorSeqs: number[] = [];
+  /**
+   * Evicted errors old enough to have fallen off that list, and the highest
+   * `seq` among them.
+   *
+   * Past this point the window count is an upper bound rather than a figure:
+   * these errors are known to have been lost, but not whether each one was
+   * inside a window that starts before `forgottenErrorMaxSeq`. It takes more
+   * than {@link MAX_JOURNAL_ENTRIES} evicted errors to get here, and the
+   * answer stays safe in the direction that matters — an error lost inside the
+   * window is never reported as zero.
+   */
+  private forgottenErrors = 0;
+  private forgottenErrorMaxSeq = 0;
   private waiters = new Set<Waiter>();
   private detachers: Array<() => void> = [];
   private attached = false;
@@ -349,7 +414,28 @@ export class SessionJournal {
       this.bytes -= entrySize(gone);
       this.droppedTotal++;
       this.highestDroppedSeq = gone.seq;
+      if (isErrorEntry(gone)) {
+        this.droppedErrorSeqs.push(gone.seq);
+        if (this.droppedErrorSeqs.length > MAX_JOURNAL_ENTRIES) {
+          this.forgottenErrorMaxSeq = this.droppedErrorSeqs.shift() ?? 0;
+          this.forgottenErrors++;
+        }
+      }
     }
+  }
+
+  /**
+   * Errors evicted with `seq` greater than `since`.
+   *
+   * `exact` is false only once more errors have been evicted than the list
+   * retains *and* the window reaches back into the part it no longer holds;
+   * the count is then an upper bound. Never an under-count either way, which
+   * is the direction an assertion depends on.
+   */
+  private droppedErrorsSince(since: number): { dropped: number; exact: boolean } {
+    const listed = this.droppedErrorSeqs.filter((seq) => seq > since).length;
+    if (since >= this.forgottenErrorMaxSeq) return { dropped: listed, exact: true };
+    return { dropped: listed + this.forgottenErrors, exact: false };
   }
 
   /** Highest `seq` issued so far — the value a reader passes back as `since`. */
@@ -366,16 +452,19 @@ export class SessionJournal {
    * — "no errors" and "the errors fell off the end of the buffer" must not
    * look alike.
    */
-  countErrorsSince(since = 0): { errors: number; dropped: number } {
+  countErrorsSince(since = 0): { errors: number; dropped: number; droppedExact: boolean } {
     const q: JournalQuery = { since, kinds: ['error'] };
     let errors = 0;
     for (const entry of this.entries) {
       if (matchesQuery(entry, q)) errors++;
     }
-    return {
-      errors,
-      dropped: this.highestDroppedSeq > since ? this.highestDroppedSeq - since : 0,
-    };
+    // `dropped` counts evicted *errors*, not evicted entries. A page making a
+    // request per frame evicts constantly while logging nothing, and reporting
+    // that as a hole in the error count cried wolf on every busy page — which
+    // is worse than silence, because it is the signal `expect no-errors` has
+    // to be able to act on.
+    const { dropped, exact } = this.droppedErrorsSince(since);
+    return { errors, dropped, droppedExact: exact };
   }
 
   query(q: JournalQuery = {}): JournalPage {
@@ -433,6 +522,13 @@ export class SessionJournal {
   clear(): void {
     this.entries = [];
     this.bytes = 0;
+    // The eviction bookkeeping goes too. A caller that discarded the history
+    // on purpose is not owed "some of what you threw away was an error" for
+    // the rest of the session — and without this, one eviction would leave
+    // `expect no-errors` permanently undecidable, with no way back.
+    this.droppedErrorSeqs = [];
+    this.forgottenErrors = 0;
+    this.forgottenErrorMaxSeq = 0;
   }
 
   /** Stop capturing and release listeners and pending waiters. */

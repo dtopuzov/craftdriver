@@ -24,6 +24,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgentSession } from '../../src/cli/agentSession.js';
 import { CraftdriverError, ErrorCode } from '../../src/lib/errors.js';
+import { MAX_JOURNAL_ENTRIES } from '../../src/cli/journal.js';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from '../utils';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -271,6 +272,36 @@ describe('expect no-errors', () => {
       { ok: true, errors: 0 }
     );
   });
+
+  it('refuses a cursor this session has not issued', async () => {
+    // Always a caller mistake — usually a cursor from another session — and
+    // one that would otherwise assert over an empty window and pass whatever
+    // the page did.
+    const failure = await failureOf(session, { what: 'no-errors', since: 10_000_000 });
+    expect(failure.code).toBe(ErrorCode.INVALID_ARGUMENT);
+    expect(failure.message).toContain('ahead of this session');
+  });
+
+  it('is undecidable, not green, once errors have been evicted', async () => {
+    // The journal is bounded. A page that logged an error and then talked
+    // enough to push it out cannot be certified clean: passing here would be
+    // the loudest possible version of "absence of evidence is evidence of
+    // absence", on the one command whose job is to say otherwise.
+    await session.run({ cmd: 'click', args: { selector: '#btn-console-error' } });
+    await session.run({
+      cmd: 'eval',
+      args: {
+        js:
+          `for (let i = 0; i < ${MAX_JOURNAL_ENTRIES + 50}; i++) console.log('flood', i);\n` +
+          `return true;`,
+      },
+    });
+
+    const failure = await failureOf(session, { what: 'no-errors' });
+    expect(failure.code).toBe(ErrorCode.STATE_INVALID);
+    expect(failure.message).toContain('evicted');
+    expect(failure.hint).toContain('--since');
+  });
 });
 
 describe('expect inside a batch', () => {
@@ -426,7 +457,9 @@ describe('`craftdriver expect` through the shipped binary', () => {
       "expect text '#log' --contains saved --observe=delta",
     ].join('\n');
     const ok = await cli(['run', '--session', 'verdictrun'], passing);
-    expect(ok.code).toBe(0);
+    // Quote stderr on failure: a bare "expected 1 to be 0" from a batch that
+    // drove a real browser says nothing about which step went wrong.
+    expect(ok.code, `stderr: ${ok.stderr}\nstdout: ${ok.stdout}`).toBe(0);
     const okOutcome = JSON.parse(ok.stdout.trim()).result as {
       steps: Array<{ cmd: string; ok: boolean }>;
       delta?: string;

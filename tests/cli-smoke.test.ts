@@ -41,9 +41,9 @@ function parseOutputLine(line: string): RunResult['lines'][number] {
  * stdout is piped (not a TTY) so the CLI emits one JSON object per
  * command on stdout by default.
  */
-async function runCli(script: string): Promise<RunResult> {
+async function runCli(script: string, extraArgs: string[] = []): Promise<RunResult> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn('node', [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME], {
+    const child = spawn('node', [CLI_BIN, '--ephemeral', '--browser', BROWSER_NAME, ...extraArgs], {
       env: { ...process.env, HEADLESS: 'true' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -139,11 +139,18 @@ describe('CLI smoke', () => {
       `text "#definitely-not-here"`, // missing — ok:false, NO_MATCH
     ].join('\n');
 
-    const run = await runCli(script);
+    // A probe that answered no exits 1, and in a script — where there is
+    // nothing to branch on — that stops the run like any other failed step.
+    const stopped = await runCli(script);
+    expect(stopped.exitCode).toBe(1);
+    expect(stopped.lines).toHaveLength(3);
+    expect(stopped.lines[1].result).toMatchObject({ exists: true });
+    expect(stopped.lines[2].result).toMatchObject({ exists: false });
+    expect(stopped.stderr).toContain('stopped at failed step 3 of 4');
 
-    // `exists` with no match returns exit 1 (sticky across the script);
-    // and `text` against a missing element returns exit 1 (NO_MATCH).
-    // Either way, the script's final rc is non-zero.
+    // Said the other way — these probes are independent — every line runs and
+    // each keeps its own code.
+    const run = await runCli(script, ['--continue-on-error']);
     expect(run.exitCode).toBe(1);
     expect(run.lines).toHaveLength(4);
 

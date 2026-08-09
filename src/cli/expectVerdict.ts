@@ -51,10 +51,15 @@ export interface ExpectVerdict {
   selector?: string;
   mode?: ExpectMatch['kind'];
   expected?: string;
-  /** `no-errors` only: the window it just cleared, and where to read from next. */
+  /**
+   * `no-errors` only: the window it just cleared, and where to read from next.
+   *
+   * No eviction or delivery qualifier here on purpose — a verdict that needed
+   * one is not a pass. They live on the failures, where they change what the
+   * caller should do next.
+   */
   errors?: number;
   logCursor?: number;
-  logsDropped?: number;
 }
 
 /** Error texts quoted in a failed `no-errors`, so the verdict needs no follow-up. */
@@ -226,6 +231,14 @@ export async function expectUrl(
  * every observation already emits — narrows it to one window. Deliberately not
  * "since the last check": an assertion that passes on a re-run because the
  * first run consumed the evidence is worse than a noisy one.
+ *
+ * Three outcomes, not two. A buffered error settles it — that is the ordinary
+ * failure. Otherwise the window has to be trustworthy before "no errors" can
+ * be claimed: errors evicted from the bounded journal, or a barrier the driver
+ * would not answer, both make it `STATE_INVALID` — undecidable — for the same
+ * reason a session that never captured anything is. Absence of evidence is not
+ * evidence of absence, and this is the one command whose whole job is to say
+ * so.
  */
 export async function expectNoErrors(
   browser: Browser,
@@ -248,44 +261,105 @@ export async function expectNoErrors(
     );
   }
 
-  // The barrier. Failure to take it is not failure to assert: the count below
-  // is still the best answer available, and throwing here would turn a driver
-  // hiccup into a failed assertion about the page.
-  await browser
-    .activePage()
-    .then((page) => page.url())
-    .catch(() => undefined);
-
-  const { errors, dropped } = journal.countErrorsSince(since);
-  const logCursor = journal.cursor;
-  if (errors === 0) {
-    return {
-      ok: true,
-      matcher: 'no-errors',
-      errors,
-      logCursor,
-      ...(dropped > 0 ? { logsDropped: dropped } : {}),
-    };
+  // A cursor the session has not issued yet asserts over an empty window, and
+  // would pass no matter what the page did. It is always a caller mistake —
+  // usually a cursor from another session — so it is refused rather than
+  // silently answered.
+  if (since > journal.cursor) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `expect no-errors: --since ${since} is ahead of this session's log cursor (${journal.cursor})`,
+      {
+        detail: { since, logCursor: journal.cursor },
+        hint: 'pass the `logCursor` from an observation of this session, or omit --since.',
+      }
+    );
   }
 
-  // Quote the first few. The whole point is that the verdict does not cost a
-  // follow-up `logs` call to become actionable.
-  const page = journal.query({ kinds: ['error'], since, limit: MAX_REPORTED_ERRORS });
-  const texts = page.entries.map((entry) => ('text' in entry ? entry.text : entry.url));
-  const more = errors > texts.length ? ` (+${errors - texts.length} more)` : '';
-  const window = since > 0 ? ` since cursor ${since}` : '';
-  throw mismatch(
-    `expected no errors${window}, but the page logged ${errors}: ` +
-      texts.map((text) => JSON.stringify(text)).join('; ') +
-      more,
-    {
-      matcher: 'no-errors',
-      expected: 0,
-      actual: errors,
-      since,
-      logCursor,
-      ...(dropped > 0 ? { logsDropped: dropped } : {}),
-    },
-    `read them in full with \`logs --kind error --since ${since}\`.`
-  );
+  // The barrier.
+  const settled = await browser
+    .activePage()
+    .then((page) => page.url())
+    .then(() => true)
+    .catch(() => false);
+
+  const { errors, dropped, droppedExact } = journal.countErrorsSince(since);
+  const logCursor = journal.cursor;
+  // An error that is still buffered settles the question on its own: the page
+  // logged one, so "no errors" is false rather than unanswerable, whatever
+  // else was lost or unconfirmed. Checked first for that reason — reporting a
+  // known failure as undecidable would send an agent to read logs it has
+  // already been handed.
+  if (errors > 0) {
+    // Quote the first few. The whole point is that the verdict does not cost a
+    // follow-up `logs` call to become actionable.
+    const page = journal.query({ kinds: ['error'], since, limit: MAX_REPORTED_ERRORS });
+    const texts = page.entries.map((entry) => ('text' in entry ? entry.text : entry.url));
+    const more = errors > texts.length ? ` (+${errors - texts.length} more)` : '';
+    const window = since > 0 ? ` since cursor ${since}` : '';
+    const lost =
+      dropped > 0
+        ? `, and ${droppedExact ? dropped : `up to ${dropped}`} more evicted before this ran`
+        : '';
+    throw mismatch(
+      `expected no errors${window}, but the page logged ${errors}: ` +
+        texts.map((text) => JSON.stringify(text)).join('; ') +
+        more +
+        lost,
+      {
+        matcher: 'no-errors',
+        expected: 0,
+        actual: errors,
+        since,
+        logCursor,
+        ...(dropped > 0 ? { logsDropped: dropped } : {}),
+        ...(dropped > 0 && !droppedExact ? { logsDroppedExact: false } : {}),
+      },
+      `read them in full with \`logs --kind error --since ${since}\`.`
+    );
+  }
+
+  // Nothing visible failed, so the remaining question is whether the window is
+  // trustworthy. Two ways it is not, and neither may be reported as a pass:
+  // errors evicted from the bounded journal, and a barrier the driver would
+  // not answer — in which case an error the last action caused may not have
+  // been delivered yet. `logsDropped` on a green verdict is metadata a CI gate
+  // or a batch does not read, and "we did not keep the evidence" must not
+  // reach an agent as "there was nothing to keep".
+  if (dropped > 0) {
+    const count = droppedExact ? `${dropped}` : `up to ${dropped}`;
+    throw new CraftdriverError(
+      ErrorCode.STATE_INVALID,
+      `expect no-errors: ${count} error${dropped === 1 ? ' was' : 's were'} evicted from ` +
+        `the log before this ran, so "no errors" cannot be established`,
+      {
+        detail: {
+          matcher: 'no-errors',
+          since,
+          logCursor,
+          errors,
+          logsDropped: dropped,
+          ...(droppedExact ? {} : { logsDroppedExact: false }),
+        },
+        hint:
+          'the journal keeps a bounded history; assert against a narrower window with ' +
+          '`--since <logCursor>`, or clear it with `logs clear` before the step you are checking.',
+      }
+    );
+  }
+  if (!settled) {
+    throw new CraftdriverError(
+      ErrorCode.STATE_INVALID,
+      'expect no-errors: the driver would not confirm that pending events had been ' +
+        'delivered, so an error the page logged may not have arrived yet',
+      {
+        detail: { matcher: 'no-errors', since, logCursor, errors, logsSettled: false },
+        hint:
+          'this is a driver or session fault rather than a page one — check the session ' +
+          'is still alive (`status`) and retry.',
+      }
+    );
+  }
+
+  return { ok: true, matcher: 'no-errors', errors, logCursor };
 }

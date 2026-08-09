@@ -25,6 +25,7 @@ import {
   type BatchStepResult,
 } from './batch.js';
 import { toWireError } from './wireError.js';
+import { negativeVerdict } from './verdict.js';
 
 export interface AgentCommand {
   cmd: string;
@@ -274,7 +275,13 @@ export class AgentSession implements AgentSessionRunner {
       // A ref failure already took a snapshot to build its recovery context,
       // which advanced the baseline. Observing again would render an empty
       // delta and cost a second snapshot for it.
-      let recovered = false;
+      //
+      // Only true of the step that ran *last*: under `continueOnError` the
+      // steps after a recovered failure keep acting on the page, and their
+      // changes happened after that snapshot was taken. Suppressing the
+      // observation then would hide exactly the part the recovery snapshot
+      // does not contain.
+      let recoveredLast = false;
 
       for (const [index, step] of steps.entries()) {
         const command: AgentCommand = {
@@ -288,14 +295,28 @@ export class AgentSession implements AgentSessionRunner {
         const started = performance.now();
         try {
           const value = await this.dispatchOne(command);
+          // A command can succeed and still answer no. On the CLI that is
+          // exit 1, and a script is documented to stop there; the surface
+          // that does not want it (MCP) simply does not ask for it.
+          const verdict = request.stopOnVerdict ? negativeVerdict(step.cmd, value) : null;
           results.push({
             index,
             cmd: step.cmd,
-            ok: true,
+            ok: verdict === null,
             durationMs: Math.round(performance.now() - started),
             result: value,
+            ...(verdict ? { error: verdict } : {}),
           });
-          if (isMutating(step.cmd)) sawMutation = true;
+          if (isMutating(step.cmd)) {
+            sawMutation = true;
+            // A mutation after a recovery snapshot is exactly what that
+            // snapshot cannot describe, so the observation is owed again.
+            recoveredLast = false;
+          }
+          if (verdict) {
+            failedStep ??= index;
+            if (!request.continueOnError) break;
+          }
         } catch (error) {
           const wire = toWireError(error);
           results.push({
@@ -306,7 +327,7 @@ export class AgentSession implements AgentSessionRunner {
             error: wire,
           });
           failedStep ??= index;
-          recovered ||= wire.recoverySnapshot !== undefined;
+          recoveredLast = wire.recoverySnapshot !== undefined;
           // Stop here. The remaining steps were written for a page state this
           // batch never reached, and running them anyway produces output that
           // reads like an application answer rather than a step that failed.
@@ -316,11 +337,14 @@ export class AgentSession implements AgentSessionRunner {
 
       const skipped = steps.length - results.length;
       const observation =
-        observe && sawMutation && !recovered ? await this.captureObservation() : null;
+        observe && sawMutation && !recoveredLast ? await this.captureObservation() : null;
       // The tripwire is a journal read, not a snapshot, so it still answers
       // "did any step in this batch make the application throw" on the paths
       // that skipped the snapshot — a recovery snapshot, a read-only batch.
-      const logs = observation?.logs ?? (observe ? this.takeLogTripwire().logs : undefined);
+      // Those paths take the same ordering barrier, so the count means one
+      // thing on all of them rather than being weaker where it is cheaper.
+      const logs =
+        observation?.logs ?? (observe ? (await this.settledLogTripwire()).logs : undefined);
       return {
         ok: skipped === 0 && results.every((step) => step.ok),
         steps: boundBatchSteps(results),
@@ -347,21 +371,59 @@ export class AgentSession implements AgentSessionRunner {
   }
 
   /**
+   * The tripwire, taken after one BiDi round trip so the events the last
+   * action caused have certainly arrived.
+   *
+   * Console capture and commands share one WebSocket, in order: a reply to a
+   * request sent *after* the action proves every event the browser had already
+   * emitted was delivered first. Nothing else on this path provides that — the
+   * snapshot runs over Classic on purpose — so without the barrier the count
+   * is a race the page usually loses and occasionally wins, which is the worst
+   * kind of check. `expect no-errors` takes the same barrier for the same
+   * reason.
+   *
+   * A failed barrier does not fail the action — it was not an answer about the
+   * page — but it is not hidden either: the count goes out marked unsettled,
+   * because `errors: 0` is an affirmative claim everywhere else here and an
+   * unconfirmed zero is not one.
+   */
+  private async settledLogTripwire(): Promise<{ logs?: LogTripwire }> {
+    const browser = this.ctx.handle.peek();
+    let settled = true;
+    if (browser && this.journal.isCapturing) {
+      settled = await browser
+        .activePage()
+        .then((page) => page.url())
+        .then(() => true)
+        .catch(() => false);
+    }
+    return this.takeLogTripwire(settled);
+  }
+
+  /**
    * The error tripwire for everything since the previous observation, moving
    * the baseline forward as it reports.
    *
    * Called exactly once per observation — it is a read *and* an advance, so
    * calling it twice would report the second window as empty.
    */
-  private takeLogTripwire(): { logs?: LogTripwire } {
+  private takeLogTripwire(settled = true): { logs?: LogTripwire } {
     // No capture at all (a Classic session has no journal events) is not the
     // same answer as "no errors", so say nothing rather than say zero.
     if (!this.journal.isCapturing) return {};
     const since = this.lastLogCursor;
-    const { errors, dropped } = this.journal.countErrorsSince(since);
+    const { errors, dropped, droppedExact } = this.journal.countErrorsSince(since);
     this.lastLogCursor = this.journal.cursor;
     return {
-      logs: { errors, logCursor: since, ...(dropped > 0 ? { logsDropped: dropped } : {}) },
+      logs: {
+        errors,
+        logCursor: since,
+        // The qualifier travels with the number it qualifies, or the number
+        // arrives at an agent looking more precise than the journal can be.
+        ...(dropped > 0 ? { logsDropped: dropped } : {}),
+        ...(dropped > 0 && !droppedExact ? { logsDroppedExact: false as const } : {}),
+        ...(settled ? {} : { logsSettled: false as const }),
+      },
     };
   }
 
@@ -400,22 +462,25 @@ export class AgentSession implements AgentSessionRunner {
     if (dialog !== null) {
       return {
         delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)`,
-        ...this.takeLogTripwire(),
+        ...(await this.settledLogTripwire()),
       };
     }
 
     const before = this.ctx.tracker.current;
     const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
-    // Counted after the snapshot, not before it: the round trip is a few tens
-    // of milliseconds during which an error the action caused can still
-    // arrive over BiDi. Reading the journal itself costs no round trip.
+    // Counted after an explicit BiDi barrier, not merely after the snapshot.
+    // The snapshot deliberately runs over Classic, so its round trip orders
+    // nothing against the BiDi event stream the journal is fed from: it made
+    // the count *usually* right, and an uncaught exception the action caused
+    // could still land after it under load. The barrier makes it always right.
     if (!snap) {
       return {
         delta: 'post-action snapshot unavailable',
         snapshot: null,
-        ...this.takeLogTripwire(),
+        ...(await this.settledLogTripwire()),
       };
     }
+    const logs = await this.settledLogTripwire();
 
     // Ordinary failures throw above. A failed action on a previously issued
     // ref is the one exception: its attached recovery snapshot advances the
@@ -424,7 +489,7 @@ export class AgentSession implements AgentSessionRunner {
     const snapshot = this.ctx.tracker.current;
     return {
       ...(delta ? { delta } : {}),
-      ...this.takeLogTripwire(),
+      ...logs,
       snapshot,
       ...(snapshot
         ? {

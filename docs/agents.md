@@ -188,9 +188,9 @@ There is deliberately no equivalent of a "run this function against the driver"
 tool. Handing an agent a callback that executes in the automation process is
 remote code execution by another name: the agent reads a web page, the page
 contains instructions, and the instructions become code running with your
-shell's privileges. Playwright renamed its own version to
-`browser_run_code_unsafe` and now documents it as RCE-equivalent and suitable
-only for trusted clients, after exactly that escape was demonstrated.
+shell's privileges. Playwright's own version of the tool is named
+`browser_run_code_unsafe` and is documented as suitable only for trusted
+clients.
 
 So there is no flag to enable and no capability to audit here. When a flow needs
 real logic — custom waits, sequencing, dynamic interception — write it with the

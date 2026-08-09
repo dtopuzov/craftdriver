@@ -367,16 +367,16 @@ describe('the error tripwire', () => {
     fake.emitLog(consoleMsg('shouted', 'error', 'error'));
 
     // Both spellings of "an error", exactly as `logs --kind error` counts them.
-    expect(journal.countErrorsSince(0)).toEqual({ errors: 2, dropped: 0 });
+    expect(journal.countErrorsSince(0)).toEqual({ errors: 2, dropped: 0, droppedExact: true });
 
     const cursor = journal.cursor;
     expect(cursor).toBe(3);
     // Nothing new since: the tripwire must not keep re-reporting an error the
     // agent has already been told about.
-    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 0, dropped: 0 });
+    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 0, dropped: 0, droppedExact: true });
 
     fake.emitLog(jsError('again'));
-    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 1, dropped: 0 });
+    expect(journal.countErrorsSince(cursor)).toEqual({ errors: 1, dropped: 0, droppedExact: true });
   });
 
   it('reports eviction inside the window, so a count is never silently low', () => {
@@ -389,6 +389,76 @@ describe('the error tripwire', () => {
     // qualification would be exactly the silent all-clear this exists to stop.
     expect(counted.errors).toBe(0);
     expect(counted.dropped).toBeGreaterThan(0);
+  });
+
+  it('counts evicted errors, not evicted entries', () => {
+    // A page that merely talks a lot evicts constantly. Calling that a hole in
+    // the error count cried wolf on every busy page — and the signal has to
+    // mean something, because `expect no-errors` refuses to answer on it.
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES + 50; i++) fake.emitLog(consoleMsg(`m${i}`));
+    expect(journal.countErrorsSince(0)).toEqual({ errors: 0, dropped: 0, droppedExact: true });
+
+    fake.emitLog(jsError('one'));
+    fake.emitLog(jsError('two'));
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES; i++) fake.emitLog(consoleMsg(`n${i}`));
+
+    // Both errors are gone now, and both are counted — exactly, not as the
+    // distance between sequence numbers.
+    expect(journal.countErrorsSince(0)).toEqual({ errors: 0, dropped: 2, droppedExact: true });
+  });
+
+  it('counts only the evicted errors inside the asked-for window', () => {
+    fake.emitLog(jsError('before the window'));
+    const cursor = journal.cursor;
+    fake.emitLog(jsError('inside the window'));
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES + 5; i++) fake.emitLog(consoleMsg(`m${i}`));
+
+    expect(journal.countErrorsSince(0).dropped).toBe(2);
+    expect(journal.countErrorsSince(cursor).dropped).toBe(1);
+  });
+
+  it('counts evicted errors exactly for any window it still has the seqs for', () => {
+    // 1001 errors: 500 retained, 501 evicted. Counting from cursor 1 must not
+    // include the error *at* seq 1 — an earlier version answered with the
+    // lifetime total here and overcounted by exactly that one.
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES * 2 + 1; i++) fake.emitLog(jsError(`e${i}`));
+
+    expect(journal.countErrorsSince(1)).toEqual({
+      errors: MAX_JOURNAL_ENTRIES,
+      dropped: MAX_JOURNAL_ENTRIES,
+      droppedExact: true,
+    });
+  });
+
+  it('says so when the window reaches past the seqs it kept', () => {
+    // The list of evicted error seqs is capped like the buffer. A window
+    // reaching into the part it no longer holds gets an upper bound rather
+    // than a figure the journal cannot support — never an under-count, which
+    // is the direction `expect no-errors` depends on.
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES * 2 + 1; i++) fake.emitLog(jsError(`e${i}`));
+
+    const whole = journal.countErrorsSince(0);
+    expect(whole.droppedExact).toBe(false);
+    expect(whole.dropped).toBeGreaterThanOrEqual(MAX_JOURNAL_ENTRIES + 1);
+
+    // A recent cursor — what an observation actually hands back — is exact.
+    expect(journal.countErrorsSince(journal.cursor - 1)).toEqual({
+      errors: 1,
+      dropped: 0,
+      droppedExact: true,
+    });
+  });
+
+  it('forgets evicted errors on clear, so the hole is not permanent', () => {
+    // `logs clear` is the documented way out of an undecidable window. It has
+    // to actually work, or one eviction leaves `expect no-errors` unable to
+    // answer for the rest of the session.
+    fake.emitLog(jsError('gone'));
+    for (let i = 0; i < MAX_JOURNAL_ENTRIES + 5; i++) fake.emitLog(consoleMsg(`m${i}`));
+    expect(journal.countErrorsSince(0).dropped).toBe(1);
+
+    journal.clear();
+    expect(journal.countErrorsSince(0)).toEqual({ errors: 0, dropped: 0, droppedExact: true });
   });
 
   it('says nothing rather than zero when capture never started', () => {
@@ -406,7 +476,22 @@ describe('formatting the tripwire', () => {
   it('names the count, the cursor, and any hole in it', () => {
     expect(formatLogTripwire({ errors: 2, logCursor: 8 })).toBe('errors: 2 (logCursor 8)');
     expect(formatLogTripwire({ errors: 2, logCursor: 8, logsDropped: 30 })).toContain(
-      '30 entries evicted',
+      '30 evicted before they could be read',
+    );
+  });
+
+  it('renders an upper bound as one, rather than as a count', () => {
+    // This line is what the CLI's pretty mode and the MCP text block show, so
+    // it is where "501" would otherwise be read as a figure the journal can
+    // actually stand behind.
+    expect(
+      formatLogTripwire({ errors: 2, logCursor: 8, logsDropped: 501, logsDroppedExact: false }),
+    ).toContain('up to 501 evicted before they could be read');
+  });
+
+  it('says when delivery was never confirmed', () => {
+    expect(formatLogTripwire({ errors: 0, logCursor: 8, logsSettled: false })).toContain(
+      'would not confirm delivery',
     );
   });
 });

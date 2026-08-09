@@ -182,6 +182,12 @@ it returns **one observation, not one per step**, with `delta` accumulating
 what every step changed; and a failed step keeps its `recoverySnapshot`. It
 never heals, retries, or substitutes a selector.
 
+"Failure" here means a tool that failed, not a read that answered no:
+`browser_read what=exists` finding nothing is a successful step with a `false`
+in it, and `browser_expect` is the tool that turns an unwanted answer into a
+stopped batch. (The CLI, which has exit statuses to honour, treats `exists` and
+`a11y --check` as assertions in a script — that difference is deliberate.)
+
 Batch only what is already known. Return and look whenever the next selector
 comes from the previous step's result, the flow crosses a navigation or a
 decision, or a fresh snapshot is needed.

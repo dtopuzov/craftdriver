@@ -98,6 +98,26 @@ describe('error codes', () => {
         expect(err.detail).toMatchObject({ matched: 0 });
       });
     }
+
+    // `dblclick` and every `mouse` action resolve their target through the
+    // Mouse controller instead, which is the CLI's `dblclick` and `mouse`
+    // commands. They were the last actions still reporting a bare TIMEOUT.
+    it('browser.mouse.dblclick() on a hidden element throws TIMEOUT_WAITING_VISIBLE', async () => {
+      const err = await expectCraftdriverError(
+        () => browser.mouse.dblclick('#hidden-input'),
+        ErrorCode.TIMEOUT_WAITING_VISIBLE
+      );
+      expect(err.message).toContain('#hidden-input');
+      expect(err.detail).toMatchObject({ matched: 1 });
+    });
+
+    it('browser.mouse.click() on a missing element throws NO_MATCH', async () => {
+      const err = await expectCraftdriverError(
+        () => browser.mouse.click('#definitely-not-here'),
+        ErrorCode.NO_MATCH
+      );
+      expect(err.detail).toMatchObject({ matched: 0 });
+    });
   });
 
   it('expect() failure throws EXPECT_MISMATCH', async () => {

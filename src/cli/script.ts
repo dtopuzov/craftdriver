@@ -84,7 +84,17 @@ export function compileScript(source: string, options: CompileOptions): Compiled
   for (const raw of source.split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
-    const sub = parseArgv(tokenize(line));
+    let tokens: string[];
+    try {
+      tokens = tokenize(line);
+    } catch (error) {
+      errors.push(
+        `error: ${(error as Error).message} in: ${line}\n` +
+          `hint: close the quote, or drop it if the value contains no spaces\n`
+      );
+      continue;
+    }
+    const sub = parseArgv(tokens);
     if (!sub) continue;
     // A malformed line must not pass silently. Skipping every `__…`
     // pseudo-command meant `click #pay --forse` did nothing at all and the
@@ -138,10 +148,22 @@ export function compileScript(source: string, options: CompileOptions): Compiled
   return { steps, errors };
 }
 
-/** Minimal shell-like tokeniser: supports single and double quotes. */
+/**
+ * Minimal shell-like tokeniser: supports single and double quotes.
+ *
+ * Two rules a naive version gets wrong, both of which a shell gets right:
+ *
+ * - **A quoted empty string is an argument.** `fill '#search' ''` is how a
+ *   field is emptied, and dropping the `''` turned that into `fill '#search'`
+ *   — a usage error about a missing value, for a line that was correct.
+ * - **An unterminated quote is an error, not a token.** `click '#save` used to
+ *   tokenise as `click #save` and run, so the day the selector genuinely was
+ *   `'#save` the script would have done something else entirely.
+ */
 export function tokenize(line: string): string[] {
   const out: string[] = [];
   let cur = '';
+  let quoted = false;
   let quote: string | null = null;
   for (const ch of line) {
     if (quote) {
@@ -154,17 +176,28 @@ export function tokenize(line: string): string[] {
     }
     if (ch === '"' || ch === "'") {
       quote = ch;
+      quoted = true;
       continue;
     }
     if (ch === ' ' || ch === '\t') {
-      if (cur) {
+      if (cur || quoted) {
         out.push(cur);
         cur = '';
+        quoted = false;
       }
       continue;
     }
     cur += ch;
   }
-  if (cur) out.push(cur);
+  if (quote) throw new UnterminatedQuoteError(quote);
+  if (cur || quoted) out.push(cur);
   return out;
+}
+
+/** A line that opened a quote and never closed it. Thrown by {@link tokenize}. */
+export class UnterminatedQuoteError extends Error {
+  constructor(readonly quote: string) {
+    super(`unterminated ${quote === '"' ? 'double' : 'single'} quote`);
+    this.name = 'UnterminatedQuoteError';
+  }
 }

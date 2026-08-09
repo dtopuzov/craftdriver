@@ -213,14 +213,24 @@ export async function handleDaemonRequest(
 
     if (req.cmd === 'batch') {
       // Validated here as well as on the CLI side, for the same reason the
-      // session name is: a socket peer is not necessarily the CLI, and a
-      // malformed batch must cost no browser work.
+      // session name is: a socket peer is not necessarily the CLI.
+      //
+      // This checks the *shape* — step count, argument types, command names
+      // that must never run in a batch — not that every name is a command the
+      // dispatcher implements. A raw peer that sends an unknown one therefore
+      // finds out at that step rather than before the first, which the two
+      // real clients never hit: the CLI compiles its script up front, and the
+      // MCP server resolves every step against the tool registry.
       const steps = validateBatchSteps(req.args?.steps);
       const observe = validateBatchObserve(req.args?.observe);
       const session = registry.get(validateSessionName(req.session));
       const outcome = await session.runBatch({
         steps,
         continueOnError: req.args?.continueOnError === true,
+        // Opt-in, and the CLI is what opts in: it has exit statuses, so a
+        // command that answered no is a step that failed there. A peer that
+        // does not ask keeps the plain reading, which is what MCP wants.
+        stopOnVerdict: req.args?.stopOnVerdict === true,
         ...(observe ? { observe } : {}),
       });
       return { id: req.id, ok: true, result: outcome };
@@ -271,6 +281,11 @@ export function renderObservedResult(detailed: AgentDetailedResult, observe: unk
     result.errors = detailed.logs.errors;
     result.logCursor = detailed.logs.logCursor;
     if (detailed.logs.logsDropped !== undefined) result.logsDropped = detailed.logs.logsDropped;
+    // Both qualifiers are only ever present as `false`, and both qualify a
+    // number beside them: an unconfirmed zero must not read like a confirmed
+    // one, and an upper bound must not read like a count.
+    if (detailed.logs.logsDroppedExact === false) result.logsDroppedExact = false;
+    if (detailed.logs.logsSettled === false) result.logsSettled = false;
   }
   return result;
 }

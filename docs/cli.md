@@ -92,6 +92,11 @@ What a batch guarantees:
   `--observe=delta` there accumulates what the earlier steps changed. It is
   refused on any other step.
 - **A failed step carries its `recoverySnapshot`** when the error had one.
+- **The same exit codes as the same commands run singly.** A step that executed
+  but answered no — `exists` matching nothing, a failed `a11y --check` — is a
+  failed step here exactly as it is exit 1 on its own and in an `--ephemeral`
+  script, and it stops the batch like any other failure. MCP is deliberately
+  different: there a read answers and `browser_expect` is what fails.
 - **No healing, no retry, no substituted selector** — ever. A batch executes
   what you wrote and reports what happened.
 
@@ -222,7 +227,14 @@ as all-clear; the counter closes that hole for a handful of tokens instead of a
 defensive `logs` call after every action. `errors: 0` is an affirmative answer,
 so the fields are omitted entirely — never reported as zero — when the session
 cannot capture logs at all. `logsDropped` appears only when the journal evicted
-entries inside the window, which makes the count a lower bound.
+*errors* inside the window, which makes the count a lower bound — a page that
+merely made a lot of requests does not raise it. Two qualifiers travel with
+those numbers, and both appear only as `false`: `logsDroppedExact` says the
+window reaches back past the evictions the journal still has sequence numbers
+for, so `logsDropped` is an upper bound rather than a figure; `logsSettled`
+says the driver would not confirm that pending events had been delivered, so
+`errors` is what had arrived rather than what the action caused, and the
+session itself is unwell.
 
 ```bash
 $ npx craftdriver click '#btn-console-error' --observe=delta
@@ -272,9 +284,15 @@ Run `craftdriver --help` for the full list.
 
 ## Assertions — a verdict, not a reading
 
-`find`, `exists`, `text` and `is` are **reads**: they answer, exit 0 whatever
-the answer is, and leave the judgement to you. `is visible '#gone'` reporting
+`find`, `text` and `is` are **reads**: they answer, exit 0 whatever the answer
+is, and leave the judgement to you. `is visible '#gone'` reporting
 `{"result":false}` is a successful command.
+
+`exists` is the exception among the reads: it answers *and* reports that answer
+as the exit status (1 when nothing matched), because agents branch on it in a
+shell. In a script — where there is no branch — that makes it an assertion, so
+it stops the run like any other failing step; `--continue-on-error` is the way
+to say you meant it as an independent probe.
 
 `expect` is the other half — the same auto-waiting the library's matchers do,
 but it **fails**: exit 1, an `EXPECT_MISMATCH`, and a message that names the
@@ -317,6 +335,26 @@ what has been captured when it runs. Use `logs wait` to wait for a specific
 message. On a session that cannot capture logs at all it fails with
 `STATE_INVALID` rather than passing — "nobody was listening" must not read as
 "nothing happened".
+
+That third outcome is the whole shape of this command: a buffered error is an
+ordinary `EXPECT_MISMATCH`, but a *green* verdict is an affirmative claim, so
+it is only made when the window can support one. Two things stop it, both
+`STATE_INVALID`:
+
+- **Errors were evicted** from the bounded journal inside the window. Absence
+  of evidence is not evidence of absence; `--since <logCursor>` narrows to a
+  window that is still intact, and `logs clear` starts a fresh one. Evicted
+  *network* rows do not trigger this — only lost errors — so a chatty page
+  still gets a plain verdict.
+- **The driver would not confirm delivery.** The check takes one BiDi round
+  trip first, so an error the last action caused cannot still be in flight; if
+  that round trip fails, the session is unwell and the count is unconfirmed.
+
+An error still in the buffer outranks both: the page logged one, so the answer
+is "no" rather than "cannot tell", and the retained errors are quoted with a
+note that the count is a lower bound. Where the loss can only be bounded rather
+than counted, every message and `detail` says `up to N` and carries
+`logsDroppedExact: false` — the same qualifier an observation uses.
 
 **This is what makes a batch able to check its outcome.** Without an assertion
 step, `craftdriver run` can report that all four steps executed and nothing

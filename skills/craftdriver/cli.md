@@ -48,7 +48,11 @@ Every observed result carries `errors` and `logCursor` alongside the delta:
 value that reads exactly those entries. Treat a non-zero count as a reason to
 run `logs --kind error --since <logCursor>` before reporting the action as
 successful — `(no a11y changes)` alone does not mean the page was happy.
-`logsDropped` means entries were evicted, so the count is a lower bound.
+`logsDropped` means errors were evicted before they could be read (with
+`logsDroppedExact: false` when even that number is only an upper bound) and
+`logsSettled: false` means the driver would not confirm delivery; either way
+the count is a lower bound, and `expect no-errors` reports such a window as
+undecidable rather than clean.
 
 The daemon uses a Unix socket and is not available on Windows. On Windows, or in
 a sandbox that cannot keep a background process, use the configured MCP server
@@ -131,7 +135,9 @@ its own `ok`, `durationMs` and result. It returns one observation, not one per
 step: put `--observe` on the last step — it is refused anywhere else — and
 `--observe=delta` there accumulates what the earlier steps changed. A failed
 step keeps its `recoverySnapshot`. Nothing is ever retried, healed, or
-substituted.
+substituted. A step that ran but answered no (`exists` matching nothing, a
+failed `a11y --check`) counts as a failed step, exactly as it is exit 1 run
+singly — `--continue-on-error` is how you say it was an independent probe.
 
 Batch only what is already known. Return and look between steps whenever the
 next selector comes from the previous step's delta, the flow crosses a
@@ -179,7 +185,11 @@ so it pairs with the `errors` counter in an observation: the counter says
 whether to look, the assertion decides the run. It counts from the start of the
 session — narrow it with `--since N` using a `logCursor` you already have — and
 it reads what has been captured rather than waiting, so use `logs wait` when
-you need to wait for a specific message.
+you need to wait for a specific message. It answers `STATE_INVALID` instead of
+passing whenever the window cannot support a green verdict — errors evicted
+from the bounded journal, or a driver that would not confirm delivery — because
+an incomplete history cannot prove there were none. A retained error still
+outranks that: it is an ordinary failure, with the error quoted.
 
 ## Named sessions
 

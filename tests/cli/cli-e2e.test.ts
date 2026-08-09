@@ -383,6 +383,18 @@ describe('CLI end-to-end flows', () => {
     expect(missing.lines.at(-1)!.result).toMatchObject({ exists: false });
     expect(missing.exitCode).toBe(1);
 
+    // And it stops the script, like any other failing step: in a script there
+    // is nothing to branch on, so a probe that answered no is an assertion
+    // that failed. `--continue-on-error` is the way to mean the other thing.
+    const stopped = await runCli(`
+      go ${EXAMPLES_BASE_URL}/agent-actions.html
+      exists #definitely-not-here
+      fill '#nickname' never-reached
+    `);
+    expect(stopped.exitCode).toBe(1);
+    expect(stopped.lines).toHaveLength(2);
+    expect(stopped.stderr).toContain('stopped at failed step 2 of 3');
+
     const found = await runCli(`
       go ${EXAMPLES_BASE_URL}/agent-actions.html
       exists #save

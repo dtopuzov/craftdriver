@@ -103,9 +103,10 @@ where `delta` accumulates what the earlier steps changed. Nothing is retried or
 substituted.
 
 End with an `expect` step when the flow has an outcome worth checking:
-`expect visible|text|url|no-errors` auto-wait and then *fail* (exit 1), where
-`find`/`exists`/`text`/`is` only report. Without one, a batch tells you every
-step ran — never that the application did the right thing.
+`expect visible|text|url` auto-wait and then *fail* (exit 1), and
+`expect no-errors` reports what the page has logged without waiting, where
+`find`/`text`/`is` only report. Without one, a batch tells you every step ran —
+never that the application did the right thing.
 
 Stop batching — return and look — whenever the next selector comes from the
 previous step's delta, the flow crosses a navigation or a wizard step, an

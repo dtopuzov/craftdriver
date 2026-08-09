@@ -16,10 +16,11 @@ import {
   batchRejection,
   renderBatchOutcome,
   validateBatchSteps,
+  MAX_BATCH_FRAME_BYTES,
   MAX_BATCH_RESULT_BYTES,
   MAX_BATCH_STEPS,
 } from '../../src/cli/batch.js';
-import { compileScript } from '../../src/cli/script.js';
+import { compileScript, tokenize } from '../../src/cli/script.js';
 import { renderObservedResult } from '../../src/cli/daemon.js';
 
 const PAGE = {
@@ -264,6 +265,49 @@ describe('a batch returns one observation, not one per step', () => {
     await session.close();
   });
 
+  it('carries the tripwire, and its qualifiers, out of the session', async () => {
+    // The batch is the surface where an agent is least likely to look at the
+    // logs directly, so the qualifiers on the count are load-bearing here: an
+    // upper bound and an unconfirmed zero have to survive the whole way out.
+    let emit: ((message: Record<string, unknown>) => void) | undefined;
+    const browser = {
+      getDialogMessage: vi.fn(async () => {
+        throw new Error('no such alert');
+      }),
+      quit: vi.fn().mockResolvedValue(undefined),
+      setViewportSize: vi.fn().mockResolvedValue(undefined),
+      get logs() {
+        return {
+          onLog(handler: (message: Record<string, unknown>) => void) {
+            emit = handler;
+            return () => {};
+          },
+        };
+      },
+      get network() {
+        return { on: () => () => {} };
+      },
+      activePage: async () => ({ url: async () => 'https://x.test/' }),
+    } as unknown as Browser;
+    const session = sessionWith({ browser });
+
+    // A read-only batch, so the observation is skipped and the tripwire comes
+    // from the fallback path — the one that used to answer without a barrier.
+    await session.run({ cmd: 'text', args: {} });
+    for (let i = 0; i < 1001; i++) {
+      emit?.({ type: 'javascript', level: 'error', text: `e${i}`, timestamp: new Date() });
+    }
+
+    const outcome = await session.runBatch({
+      observe: 'delta',
+      steps: [{ cmd: 'text', args: {} }],
+    });
+
+    expect(outcome.logs).toMatchObject({ logsDropped: 501, logsDroppedExact: false });
+    expect(outcome.logs?.errors).toBe(500);
+    await session.close();
+  });
+
   it('does not snapshot again when a failure already attached a recovery snapshot', async () => {
     const { browser, getDialogMessage } = fakeBrowser();
     const dispatcher: AgentDispatcher = vi.fn(async (ctx, cmd) => {
@@ -288,6 +332,37 @@ describe('a batch returns one observation, not one per step', () => {
     expect(outcome.steps[1].error?.recoverySnapshot).toBe('e1: button "Save"');
     expect(getDialogMessage).not.toHaveBeenCalled();
     expect(outcome.delta).toBeUndefined();
+    await session.close();
+  });
+
+  it('still observes when steps ran after the recovered failure', async () => {
+    const { browser, getDialogMessage } = fakeBrowser();
+    const dispatcher: AgentDispatcher = vi.fn(async (ctx, cmd) => {
+      await ctx.handle.get();
+      if (cmd === 'click') {
+        throw new CraftdriverError(ErrorCode.NO_MATCH, 'gone', {
+          recoverySnapshot: 'e1: button "Save"',
+        });
+      }
+      return { cmd };
+    });
+    const session = sessionWith({ browser, dispatcher });
+
+    // The recovery snapshot was taken before the `fill` that follows it, so it
+    // cannot describe what that fill changed. Suppressing the observation here
+    // used to lose the only account of the rest of the batch.
+    const outcome = await session.runBatch({
+      observe: 'delta',
+      continueOnError: true,
+      steps: [
+        { cmd: 'click', args: { selector: 'ref=e4' } },
+        { cmd: 'fill', args: { selector: '#nickname' } },
+      ],
+    });
+
+    expect(outcome.steps[0].error?.recoverySnapshot).toBe('e1: button "Save"');
+    expect(getDialogMessage).toHaveBeenCalledTimes(1);
+    expect(outcome.delta).toBe('post-action snapshot unavailable');
     await session.close();
   });
 });
@@ -341,6 +416,24 @@ describe('compiling a script into a batch', () => {
     });
     expect(errors).toEqual([]);
   });
+
+  it('keeps a quoted empty argument', () => {
+    // How a field is emptied. Dropping the `''` turned a correct line into a
+    // usage error about a missing value.
+    expect(tokenize("fill '#search' ''")).toEqual(['fill', '#search', '']);
+    const { steps, errors } = compile("fill '#search' ''");
+    expect(errors).toEqual([]);
+    expect(steps[0].args).toMatchObject({ selector: '#search', value: '' });
+  });
+
+  it('refuses a line whose quote is never closed', () => {
+    // It used to tokenise as `click #save` and run, so the day a selector
+    // really did start with a quote the script did something else instead.
+    expect(() => tokenize("click '#save")).toThrow(/unterminated single quote/);
+    const { steps, errors } = compile(["click '#save", 'text #log'].join('\n'));
+    expect(steps.map((step) => step.cmd)).toEqual(['text']);
+    expect(errors[0]).toContain('unterminated single quote');
+  });
 });
 
 describe('an untrusted step list', () => {
@@ -381,6 +474,152 @@ describe('bounding a batch result', () => {
     const steps = [{ index: 0, cmd: 'text', ok: true, durationMs: 1, result: 'saved' }];
     expect(boundBatchSteps(steps)).toEqual(steps);
   });
+
+  it('trims the errors too, so a sweep of failures cannot outgrow the frame', () => {
+    // What `--continue-on-error` over a page that navigated can really produce:
+    // every step fails on a stale ref, and every failure carries a recovery
+    // snapshot. Unbounded, this is the case that overruns the daemon's frame
+    // limit and discards the batch after all the browser work is done.
+    const bounded = boundBatchSteps(
+      Array.from({ length: MAX_BATCH_STEPS }, (_, index) => ({
+        index,
+        cmd: 'click',
+        ok: false,
+        durationMs: 5,
+        error: {
+          code: ErrorCode.NO_MATCH,
+          message: `no element matched ref=e${index}`,
+          hint: 'h'.repeat(2_000),
+          detail: { snapshot: 'd'.repeat(4_000) },
+          recoverySnapshot: 's'.repeat(12 * 1024),
+        },
+      }))
+    );
+
+    expect(Buffer.byteLength(JSON.stringify(bounded), 'utf8')).toBeLessThanOrEqual(
+      MAX_BATCH_FRAME_BYTES
+    );
+    // The first failure — the one an agent acts on — keeps everything.
+    expect(bounded[0].error?.recoverySnapshot).toHaveLength(12 * 1024);
+    expect(bounded[0].truncated).toBeUndefined();
+    // The rest keep the part that cannot be reconstructed from the page.
+    for (const step of bounded.slice(1)) {
+      expect(step.error?.code).toBe(ErrorCode.NO_MATCH);
+      expect(step.error?.message).toContain('no element matched');
+    }
+    expect(bounded.at(-1)?.truncated).toBe(true);
+    expect(bounded.at(-1)?.error?.recoverySnapshot).toBeUndefined();
+  });
+
+  it('holds the ceiling against content that costs more once serialized', () => {
+    // The bound is on the frame, and the frame is JSON: a quote costs two
+    // bytes there, a control character six. Bounding raw text instead let 25
+    // maximum-sized errors serialize to ~60 KB against a "ceiling" of 48 KB.
+    for (const filler of ['"', '\u0001', '😀', 'a']) {
+      const bounded = boundBatchSteps(
+        Array.from({ length: MAX_BATCH_STEPS }, (_, index) => ({
+          index,
+          cmd: filler.repeat(32),
+          ok: false,
+          durationMs: 5,
+          result: filler.repeat(40 * 1024),
+          error: {
+            code: ErrorCode.DRIVER_ERROR,
+            message: filler.repeat(16 * 1024),
+            hint: filler.repeat(4 * 1024),
+            detail: { d: filler.repeat(8 * 1024) },
+            recoverySnapshot: filler.repeat(12 * 1024),
+          },
+        }))
+      );
+
+      expect(Buffer.byteLength(JSON.stringify(bounded), 'utf8')).toBeLessThanOrEqual(
+        MAX_BATCH_FRAME_BYTES
+      );
+      // Whatever else went, every step still says what failed.
+      for (const step of bounded) expect(step.error?.code).toBe(ErrorCode.DRIVER_ERROR);
+    }
+  });
+});
+
+describe('a step that succeeded and answered no', () => {
+  const dispatcher: AgentDispatcher = vi.fn(async (_ctx, cmd) => {
+    if (cmd === 'exists') return { exists: false, count: 0 };
+    if (cmd === 'a11y') {
+      return { checked: true, passed: false, minImpact: 'serious', counts: { violations: 3 } };
+    }
+    return { cmd };
+  });
+
+  it('is a failed step when the caller asked for verdicts, and stops the rest', async () => {
+    const session = sessionWith({ dispatcher });
+
+    const outcome = await session.runBatch({
+      stopOnVerdict: true,
+      steps: [
+        { cmd: 'go', args: {} },
+        { cmd: 'exists', args: { selector: '#gone' } },
+        { cmd: 'click', args: { selector: '#save' } },
+      ],
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failedStep).toBe(1);
+    expect(outcome.skipped).toBe(1);
+    expect(outcome.steps[1].error?.code).toBe(ErrorCode.NO_MATCH);
+    // The answer is still there: a verdict does not replace the result.
+    expect(outcome.steps[1].result).toMatchObject({ exists: false });
+    await session.close();
+  });
+
+  it('names a failed a11y --check as the assertion it opted into', async () => {
+    const session = sessionWith({ dispatcher });
+
+    const outcome = await session.runBatch({
+      stopOnVerdict: true,
+      steps: [{ cmd: 'a11y', args: { check: true } }],
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.steps[0].error?.code).toBe(ErrorCode.EXPECT_MISMATCH);
+    expect(outcome.steps[0].error?.message).toContain('3 serious+ violations');
+    await session.close();
+  });
+
+  it('is an ordinary answer for a caller that did not ask', async () => {
+    // MCP: `browser_read` is documented to answer rather than fail, and
+    // `browser_expect` is the tool that returns a verdict.
+    const session = sessionWith({ dispatcher });
+
+    const outcome = await session.runBatch({
+      steps: [
+        { cmd: 'exists', args: { selector: '#gone' } },
+        { cmd: 'click', args: { selector: '#save' } },
+      ],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ran).toBe(2);
+    await session.close();
+  });
+
+  it('runs the rest under continueOnError, still failing the batch', async () => {
+    const session = sessionWith({ dispatcher });
+
+    const outcome = await session.runBatch({
+      stopOnVerdict: true,
+      continueOnError: true,
+      steps: [
+        { cmd: 'exists', args: { selector: '#gone' } },
+        { cmd: 'click', args: { selector: '#save' } },
+      ],
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ran).toBe(2);
+    expect(outcome.skipped).toBe(0);
+    await session.close();
+  });
 });
 
 describe('rendering a batch for a human', () => {
@@ -406,7 +645,7 @@ describe('rendering a batch for a human', () => {
     expect(text).toContain('1 ✓ go  49ms');
     expect(text).toContain('2 ✗ fill  4980ms');
     expect(text).toContain('element exists but is not displayed');
-    expect(text).toContain('stopped at step 2 of 2; 1 later step not run');
+    expect(text).toContain('stopped at step 2 of 3; 1 later step not run');
     expect(text).toContain('+ e22: text "saved"');
   });
 });
@@ -456,6 +695,34 @@ describe('rendering an observation for a transport', () => {
     ) as Record<string, unknown>;
 
     expect(rendered.logsDropped).toBe(40);
+    // Exact by default: the qualifier is absent rather than true, so its
+    // presence always means the same thing.
+    expect(rendered.logsDroppedExact).toBeUndefined();
+  });
+
+  it('carries both qualifiers of the count, not just the count', () => {
+    // A number that reaches an agent must not look more precise, or more
+    // confirmed, than the journal that produced it.
+    const rendered = renderObservedResult(
+      {
+        value: {},
+        logs: {
+          errors: 0,
+          logCursor: 3,
+          logsDropped: 501,
+          logsDroppedExact: false,
+          logsSettled: false,
+        },
+      },
+      'delta',
+    ) as Record<string, unknown>;
+
+    expect(rendered).toMatchObject({
+      errors: 0,
+      logsDropped: 501,
+      logsDroppedExact: false,
+      logsSettled: false,
+    });
   });
 
   it('leaves an unobserved result alone', () => {
