@@ -82,6 +82,15 @@ function readFreshCachedDriver(cacheKey: string): string | undefined {
   return undefined;
 }
 
+/** Return the full fresh record when its version provenance also matters. */
+function readFreshCachedDriverEntry(cacheKey: string): MetadataEntry | undefined {
+  const cached = readMetadata()[cacheKey];
+  if (cached && Date.now() - cached.timestamp < ttlMs() && fs.existsSync(cached.driverPath)) {
+    return cached;
+  }
+  return undefined;
+}
+
 /** Record an auto-resolved driver path so subsequent resolves can reuse it. */
 function recordResolvedDriver(cacheKey: string, version: string, driverPath: string): void {
   const meta = readMetadata();
@@ -306,6 +315,39 @@ function detectBrowserVersion(
   return undefined;
 }
 
+function browserMajor(version: string): string | undefined {
+  return /^\d+/.exec(version)?.[0];
+}
+
+// Browser detection launches the selected binary with `--version`, which is
+// expensive enough to matter when one daemon owns several named sessions. A
+// browser cannot be replaced safely while that daemon is using it, so cache
+// the probe for this process only. Every new CLI/Node process revalidates the
+// persistent driver cache against the browser installed at that point.
+const detectedBrowserVersions = new Map<
+  string,
+  { browserPath: string; version: string } | undefined
+>();
+
+function detectBrowserVersionOnce(
+  candidates: string[]
+): { browserPath: string; version: string } | undefined {
+  const key = candidates.join('\0');
+  if (detectedBrowserVersions.has(key)) return detectedBrowserVersions.get(key);
+  const detected = detectBrowserVersion(candidates);
+  detectedBrowserVersions.set(key, detected);
+  return detected;
+}
+
+function chromeBrowserCandidates(browserPath?: string): string[] {
+  const platform = os.platform() as SupportedPlatform;
+  return browserPath ? [browserPath] : (CHROME_CANDIDATES[platform] ?? ['google-chrome']);
+}
+
+function downloadedChromeDriverPath(browserVersion: string): string {
+  return path.join(cacheDir(), 'chromedriver', browserVersion, cftPlatform(), driverBinName());
+}
+
 // ─── PATH probe ───────────────────────────────────────────────────────────────
 
 function commandOnPath(cmd: string): boolean {
@@ -336,8 +378,8 @@ interface CfTVersion {
 async function downloadChromedriver(browserVersion: string): Promise<string> {
   const platform = cftPlatform();
   const binName = driverBinName();
-  const driverDir = path.join(cacheDir(), 'chromedriver', browserVersion, platform);
-  const driverBin = path.join(driverDir, binName);
+  const driverBin = downloadedChromeDriverPath(browserVersion);
+  const driverDir = path.dirname(driverBin);
 
   // Cache hit: exact browser version already downloaded — always valid, no TTL.
   if (fs.existsSync(driverBin)) return driverBin;
@@ -597,18 +639,32 @@ export async function resolveChromeDriver(options?: {
     if (fs.existsSync(candidate)) return candidate;
   }
 
-  // 4. Auto-resolution cache. Once we've auto-resolved a chromedriver (step 7
-  //    below), reuse it for a TTL window instead of re-probing PATH (a blocking
-  //    `which` spawn, ~80ms) and re-launching Chrome to read its version
-  //    (`detectBrowserVersion`, a blocking spawnSync, ~340ms) on every single
-  //    Browser.launch(). Both stall the event loop, which is especially costly
-  //    when several browsers launch in parallel. Explicit config (the arg + env
-  //    vars checked above) always wins over this cache; only the auto-download
-  //    path writes it. TTL defaults to 24h, tunable via CRAFTDRIVER_DRIVER_TTL
-  //    (0 disables). Mirrors the metadata record geckodriver already keeps.
+  // 4. Auto-resolution cache. A Chrome auto-update can happen inside the TTL,
+  //    so a fresh timestamp alone is not sufficient: validate the record's
+  //    browser major against the currently selected Chrome before reusing it.
+  //    Detection is memoized for this process, which keeps named daemon
+  //    sessions cheap while every new process still catches an update. Explicit
+  //    config (steps 1-3.5) always wins over this cache.
   const cacheKey = `chromedriver/${cftPlatform()}`;
-  const cachedPath = readFreshCachedDriver(cacheKey);
-  if (cachedPath) return cachedPath;
+  const cached = readFreshCachedDriverEntry(cacheKey);
+  const browserCandidates = chromeBrowserCandidates(options?.browserPath);
+  let detected = cached ? detectBrowserVersionOnce(browserCandidates) : undefined;
+  let ignoredCache: { cachedBrowserVersion: string; currentBrowserVersion: string } | undefined;
+  if (cached) {
+    const cachedMajor = browserMajor(cached.version);
+    const detectedMajor = detected ? browserMajor(detected.version) : undefined;
+    if (!detectedMajor || cachedMajor === detectedMajor) return cached.driverPath;
+
+    ignoredCache = {
+      cachedBrowserVersion: cached.version,
+      currentBrowserVersion: detected!.version,
+    };
+    invalidateChromeDriverAutoResolutionCache(cached.driverPath);
+    process.stderr.write(
+      `[craftdriver] Ignoring cached chromedriver for Chrome ${cached.version}; ` +
+        `current Chrome is ${detected!.version}.\n`
+    );
+  }
 
   // 5. Locally installed chromedriver npm package.
   const localBin = path.resolve(
@@ -624,15 +680,32 @@ export async function resolveChromeDriver(options?: {
   if (!process.env.CRAFTDRIVER_SKIP_PATH_PROBE && commandOnPath('chromedriver'))
     return 'chromedriver';
 
-  // 7. Offline guard.
+  // 7. Reuse an exact-version binary even when the metadata record was stale
+  //    or missing. This path does no network I/O and is therefore valid in
+  //    offline mode; recording it repairs the fast-path metadata for the next
+  //    process.
+  detected ??= detectBrowserVersionOnce(browserCandidates);
+  if (detected) {
+    const exactCachedPath = downloadedChromeDriverPath(detected.version);
+    if (fs.existsSync(exactCachedPath)) {
+      recordResolvedDriver(cacheKey, detected.version, exactCachedPath);
+      return exactCachedPath;
+    }
+  }
+
+  // 8. Offline guard.
   if (process.env.CRAFTDRIVER_OFFLINE) {
     throw new Error(
-      'CRAFTDRIVER_OFFLINE is set and no chromedriver was found.\n' +
+      'CRAFTDRIVER_OFFLINE is set and no compatible chromedriver was found.\n' +
+        (ignoredCache
+          ? `Cached driver provenance was Chrome ${ignoredCache.cachedBrowserVersion}, ` +
+            `but the current browser is Chrome ${ignoredCache.currentBrowserVersion}.\n`
+          : '') +
         'Set CRAFTDRIVER_DRIVER_PATH to a local chromedriver binary.'
     );
   }
 
-  // 8. Detect the browser + download a matching driver from CfT, then record
+  // 9. Detect the browser + download a matching driver from CfT, then record
   //    the result in the auto-resolution cache read at step 4. If a custom
   //    browser binary was given, detect its version directly instead of
   //    probing the system Chrome candidate list (see resolveChromeDriver's
@@ -640,11 +713,7 @@ export async function resolveChromeDriver(options?: {
   //    the way Chrome/Chromium does — untested against anything that doesn't
   //    (e.g. Electron), so `browserPath` is documented as Chrome/Chromium-only
   //    for now.
-  const p = os.platform() as SupportedPlatform;
-  const candidates = options?.browserPath
-    ? [options.browserPath]
-    : (CHROME_CANDIDATES[p] ?? ['google-chrome']);
-  const detected = detectBrowserVersion(candidates);
+  detected ??= detectBrowserVersionOnce(browserCandidates);
   if (!detected) {
     throw new Error(
       options?.browserPath
@@ -660,6 +729,32 @@ export async function resolveChromeDriver(options?: {
   // Refresh TTL record regardless of whether we downloaded a new binary.
   recordResolvedDriver(cacheKey, detected.version, driverPath);
   return driverPath;
+}
+
+export interface ChromeDriverResolutionInfo {
+  browserPath?: string;
+  browserVersion?: string;
+  driverPath: string;
+  driverVersion?: string;
+}
+
+/**
+ * Resolve the exact ChromeDriver CraftDriver would launch and report both
+ * sides of the browser/driver pairing. Intended for benchmark manifests and
+ * startup diagnostics; ordinary launches use {@link resolveChromeDriver} and
+ * avoid the extra driver `--version` probe.
+ */
+export async function inspectChromeDriverResolution(options?: {
+  binaryPath?: string;
+  browserPath?: string;
+}): Promise<ChromeDriverResolutionInfo> {
+  const detected = detectBrowserVersionOnce(chromeBrowserCandidates(options?.browserPath));
+  const driverPath = await resolveChromeDriver(options);
+  return {
+    ...(detected ? { browserPath: detected.browserPath, browserVersion: detected.version } : {}),
+    driverPath,
+    driverVersion: readChromeDriverVersion(driverPath),
+  };
 }
 
 /**
