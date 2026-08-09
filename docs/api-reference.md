@@ -190,13 +190,15 @@ Exports that are public but not yet assigned to a feature group.
 
 | Symbol | Kind | Summary | Docs |
 |---|---|---|---|
+| `ChromeDriverResolutionInfo` | type | — | — |
 | `ElectronMainConnectInfo` | type | — | [electron](electron.md) |
 | `ElectronMock` | type | A replacement for a single `electron.<api>.<fn>` main-process method, returned by `browser.electron.mock()`. Records every call, returns a scripted value, and restores the original method on `restore()` or `browser.quit()`. | — |
 | `ElectronMockCall` | type | One recorded invocation of a mocked Electron main-process method. | — |
 | `ElectronRemoteOptions` | type | Extra context ElectronRemote needs beyond the inspector endpoint. | [electron](electron.md) |
+| `inspectChromeDriverResolution` | function | Resolve the exact ChromeDriver CraftDriver would launch and report both sides of the browser/driver pairing. Intended for benchmark manifests and startup diagnostics; ordinary launches use {@link resolveChromeDriver} and avoid the extra driver `--version` probe. | — |
 | `PageMatcher` | type | Selects a top-level page by `url` and/or `title` for {@link Browser.waitForPage}. A string matches as a substring; a `RegExp` is tested. When both fields are given, both must match. | [browser-api](browser-api.md) |
 | `RemoteAuth` | type | — | — |
 | `RemoteWebDriverOptions` | type | Options for connecting to any W3C-compatible remote WebDriver endpoint — a self-hosted Selenium Grid, BrowserStack, or another cloud provider. Provider-specific detail (BrowserStack's `bstack:options`, etc.) is forwarded through `capabilities` without schema conversion. | — |
 | `SessionStateCookie` | type | — | — |
 
-Total exports: **101**.
+Total exports: **103**.
