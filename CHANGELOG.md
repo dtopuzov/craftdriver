@@ -1,3 +1,17 @@
+## [1.13.1](https://github.com/dtopuzov/craftdriver/compare/v1.13.0...v1.13.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **agent:** avoid redundant browser recovery turns ([7b91ac4](https://github.com/dtopuzov/craftdriver/commit/7b91ac4ed40eb5fec43493d92c622cca76669949))
+* **docs:** update ChromeDriver provenance API ([cd70098](https://github.com/dtopuzov/craftdriver/commit/cd70098457521e9cdd8687db47edff0ec0092772))
+* **driver:** expose ChromeDriver provenance ([ddababb](https://github.com/dtopuzov/craftdriver/commit/ddababbb054e67bfd87669607b67123b29e26806))
+* **driver:** retain replacement startup diagnostics ([394d1fa](https://github.com/dtopuzov/craftdriver/commit/394d1fae1d197f89aae83f6ee873870b2693a11e))
+* **driver:** retry timed-out local Chrome sessions ([a8ab15e](https://github.com/dtopuzov/craftdriver/commit/a8ab15e838a3b56c0091b101b85253d509eca359))
+* **driver:** validate cached ChromeDriver against Chrome ([d69e2db](https://github.com/dtopuzov/craftdriver/commit/d69e2db06d9a015e03223910b4ee5194eca9547f))
+* **skill:** group predictable browser completion ([748d309](https://github.com/dtopuzov/craftdriver/commit/748d309fa82ec13f796a105bb965a053c45e0ae0))
+* **test:** isolate driver cache checks from CI ([4891300](https://github.com/dtopuzov/craftdriver/commit/4891300ad2d7d21575f9eab3516010ac1456ffbe))
+
 # [1.13.0](https://github.com/dtopuzov/craftdriver/compare/v1.12.0...v1.13.0) (2026-08-09)
 
 
