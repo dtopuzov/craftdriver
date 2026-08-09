@@ -66,11 +66,10 @@ snapshot, so do not follow it with another snapshot.
 `same`, `changed`, or `unknown`. `unknown` means there was no preceding observed
 document and must not be treated as `same`.
 
-Every observed result also carries `errors` — errors the page logged since the
-previous observation — and `logCursor`. `errors: 0` is the all-clear; anything
-higher means read them with `logs --kind error --since <logCursor>` before
-trusting the action. A delta of `(no a11y changes)` is not an all-clear on its
-own: an action can throw without changing a visible node.
+Every observed result also carries `errors` — how many the page logged since the
+previous observation — and `logCursor`. Non-zero means read them with
+`logs --kind error --since <logCursor>` before treating the action as
+successful; `(no a11y changes)` alone is not an all-clear.
 
 On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
 only when recovery context is unavailable or more context is genuinely needed.
@@ -81,12 +80,10 @@ For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
 first.
 
-## Spend one call, not one per command
+## Batch what you already know
 
-When every selector and action is already known, send them as one batch instead
-of one command per turn. Each separate invocation costs ~300 ms of process
-start before it touches the browser; five as a batch measured 0.54 s against
-1.85 s.
+When the whole sequence is already known, send it as one batch rather than one
+command per turn.
 
 ```bash
 npx craftdriver run <<'EOF'
@@ -97,21 +94,18 @@ expect text '#result' --contains 'Welcome' --observe=delta
 EOF
 ```
 
-The batch stops at the first failed step and reports which one; each step
-reports its own `ok` and duration; `--observe` goes on the last step only,
-where `delta` accumulates what the earlier steps changed. Nothing is retried or
-substituted.
+It stops at the first failed step and names it. `--observe` goes on the last
+step only, where `delta` accumulates what the earlier steps changed.
+`--session NAME` goes on `run`, never on a step.
 
-End with an `expect` step when the flow has an outcome worth checking:
-`expect visible|text|url` auto-wait and then *fail* (exit 1), and
-`expect no-errors` reports what the page has logged without waiting, where
-`find`/`text`/`is` only report. Without one, a batch tells you every step ran —
-never that the application did the right thing.
+End with an `expect` step when the outcome matters: `expect visible|text|url`
+auto-wait and then *fail* (exit 1), and `expect no-errors` checks what the page
+logged, where `find`/`text`/`is` only report. Without one, a batch shows only
+that every step ran.
 
-Stop batching — return and look — whenever the next selector comes from the
-previous step's delta, the flow crosses a navigation or a wizard step, an
-intermediate result decides whether to continue at all, or a fresh snapshot or
-ref is needed. Add `--session NAME` on the `run` command, never on a step.
+Stop batching — return and look — whenever a step depends on what the previous
+one showed: a selector taken from the delta, a navigation or wizard step, a
+result that decides whether to continue at all.
 
 ## Writing or debugging committed tests
 

@@ -48,16 +48,15 @@ Every observed result carries `errors` and `logCursor` alongside the delta:
 value that reads exactly those entries. Treat a non-zero count as a reason to
 run `logs --kind error --since <logCursor>` before reporting the action as
 successful — `(no a11y changes)` alone does not mean the page was happy.
-`logsDropped` means errors were evicted before they could be read (with
-`logsDroppedExact: false` when even that number is only an upper bound) and
-`logsSettled: false` means the driver would not confirm delivery; either way
-the count is a lower bound, and `expect no-errors` reports such a window as
-undecidable rather than clean.
+Any qualifier beside that count — `logsDropped`, `logsDroppedExact`,
+`logsSettled` — means it is a lower bound rather than an answer, and
+`expect no-errors` calls such a window undecidable rather than clean.
 
 The daemon uses a Unix socket and is not available on Windows. On Windows, or in
 a sandbox that cannot keep a background process, use the configured MCP server
 for a persistent agent session, or send the whole flow in one `--ephemeral`
-script.
+script — which takes the same script and the same failure rules as `run` below,
+including `--continue-on-error`.
 
 ## Current commands
 
@@ -101,6 +100,7 @@ a11y [selector] [--min-impact minor|moderate|serious|critical]
 screenshot [-o out.png] [--full-page] [--selector selector]
 eval <javascript> [--observe=page|delta]
 run < script.txt   (one command per line; see "Batching known commands")
+                   [--continue-on-error]   also valid on --ephemeral
 back | forward | reload | status | quit
 daemon start | status | stop
 session list | close [name]
@@ -151,9 +151,11 @@ anything is started. `run` needs the daemon, so on Windows use the MCP
 
 ## Check the outcome, not just the steps
 
-`find`, `exists`, `text` and `is` are reads: they answer and exit 0 whatever
-the answer is. `expect` returns a verdict — it auto-waits and then *fails*,
-exit 1, with the selector, the expected value and what was actually there.
+`find`, `text` and `is` are reads: they answer and exit 0 whatever the answer
+is. `exists` answers too, but reports its answer as the exit status (1 when
+nothing matched), so inside a script it stops the run like any other failure.
+`expect` returns a verdict — it auto-waits and then *fails*, exit 1, with the
+selector, the expected value and what was actually there.
 
 ```bash
 npx craftdriver expect visible 'testid=welcome'
@@ -185,11 +187,8 @@ so it pairs with the `errors` counter in an observation: the counter says
 whether to look, the assertion decides the run. It counts from the start of the
 session — narrow it with `--since N` using a `logCursor` you already have — and
 it reads what has been captured rather than waiting, so use `logs wait` when
-you need to wait for a specific message. It answers `STATE_INVALID` instead of
-passing whenever the window cannot support a green verdict — errors evicted
-from the bounded journal, or a driver that would not confirm delivery — because
-an incomplete history cannot prove there were none. A retained error still
-outranks that: it is an ordinary failure, with the error quoted.
+you need to wait for a specific message. Where the window cannot support a green
+verdict it answers `STATE_INVALID` rather than passing, as above.
 
 ## Named sessions
 
