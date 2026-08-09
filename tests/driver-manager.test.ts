@@ -303,6 +303,8 @@ class FakeChromeService extends ChromeService {
 
 describe('chromedriver auto-resolution cache recovery', () => {
   const envCacheDir = process.env.CRAFTDRIVER_CACHE_DIR;
+  const envOffline = process.env.CRAFTDRIVER_OFFLINE;
+  const envSkipPathProbe = process.env.CRAFTDRIVER_SKIP_PATH_PROBE;
   let cacheDir: string | undefined;
 
   afterEach(() => {
@@ -311,8 +313,85 @@ describe('chromedriver auto-resolution cache recovery', () => {
     } else {
       process.env.CRAFTDRIVER_CACHE_DIR = envCacheDir;
     }
+    if (envOffline === undefined) delete process.env.CRAFTDRIVER_OFFLINE;
+    else process.env.CRAFTDRIVER_OFFLINE = envOffline;
+    if (envSkipPathProbe === undefined) delete process.env.CRAFTDRIVER_SKIP_PATH_PROBE;
+    else process.env.CRAFTDRIVER_SKIP_PATH_PROBE = envSkipPathProbe;
     if (cacheDir) fs.rmSync(cacheDir, { recursive: true, force: true });
     cacheDir = undefined;
+  });
+
+  it('rejects a fresh cached driver from the previous browser major', async () => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-cache-major-'));
+    process.env.CRAFTDRIVER_CACHE_DIR = cacheDir;
+    process.env.CRAFTDRIVER_OFFLINE = '1';
+    process.env.CRAFTDRIVER_SKIP_PATH_PROBE = '1';
+
+    const staleDriverPath = path.join(cacheDir, 'chromedriver-previous-major');
+    fs.writeFileSync(staleDriverPath, '');
+    const cacheKey = `chromedriver/${cftPlatformForTest()}`;
+    fs.writeFileSync(
+      path.join(cacheDir, 'metadata.json'),
+      JSON.stringify({
+        [cacheKey]: {
+          version: '999.0.0.0',
+          driverPath: staleDriverPath,
+          timestamp: Date.now(),
+        },
+      })
+    );
+
+    await expect(resolveChromeDriver({ browserPath: process.execPath })).rejects.toThrow(
+      /Cached driver provenance was Chrome 999\.0\.0\.0/
+    );
+
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(cacheDir, 'metadata.json'), 'utf8')
+    ) as Record<string, unknown>;
+    expect(metadata[cacheKey]).toBeUndefined();
+  });
+
+  it('repairs stale metadata from an exact-version offline binary', async () => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-cache-exact-'));
+    process.env.CRAFTDRIVER_CACHE_DIR = cacheDir;
+    process.env.CRAFTDRIVER_OFFLINE = '1';
+    process.env.CRAFTDRIVER_SKIP_PATH_PROBE = '1';
+
+    const staleDriverPath = path.join(cacheDir, 'chromedriver-previous-major');
+    fs.writeFileSync(staleDriverPath, '');
+    const exactDriverPath = path.join(
+      cacheDir,
+      'chromedriver',
+      process.versions.node,
+      cftPlatformForTest(),
+      os.platform() === 'win32' ? 'chromedriver.exe' : 'chromedriver'
+    );
+    fs.mkdirSync(path.dirname(exactDriverPath), { recursive: true });
+    fs.writeFileSync(exactDriverPath, '');
+
+    const cacheKey = `chromedriver/${cftPlatformForTest()}`;
+    fs.writeFileSync(
+      path.join(cacheDir, 'metadata.json'),
+      JSON.stringify({
+        [cacheKey]: {
+          version: '999.0.0.0',
+          driverPath: staleDriverPath,
+          timestamp: Date.now(),
+        },
+      })
+    );
+
+    await expect(resolveChromeDriver({ browserPath: process.execPath })).resolves.toBe(
+      exactDriverPath
+    );
+
+    const metadata = JSON.parse(
+      fs.readFileSync(path.join(cacheDir, 'metadata.json'), 'utf8')
+    ) as Record<string, { version?: string; driverPath?: string }>;
+    expect(metadata[cacheKey]).toMatchObject({
+      version: process.versions.node,
+      driverPath: exactDriverPath,
+    });
   });
 
   it('invalidates a stale cached chromedriver path and retries launch once', async () => {
@@ -384,12 +463,15 @@ describe('DriverService startup diagnostics', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-service-'));
     tempDirs.push(dir);
     const script = path.join(dir, 'noisy-driver.cjs');
-    fs.writeFileSync(script, [
-      "process.stdout.write('discard-me-' + 'x'.repeat(128 * 1024));",
-      "process.stdout.write('STDOUT-TAIL\\n');",
-      "process.stderr.write('STDERR-TAIL\\n');",
-      'setTimeout(() => process.exit(17), 20);',
-    ].join('\n'));
+    fs.writeFileSync(
+      script,
+      [
+        "process.stdout.write('discard-me-' + 'x'.repeat(128 * 1024));",
+        "process.stdout.write('STDOUT-TAIL\\n');",
+        "process.stderr.write('STDERR-TAIL\\n');",
+        'setTimeout(() => process.exit(17), 20);',
+      ].join('\n')
+    );
 
     const service = new NodeScriptService(script);
     const startedAt = Date.now();
