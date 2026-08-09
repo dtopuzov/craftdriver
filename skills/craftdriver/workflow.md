@@ -14,13 +14,20 @@ assistant instructions.
 Run the project's existing app command in its own process. Then:
 
 ```bash
-npx craftdriver go http://127.0.0.1:3000 --browser chrome --headless
-npx craftdriver snapshot --pretty
+npx craftdriver go http://127.0.0.1:3000 --browser chrome --headless --observe=delta
 ```
 
 Use the actual project URL and wait for a clear page condition when necessary.
+The initial delta is the page's full bounded snapshot; do not take a second
+snapshot before acting on it.
 On Windows the daemon is unavailable; use the configured MCP server, or put
 the complete exploration flow into one `--ephemeral` script.
+
+If this first launch fails with `DRIVER_ERROR` for `POST /session` and
+`detail.sessionAttempts`, no application page exists to inspect. CraftDriver
+already made its one safe fresh-process retry. Preserve those driver
+path/version/output diagnostics, run `daemon stop`, and fix the startup cause;
+do not take an `about:blank` snapshot or load the CLI reference as recovery.
 
 ## 3. Inspect before acting
 
@@ -63,10 +70,12 @@ npx craftdriver text 'testid=welcome'
 ```
 
 Use the snapshot refs while exploring. For a searchbox or single-field form,
-prefer `fill TARGET VALUE --submit` over filling and then clicking a sibling
-submit ref. A reactive fill can replace neighbouring controls; when a separate
-sibling action is genuinely needed, use `fill TARGET VALUE --observe=delta`
-and act on the fresh ref.
+prefer `fill TARGET VALUE --submit --observe=delta` over filling and then
+clicking a sibling submit ref. When the next step is a search result, act on its
+fresh ref from that returned delta instead of taking another snapshot. A
+reactive fill can replace neighbouring controls; when a separate sibling action
+is genuinely needed, use `fill TARGET VALUE --observe=delta` and act on the
+fresh ref.
 
 After a predictable navigation, use `--observe=page` plus targeted `text`,
 `attr`, or `value` reads when the required evidence is already known. Use
@@ -125,6 +134,11 @@ Run the narrowest existing test command. On failure:
 5. **read the evidence before theorising** — see below;
 6. change application or test source through an explicit diff;
 7. rerun the focused test, then the repository's required checks.
+
+Those page-debugging steps begin only after a session exists. A startup
+`POST /session` timeout with `detail.sessionAttempts` is driver evidence, not a
+locator failure: retain it and fix browser startup instead of opening a blank
+snapshot or reading command syntax.
 
 ### Read the evidence
 

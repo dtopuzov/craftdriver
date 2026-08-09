@@ -37,10 +37,15 @@ single-field form, submit without carrying a sibling ref across the reactive
 fill:
 
 ```bash
-npx craftdriver fill ref=e5 "Telerik" --submit --observe=page
+npx craftdriver fill ref=e5 "Telerik" --submit --observe=delta
+npx craftdriver click ref=e12 --observe=page
 npx craftdriver text h1
 npx craftdriver attr 'link[rel="canonical"]' href
 ```
+
+The submit's delta is the search result list: choose its fresh result ref
+directly. Do not submit with `--observe=page` and then spend another turn on a
+full snapshot when the next action depends on those results.
 
 For a conventional multi-field form, fill earlier fields normally, then submit
 from the final single-line field. Use `--observe=delta` when the resulting
@@ -75,6 +80,14 @@ On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
 only when recovery context is unavailable or more context is genuinely needed.
 Actions auto-wait; use `wait` only for a specific asynchronous selector or load
 state. Do not call `status` merely to get URL or title.
+
+If browser startup fails with `DRIVER_ERROR` for `POST /session` and
+`detail.sessionAttempts`, CraftDriver already replaced the local ChromeDriver
+and tried once more. Preserve and report those attempts, run `daemon stop` once,
+and fix the reported browser/driver problem before rerunning the flow. Do not
+run `snapshot` (there is no task page to inspect and it can only start a blank
+session), and do not load `cli.md`; neither can diagnose a driver startup
+failure.
 
 For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
