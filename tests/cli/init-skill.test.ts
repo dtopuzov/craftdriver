@@ -148,7 +148,11 @@ describe('safe project-local skill installer', () => {
     expect(installedSkill).toContain('STALE_REF');
     expect(installedSkill).toContain('craftdriver locators');
     expect(installedSkill).toContain('--observe=delta');
+    expect(installedSkill).toContain('--submit --observe=delta');
     expect(installedSkill).toContain('do not follow it with another snapshot');
+    expect(installedSkill).toContain('detail.sessionAttempts');
+    expect(installedSkill).toContain('Do not\nrun `snapshot`');
+    expect(installedSkill).toContain('do not load `cli.md`');
     expect(installedSkill).not.toContain('refs can be reassigned');
     expect(installedSkill).not.toContain('[browser.md]');
     expect(installedSkill).toContain('[cli.md](cli.md)');
@@ -158,6 +162,9 @@ describe('safe project-local skill installer', () => {
     expect(installedSkill).toMatch(/^---\nname: craftdriver\ndescription: .+\n---\n/);
     expect(installedSkill).not.toContain('No hallucination');
     expect(installedWorkflow).toContain('Never copy `ref=eN` into test code');
+    expect(installedWorkflow).toContain('--submit --observe=delta');
+    expect(installedWorkflow).toContain('detail.sessionAttempts');
+    expect(installedWorkflow).toContain('do not take an `about:blank` snapshot');
     // The installed workflow must also teach the evidence loop, not just the
     // exploration one: guidance that stops at the DOM sends an agent to guess
     // at failures the console and network journal explain outright.
