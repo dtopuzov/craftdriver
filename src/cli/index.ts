@@ -17,6 +17,13 @@ import { dirname, resolve } from 'path';
 import { CraftdriverError, ErrorCode } from '../lib/errors.js';
 import { AgentSession, type AgentSessionRunner } from './agentSession.js';
 import { parseArgv, HELP_TEXT, type ParsedCommand, type GlobalFlags } from './parseArgs.js';
+import { compileScript, formatParseFailure } from './script.js';
+import {
+  renderBatchOutcome,
+  type BatchOutcome,
+  type BatchStep,
+  MAX_BATCH_STEPS,
+} from './batch.js';
 import { DaemonClient } from './client.js';
 import { runDaemon, toWireError, renderObservedResult } from './daemon.js';
 import { DAEMON_SOCKET_PATH, DAEMON_PID_PATH, projectRoot } from './defaults.js';
@@ -30,6 +37,7 @@ import {
 } from './init.js';
 import { runMcpServer } from './mcp/server.js';
 import { validateSessionName } from './sessionRegistry.js';
+import { negativeVerdict } from './verdict.js';
 import type { LaunchOptions } from '../lib/browser.js';
 
 /**
@@ -153,9 +161,19 @@ export async function main(argv: string[]): Promise<number> {
   if (parsed.flags.ephemeral) return runEphemeral(parsed);
 
   // ------------------------------------------------------------------
-  // Single command via daemon. Auto-start if needed.
+  // Batch or single command via daemon. Auto-start if needed.
   // ------------------------------------------------------------------
   if (!daemonSupported()) return unsupportedDaemon();
+
+  // Compile before the daemon starts: a script with a typo on line 7 should
+  // cost neither a daemon nor a browser.
+  let batch: BatchStep[] | null = null;
+  if (parsed.cmd === 'run') {
+    const compiled = await compileBatch();
+    if (typeof compiled === 'number') return compiled;
+    batch = compiled;
+  }
+
   if (!(await DaemonClient.isRunning())) {
     const ok = await autoStartDaemon(parsed.flags);
     if (!ok) {
@@ -165,6 +183,8 @@ export async function main(argv: string[]): Promise<number> {
       return 1;
     }
   }
+
+  if (batch) return runBatchCommand(parsed, session, batch);
 
   const client = new DaemonClient({ session });
   try {
@@ -180,32 +200,6 @@ export async function main(argv: string[]): Promise<number> {
 
 const SESSION_SUBCOMMANDS = new Set(['session:list', 'session:close']);
 
-/** Render parser pseudo-commands consistently in one-shot and stdin modes. */
-function formatParseFailure(parsed: ParsedCommand, line?: string): string | null {
-  const context = line ? ` in: ${line}` : '';
-  if (parsed.cmd === '__unknown__') {
-    return `error: unknown command "${parsed.args.cmd as string}"${context}\nrun: craftdriver --help\n`;
-  }
-  if (parsed.cmd === '__unknown_flag__') {
-    const flag = parsed.args.flag as string;
-    const suggestion = parsed.args.suggestion as string | undefined;
-    return (
-      `error: unknown flag "${flag}"${context}\n` +
-      (suggestion ? `did you mean: ${suggestion}\n` : '') +
-      'run: craftdriver --help\n'
-    );
-  }
-  if (parsed.cmd === '__usage_error__') {
-    const usage = parsed.args.usage as string | undefined;
-    return (
-      `error: ${parsed.args.message as string}${context}\n` +
-      (usage ? `usage: ${usage}\n` : '') +
-      'run: craftdriver --help\n'
-    );
-  }
-  return null;
-}
-
 /**
  * Reject session usage the daemon cannot honour, before it is attempted.
  *
@@ -220,6 +214,27 @@ function checkSessionUsage(parsed: ParsedCommand): number {
       `error: unknown session subcommand "${parsed.cmd.slice('session:'.length)}"\n` +
         'code:  INVALID_ARGUMENT\n' +
         'hint:  craftdriver session list | session close <name>\n'
+    );
+    return 2;
+  }
+  // A single daemon command has nothing to continue past. Accepting the flag
+  // there would read as "keep going on failure" while changing nothing.
+  if (!parsed.flags.ephemeral && parsed.cmd !== 'run' && parsed.flags.continueOnError) {
+    process.stderr.write(
+      'error: --continue-on-error applies to a `run` batch or an --ephemeral script\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  a single command has no later steps to skip\n'
+    );
+    return 2;
+  }
+  // Both modes run a script; combining them asks for a live session and a
+  // throwaway browser at once. `--ephemeral` alone already batches, in its
+  // own browser.
+  if (parsed.cmd === 'run' && parsed.flags.ephemeral) {
+    process.stderr.write(
+      'error: `run` executes against a daemon session and cannot be combined with --ephemeral\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  pipe the same script to `craftdriver --ephemeral` for a throwaway browser\n'
     );
     return 2;
   }
@@ -270,44 +285,45 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
       // Reading stdin can fail on the size cap. Report it the way every other
       // CLI failure is reported rather than letting the rejection escape as an
       // unhandled stack trace from the bin shim's top-level await.
-      let lines: string;
+      let source: string;
       try {
-        lines = await readAllStdin();
+        source = await readAllStdin();
       } catch (e) {
         writeErr(toWireError(e));
         return 2;
       }
-      for (const raw of lines.split('\n')) {
-        const line = raw.trim();
-        if (!line || line.startsWith('#')) continue;
-        const tokens = tokenize(line);
-        const sub = parseArgv(tokens);
-        if (!sub) continue;
-        // A malformed line must not pass silently. Skipping every `__…`
-        // pseudo-command meant `click #pay --forse` did nothing at all and the
-        // script still exited 0 — the same silent-typo failure strict flag
-        // parsing exists to prevent, just moved onto this path.
-        const parseFailure = formatParseFailure(sub, line);
-        if (parseFailure) {
-          process.stderr.write(parseFailure);
-          rc = Math.max(rc, 2);
-          continue;
-        }
-        const ignoredLaunchFlag = ephemeralLineLaunchFlag(sub.flags);
-        if (ignoredLaunchFlag) {
-          process.stderr.write(
-            `error: ${ignoredLaunchFlag} cannot be set inside an ephemeral script in: ${line}\n` +
-              `hint: pass it on the outer \`craftdriver --ephemeral\` command\n`
-          );
-          rc = Math.max(rc, 2);
-          continue;
-        }
-        if (sub.cmd.startsWith('__')) continue;
+      const { steps, errors } = compileScript(source, { mode: 'ephemeral' });
+      for (const error of errors) process.stderr.write(error);
+      // Nothing has touched the browser yet — the session launches lazily on
+      // the first dispatch — so a rejected script costs no launch at all.
+      if (errors.length > 0) return 2;
+
+      for (const [index, sub] of steps.entries()) {
         const result = await safeDispatch(session, sub);
         // Keep the worst status across the batch. `||` used to be safe when
         // success was always 0, but `exists` now returns 1 on a miss and
         // would overwrite a usage error (2) recorded earlier.
-        rc = Math.max(rc, emitInProc(sub, result));
+        const stepRc = emitInProc(sub, result);
+        rc = Math.max(rc, stepRc);
+        // `stepRc` rather than `result.ok`: `exists` matching nothing and a
+        // failed `a11y --check` do not throw, but they are documented to exit
+        // 1, and "stops at the first command that fails" has to mean the same
+        // thing for them as for a NO_MATCH.
+        if (stepRc === 0 || parsed.flags.continueOnError) continue;
+        // Stop here. The remaining lines were written for a page state this
+        // script never reached, and running them anyway yields output that
+        // reads like an application answer — "Missing credentials" for a form
+        // that was never filled — rather than the selector failure it is.
+        const skipped = steps.length - index - 1;
+        if (skipped > 0) {
+          process.stderr.write(
+            `error: stopped at failed step ${index + 1} of ${steps.length}; ` +
+              `${skipped} later ${skipped === 1 ? 'command' : 'commands'} not run\n` +
+              `hint: fix the failing step, or pass --continue-on-error if the ` +
+              `commands are independent\n`
+          );
+        }
+        break;
       }
     } else {
       const result = await safeDispatch(session, parsed);
@@ -319,14 +335,97 @@ async function runEphemeral(parsed: ParsedCommand): Promise<number> {
   return rc;
 }
 
-/** Launch/session choices apply to the script's one browser, not one line. */
-function ephemeralLineLaunchFlag(flags: GlobalFlags): string | null {
-  if (flags.session !== undefined) return '--session';
-  if (flags.ephemeral) return '--ephemeral';
-  if (flags.headless === true) return '--headless';
-  if (flags.headless === false) return '--headed';
-  if (flags.launch.browserName !== undefined) return '--browser';
-  return null;
+// ---------------------------------------------------------------------------
+// Batch mode — `craftdriver run`
+// ---------------------------------------------------------------------------
+/**
+ * Compile the stdin script into steps, or return the exit code to stop with.
+ *
+ * Separate from sending it so the whole script is known good before anything
+ * starts a daemon: five operations against a warm daemon cost 2.05 s as five
+ * invocations and ~0.45 s as one batch, and none of that saving is worth
+ * spending on a script that was never going to run.
+ */
+async function compileBatch(): Promise<BatchStep[] | number> {
+  let source: string;
+  try {
+    source = await readAllStdin();
+  } catch (e) {
+    writeErr(toWireError(e));
+    return 2;
+  }
+  const { steps, errors } = compileScript(source, { mode: 'batch' });
+  for (const error of errors) process.stderr.write(error);
+  if (errors.length > 0) return 2;
+  if (steps.length === 0) {
+    process.stderr.write(
+      'error: run: no commands on stdin\n' +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  pipe one command per line: `craftdriver run < script.txt`\n'
+    );
+    return 2;
+  }
+  if (steps.length > MAX_BATCH_STEPS) {
+    process.stderr.write(
+      `error: run: too many steps (${steps.length}; max ${MAX_BATCH_STEPS})\n` +
+        'code:  INVALID_ARGUMENT\n' +
+        'hint:  split the flow, and look at the page between the halves\n'
+    );
+    return 2;
+  }
+  return steps.map((step) => ({ cmd: step.cmd, args: step.args }));
+}
+
+async function runBatchCommand(
+  parsed: ParsedCommand,
+  session: string,
+  steps: BatchStep[]
+): Promise<number> {
+  // The observation belongs to the batch, not to the step that happened to
+  // ask for it — `compileScript` has already refused it anywhere but last.
+  const last = steps[steps.length - 1];
+  const observe = last.args.observe;
+  const request = {
+    steps: steps.map((step) => {
+      const { observe: _dropped, ...args } = step.args;
+      return { cmd: step.cmd, args };
+    }),
+    ...(parsed.flags.continueOnError ? { continueOnError: true } : {}),
+    ...(observe === 'page' || observe === 'delta' ? { observe } : {}),
+    // The CLI has exit statuses, so a step that answered no is a step that
+    // failed here — the same rule `--ephemeral` applies line by line.
+    stopOnVerdict: true,
+  };
+
+  const client = new DaemonClient({ session });
+  let resp;
+  try {
+    resp = await client.send('batch', request);
+  } catch (e) {
+    process.stderr.write('error: ' + ((e as Error).message ?? String(e)) + '\ncode:  DRIVER_ERROR\n');
+    return 1;
+  }
+  if (!resp.ok) {
+    writeErr(resp.error);
+    return exitCodeFor(resp.error.code);
+  }
+
+  const outcome = resp.result as BatchOutcome;
+  if (shouldJson(parsed)) {
+    process.stdout.write(JSON.stringify({ ok: outcome.ok, result: outcome }) + '\n');
+  } else {
+    process.stdout.write(renderBatchOutcome(outcome) + '\n');
+  }
+  if (outcome.ok) return 0;
+  // The transport succeeded; a step did not. Report the first failure's code
+  // the way the same command would report it on its own, so a batch and a
+  // single command cannot disagree about what a NO_MATCH is worth. `exists`
+  // matching nothing and a failed `a11y --check` are among those failures:
+  // the request asked for `stopOnVerdict`, so the session has already marked
+  // them, and the same script cannot pass as a batch while failing as an
+  // `--ephemeral` run.
+  const failed = outcome.steps.find((step) => !step.ok);
+  return failed?.error ? exitCodeFor(failed.error.code) : 1;
 }
 
 interface DispatchOutcome {
@@ -355,7 +454,7 @@ async function safeDispatch(
 function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
   if (outcome.ok) {
     writeOk(parsed, outcome.value);
-    return successExitCode(parsed, outcome.value);
+    return successExitCode(parsed.cmd, outcome.value);
   }
   writeErr(outcome.error!);
   return exitCodeFor(outcome.error!.code);
@@ -364,24 +463,14 @@ function emitInProc(parsed: ParsedCommand, outcome: DispatchOutcome): number {
 /**
  * Exit code for a command that succeeded.
  *
- * `exists` is a probe: the call succeeds, but "nothing matched" has to
- * reach the shell as a non-zero status because agents script around it.
- * Shared by the ephemeral and daemon paths so one command cannot report
- * two different contracts depending on how it was run.
+ * `exists` is a probe and `a11y --check` an opt-in assertion: both return a
+ * result and both have to reach the shell as a non-zero status. The rule they
+ * share lives in `verdict.ts`, so the single command, the `--ephemeral` script
+ * and the `run` batch cannot end up with three readings of the same answer.
  */
-function successExitCode(parsed: ParsedCommand, result: unknown): number {
-  if (parsed.cmd === 'exists') {
-    const r = result as { exists?: boolean } | null;
-    return r && r.exists === false ? 1 : 0;
-  }
-  // `a11y` is a report by default, so findings do not make the command fail.
-  // `--check` explicitly opts into the assertion-like exit status while still
-  // returning the actionable report.
-  if (parsed.cmd === 'a11y') {
-    const r = result as { checked?: boolean; passed?: boolean } | null;
-    return r && r.checked === true && r.passed === false ? 1 : 0;
-  }
-  return 0;
+function successExitCode(cmd: string, result: unknown): number {
+  const verdict = negativeVerdict(cmd, result);
+  return verdict ? exitCodeFor(verdict.code) : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -620,7 +709,7 @@ function emitResponse(
 ): number {
   if (resp.ok) {
     writeOk(parsed, resp.result);
-    return successExitCode(parsed, resp.result);
+    return successExitCode(parsed.cmd, resp.result);
   }
   writeErr(resp.error);
   return exitCodeFor(resp.error.code);
@@ -727,6 +816,19 @@ function prettyResult(cmd: string, result: unknown): string {
     const body = blocks.length > 0 ? ['', blocks.join('\n\n')] : [];
     return [head, ...body, ...(trailer.length > 0 ? ['', ...trailer] : [])].join('\n');
   }
+  // Only the passing case reaches here — a failed expectation throws, and is
+  // rendered by the error path with its message, code and hint.
+  if (cmd === 'expect' && typeof r.matcher === 'string') {
+    // A pass carries no eviction note any more: a window with evicted errors
+    // is not a pass, it is `STATE_INVALID` on the error path.
+    if (r.matcher === 'no-errors') return `✓ no errors (logCursor ${r.logCursor as number})`;
+    const comparison =
+      r.expected !== undefined
+        ? ` ${r.mode === 'contains' ? 'contains' : 'is'} "${r.expected as string}"`
+        : '';
+    const target = r.selector !== undefined ? ` ${r.selector as string}` : '';
+    return `✓ ${r.matcher as string}${target}${comparison}`;
+  }
   if (cmd === 'snapshot' && Array.isArray(r.lines)) {
     const header = `page: ${(r.title as string) || '(untitled)'} — ${(r.url as string) || '(no url)'}`;
     const lines = r.lines as string[];
@@ -767,39 +869,8 @@ function formatWcag(tags: string[]): string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function tokenize(line: string): string[] {
-  // Minimal shell-like tokeniser: supports single/double quotes.
-  const out: string[] = [];
-  let cur = '';
-  let quote: string | null = null;
-  for (const ch of line) {
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-        continue;
-      }
-      cur += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === ' ' || ch === '\t') {
-      if (cur) {
-        out.push(cur);
-        cur = '';
-      }
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur) out.push(cur);
-  return out;
-}
-
 /**
- * Read the whole ephemeral script from stdin, bounded.
+ * Read the whole script from stdin, bounded.
  *
  * It is accumulated in memory before the first command runs, so an unbounded
  * pipe could exhaust the process before it did any work. The cap is far above

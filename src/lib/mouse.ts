@@ -3,6 +3,7 @@ import { By } from './by.js';
 import { Key } from './keys.js';
 import { until } from './wait.js';
 import { DEFAULT_ELEMENT_TIMEOUT_MS } from './timing.js';
+import { waitForVisibleDiagnosed } from './visibilityDiagnosis.js';
 
 export type MouseButton = 'left' | 'middle' | 'right';
 export type Point = { x: number; y: number };
@@ -19,9 +20,17 @@ export class Mouse {
 
   private async resolveElement(selector: string | By) {
     const by = typeof selector === 'string' ? By.css(selector) : selector;
-    // Wait until element is attached and visible to improve click reliability
-    const el = await this.driver.wait(until.elementIsVisible(by), { timeout: DEFAULT_ELEMENT_TIMEOUT_MS });
-    return el;
+    // Wait until element is attached and visible to improve click reliability.
+    // Diagnosed on failure for the same reason `browser.click` is: `dblclick`
+    // and every `mouse` action reach the page through here, and a bare
+    // `TIMEOUT` would leave them the only actions that cannot say whether the
+    // selector matched nothing or matched something hidden.
+    return waitForVisibleDiagnosed(
+      (timeout) => this.driver.wait(until.elementIsVisible(by), { timeout }),
+      () => this.driver.findElements(by),
+      typeof selector === 'string' ? selector : `${by.using}=${by.value}`,
+      DEFAULT_ELEMENT_TIMEOUT_MS
+    );
   }
 
   async move(target: Target, options?: { durationMs?: number }): Promise<void> {

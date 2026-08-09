@@ -10,7 +10,14 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { TOOLS, inputSchemaFor, validateToolArgs } from '../../src/cli/mcp/tools.js';
+import {
+  TOOLS,
+  compileBatchRequest,
+  getTool,
+  inputSchemaFor,
+  toDispatch,
+  validateToolArgs,
+} from '../../src/cli/mcp/tools.js';
 import { isMutating } from '../../src/cli/dispatcher.js';
 import type { ParamSpec } from '../../src/cli/mcp/params.js';
 
@@ -39,6 +46,15 @@ function sampleFor(spec: ParamSpec): unknown {
       return true;
     case 'string[]':
       return ['x'];
+    case 'object':
+      return {};
+    case 'object[]': {
+      const item: Record<string, unknown> = {};
+      for (const [name, child] of Object.entries(spec.itemSpecs)) {
+        if (child.required) item[name] = sampleFor(child);
+      }
+      return [item];
+    }
   }
 }
 
@@ -59,6 +75,9 @@ function argVariants(tool: (typeof TOOLS)[number]): Array<Record<string, unknown
   }
   return [base];
 }
+
+/** Tools that map to exactly one dispatcher command; see `toDispatch`. */
+const DISPATCHING_TOOLS = TOOLS.filter((tool) => tool.toDispatch);
 
 describe('every tool is well-formed', () => {
   it('has a unique, prefixed name', () => {
@@ -86,7 +105,7 @@ describe('every tool dispatches a command that exists', () => {
     expect(DISPATCHER_COMMANDS.has('click')).toBe(true);
   });
 
-  const cases = TOOLS.flatMap((tool) =>
+  const cases = DISPATCHING_TOOLS.flatMap((tool) =>
     argVariants(tool).map((args) => [tool.name, tool, args] as const)
   );
 
@@ -94,13 +113,35 @@ describe('every tool dispatches a command that exists', () => {
     // Round-trip through validation first: if the sample arguments are not
     // even valid, the mapping below would be testing a fiction.
     const validated = validateToolArgs(tool, args);
-    const { cmd } = tool.toDispatch(validated);
+    const { cmd } = toDispatch(tool, validated);
     expect(DISPATCHER_COMMANDS.has(cmd)).toBe(true);
+  });
+
+  // The one tool that is several commands. Having no mapping is not an
+  // oversight: it is what refuses a batch as a step of another batch.
+  it('only browser_batch has no single command, and cannot be a batch step', () => {
+    expect(TOOLS.filter((tool) => !tool.toDispatch).map((tool) => tool.name)).toEqual([
+      'browser_batch',
+    ]);
+    expect(() => toDispatch(getTool('browser_batch')!, {})).toThrow(/cannot be used as a batch step/);
+  });
+
+  it('compiles a batch into the same commands the steps would dispatch alone', () => {
+    const request = compileBatchRequest({
+      steps: [
+        { tool: 'browser_navigate', arguments: { url: 'https://example.com' } },
+        { tool: 'browser_element', arguments: { action: 'check', selector: '#news' } },
+      ],
+      observe: 'delta',
+    });
+    expect(request.steps.map((step) => step.cmd)).toEqual(['go', 'check']);
+    expect(request.observe).toBe('delta');
+    for (const step of request.steps) expect(DISPATCHER_COMMANDS.has(step.cmd)).toBe(true);
   });
 });
 
 describe('annotations tell the truth', () => {
-  const cases = TOOLS.flatMap((tool) =>
+  const cases = DISPATCHING_TOOLS.flatMap((tool) =>
     argVariants(tool).map((args) => [tool.name, tool, args] as const)
   );
 
@@ -108,7 +149,7 @@ describe('annotations tell the truth', () => {
   // on it, so a read-only tool must never reach a command the dispatcher
   // itself considers page-mutating.
   it.each(cases)('%s: readOnlyHint matches what it dispatches', (_name, tool, args) => {
-    const { cmd } = tool.toDispatch(validateToolArgs(tool, args));
+    const { cmd } = toDispatch(tool, validateToolArgs(tool, args));
     if (tool.annotations.readOnlyHint) {
       expect(isMutating(cmd)).toBe(false);
     }

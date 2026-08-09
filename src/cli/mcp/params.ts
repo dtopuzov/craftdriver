@@ -12,6 +12,13 @@
  * validator would be a large dependency-shaped thing to maintain for a shape
  * this narrow. Anything needing more expressiveness than this is a sign the
  * tool should be split, not that the descriptor should grow.
+ *
+ * One exception, stated rather than smuggled in: `object[]` describes a list
+ * of tool calls, which is `browser_batch`'s whole argument. Its items are
+ * validated by these same specs one level down, and the arguments inside each
+ * step are validated a second time against the descriptor of the tool that
+ * step names — so the nesting adds no new validation rules, only a place to
+ * put a list of things that already have them.
  */
 import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
 
@@ -43,6 +50,13 @@ export type ParamSpec =
       type: 'string[]';
       maxItems?: number;
       maxLength?: number;
+    })
+  // A free-form record, validated downstream by whoever knows its shape.
+  | (Common & { type: 'object' })
+  | (Common & {
+      type: 'object[]';
+      itemSpecs: ParamSpecs;
+      maxItems?: number;
     });
 
 export type ParamSpecs = Record<string, ParamSpec>;
@@ -82,6 +96,19 @@ export function toInputSchema(specs: ParamSpecs): Record<string, unknown> {
           type: 'array',
           ...base,
           items: { type: 'string', maxLength: spec.maxLength ?? DEFAULT_MAX_STRING },
+          maxItems: spec.maxItems ?? DEFAULT_MAX_ITEMS,
+        };
+        break;
+      case 'object':
+        // No `additionalProperties: false` here: the fields are whatever the
+        // named tool declares, and the schema for those is that tool's own.
+        properties[name] = { type: 'object', ...base };
+        break;
+      case 'object[]':
+        properties[name] = {
+          type: 'array',
+          ...base,
+          items: toInputSchema(spec.itemSpecs),
           maxItems: spec.maxItems ?? DEFAULT_MAX_ITEMS,
         };
         break;
@@ -210,6 +237,31 @@ export function validateArgs(
           }
         });
         out[name] = [...value];
+        break;
+      }
+
+      case 'object': {
+        if (typeof value !== 'object' || Array.isArray(value)) {
+          throw invalid(tool, `"${name}" must be an object`);
+        }
+        out[name] = value;
+        break;
+      }
+
+      case 'object[]': {
+        if (!Array.isArray(value)) {
+          throw invalid(tool, `"${name}" must be an array of objects`);
+        }
+        const maxItems = spec.maxItems ?? DEFAULT_MAX_ITEMS;
+        if (value.length > maxItems) {
+          throw invalid(tool, `"${name}" has too many items (${value.length}; max ${maxItems})`);
+        }
+        out[name] = value.map((item, index) =>
+          // Same validator, one level down: an item is refused for the same
+          // reasons and with the same wording as a top-level argument, with
+          // its position named so a long list stays diagnosable.
+          validateArgs(`${tool}: ${name}[${index}]`, spec.itemSpecs, item),
+        );
         break;
       }
     }

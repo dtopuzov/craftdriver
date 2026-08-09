@@ -1,0 +1,35 @@
+version: 2
+
+# Keeping the tooling current is what actually clears dependency advisories
+# here. The findings a plain `npm audit` reports live inside the npm CLI's
+# *bundled* dependencies, which `overrides` cannot rewrite and no local change
+# can fix — they clear when upstream npm ships a release that bundles patched
+# copies. Something has to notice that release; this does, instead of a person
+# re-running `npm audit` and wondering whether anything moved.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # One PR per group rather than per package: the runtime dependencies are
+    # worth looking at individually, everything else is tooling churn that is
+    # better reviewed and merged in a batch.
+    groups:
+      runtime:
+        patterns:
+          - axe-core
+          - pngjs
+          - ws
+          - yazl
+      tooling:
+        dependency-type: development
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - '*'

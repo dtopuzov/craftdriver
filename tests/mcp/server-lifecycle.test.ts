@@ -26,6 +26,7 @@ describe('MCP server lifecycle', () => {
     const session: AgentSessionRunner = {
       run: vi.fn(async (command) => (await runDetailed(command)).value),
       runDetailed,
+      runBatch: vi.fn(),
       close: vi.fn().mockResolvedValue(undefined),
     };
     const running = runMcpServer({
@@ -59,6 +60,7 @@ describe('MCP server lifecycle', () => {
       const session: AgentSessionRunner = {
         run: vi.fn(),
         runDetailed: vi.fn(),
+        runBatch: vi.fn(),
         close: vi.fn().mockResolvedValue(undefined),
       };
       const running = runMcpServer({

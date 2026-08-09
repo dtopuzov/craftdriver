@@ -31,8 +31,13 @@ import {
   type SessionRegistry,
 } from './sessionRegistry.js';
 import { BoundedLineReader, MAX_FRAME_BYTES } from './lineReader.js';
-import { truncateUtf8, utf8Bytes } from './bounds.js';
+import { toWireError } from './wireError.js';
+import { validateBatchObserve, validateBatchSteps } from './batch.js';
 import type { Request, Response } from './protocol.js';
+
+// Re-exported because every transport reports failures through it, and the
+// daemon is where callers have always imported it from.
+export { toWireError } from './wireError.js';
 
 interface DaemonOptions {
   socketPath?: string;
@@ -206,6 +211,31 @@ export async function handleDaemonRequest(
       return { id: req.id, ok: true, result: { closed, name } };
     }
 
+    if (req.cmd === 'batch') {
+      // Validated here as well as on the CLI side, for the same reason the
+      // session name is: a socket peer is not necessarily the CLI.
+      //
+      // This checks the *shape* — step count, argument types, command names
+      // that must never run in a batch — not that every name is a command the
+      // dispatcher implements. A raw peer that sends an unknown one therefore
+      // finds out at that step rather than before the first, which the two
+      // real clients never hit: the CLI compiles its script up front, and the
+      // MCP server resolves every step against the tool registry.
+      const steps = validateBatchSteps(req.args?.steps);
+      const observe = validateBatchObserve(req.args?.observe);
+      const session = registry.get(validateSessionName(req.session));
+      const outcome = await session.runBatch({
+        steps,
+        continueOnError: req.args?.continueOnError === true,
+        // Opt-in, and the CLI is what opts in: it has exit statuses, so a
+        // command that answered no is a step that failed there. A peer that
+        // does not ask keeps the plain reading, which is what MCP wants.
+        stopOnVerdict: req.args?.stopOnVerdict === true,
+        ...(observe ? { observe } : {}),
+      });
+      return { id: req.id, ok: true, result: outcome };
+    }
+
     // Untrusted: the CLI validates before opening a socket, but a socket peer
     // is not necessarily the CLI. Validation precedes session creation.
     const { observe, ...args } = req.args ?? {};
@@ -244,6 +274,19 @@ export function renderObservedResult(detailed: AgentDetailedResult, observe: unk
   if (observe === 'page' && detailed.page) result.page = detailed.page;
   else if (observe === 'page' && detailed.delta) result.warning = detailed.delta;
   if (observe === 'delta' && detailed.delta) result.delta = detailed.delta;
+  // Flat rather than nested, and on both observation kinds: this is a
+  // tripwire, and an agent should not have to know where to look for it. An
+  // action that changed no a11y node can still have made the page throw.
+  if (detailed.logs) {
+    result.errors = detailed.logs.errors;
+    result.logCursor = detailed.logs.logCursor;
+    if (detailed.logs.logsDropped !== undefined) result.logsDropped = detailed.logs.logsDropped;
+    // Both qualifiers are only ever present as `false`, and both qualify a
+    // number beside them: an unconfirmed zero must not read like a confirmed
+    // one, and an upper bound must not read like a count.
+    if (detailed.logs.logsDroppedExact === false) result.logsDroppedExact = false;
+    if (detailed.logs.logsSettled === false) result.logsSettled = false;
+  }
   return result;
 }
 
@@ -271,87 +314,4 @@ function writeResp(sock: net.Socket, resp: Response): void {
   } catch {
     /* socket may have closed; ignore */
   }
-}
-
-const MAX_ERROR_MESSAGE_BYTES = 16 * 1024;
-const MAX_ERROR_HINT_BYTES = 4 * 1024;
-const MAX_ERROR_DETAIL_BYTES = 8 * 1024;
-const MAX_ERROR_RECOVERY_BYTES = 12 * 1024;
-
-function boundErrorText(text: string, maxBytes: number): string {
-  if (utf8Bytes(text) <= maxBytes) return text;
-  const marker = '…';
-  return truncateUtf8(text, maxBytes - utf8Bytes(marker)) + marker;
-}
-
-function stripDriverStacks(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (value === null || typeof value !== 'object') return value;
-  if (seen.has(value)) throw new TypeError('circular error detail');
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((child) => stripDriverStacks(child, seen));
-  const compact: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key.toLowerCase() === 'stacktrace' || key.toLowerCase() === 'stack') continue;
-    compact[key] = stripDriverStacks(child, seen);
-  }
-  return compact;
-}
-
-function boundErrorDetail(detail: Record<string, unknown>): Record<string, unknown> {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(stripDriverStacks(detail));
-  } catch {
-    return { truncated: true, preview: '[unserializable error detail]' };
-  }
-  if (utf8Bytes(serialized) <= MAX_ERROR_DETAIL_BYTES) {
-    const parsed = JSON.parse(serialized) as unknown;
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : { value: parsed };
-  }
-  const preview = truncateUtf8(serialized, MAX_ERROR_DETAIL_BYTES);
-  return {
-    truncated: true,
-    totalBytes: utf8Bytes(serialized),
-    retainedBytes: utf8Bytes(preview),
-    preview,
-  };
-}
-
-export function toWireError(err: unknown): {
-  code: string;
-  message: string;
-  hint?: string;
-  detail?: Record<string, unknown>;
-  recoverySnapshot?: string;
-} {
-  if (err instanceof CraftdriverError) {
-    const out: {
-      code: string;
-      message: string;
-      hint?: string;
-      detail?: Record<string, unknown>;
-      recoverySnapshot?: string;
-    } = {
-      code: err.code,
-      message: boundErrorText(err.message, MAX_ERROR_MESSAGE_BYTES),
-    };
-    if (err.hint) out.hint = boundErrorText(err.hint, MAX_ERROR_HINT_BYTES);
-    if (err.detail) out.detail = boundErrorDetail(err.detail);
-    if (err.recoverySnapshot) {
-      out.recoverySnapshot = boundErrorText(err.recoverySnapshot, MAX_ERROR_RECOVERY_BYTES);
-    }
-    return out;
-  }
-  if (err instanceof Error) {
-    return {
-      code: ErrorCode.DRIVER_ERROR,
-      message: boundErrorText(err.message, MAX_ERROR_MESSAGE_BYTES),
-    };
-  }
-  return {
-    code: ErrorCode.DRIVER_ERROR,
-    message: boundErrorText(String(err), MAX_ERROR_MESSAGE_BYTES),
-  };
 }

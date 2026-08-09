@@ -21,6 +21,15 @@ export interface GlobalFlags {
   json?: boolean;
   pretty?: boolean;
   ephemeral?: boolean;
+  /**
+   * Run every remaining line of an ephemeral script after one fails.
+   *
+   * Off by default: a script whose third line failed has left the browser in a
+   * state its fourth line was never written for, and running on produces
+   * application-shaped output ("Missing credentials") for what is actually a
+   * broken selector. Opt in only for independent probes.
+   */
+  continueOnError?: boolean;
   help?: boolean;
   version?: boolean;
   launch: LaunchOptions;
@@ -63,6 +72,12 @@ COMMON COMMANDS
   attr <selector> <name>
   value <selector>
   is visible|enabled|checked <selector>
+  expect visible <selector>         assert with a verdict: auto-waited,
+                                    exit 1 on failure, usable as a batch step
+  expect text <selector> '<expected>' | --contains '<substring>'
+  expect url '<expected>' | --contains '<substring>'
+  expect no-errors [--since N]      fail if the page logged errors
+                                    (reads what was captured; does not wait)
   wait <selector> [--state visible|hidden|attached|detached] [--timeout ms]
   wait load [--state load|domcontentloaded|networkidle]
   exists <selector>                 0-wait probe; exit 0 if any match
@@ -99,6 +114,7 @@ COMMON COMMANDS
   state list                        saved state names
   screenshot [-o file.png] [--full-page] [--selector S]
   eval <js> [--observe page|delta]  advanced; evaluate JS on active page
+  run < script.txt                  several known commands, one round trip
   back | forward | reload | status | quit
 
 KEYBOARD / MOUSE / DIALOGS / UPLOAD
@@ -153,9 +169,27 @@ MCP SERVER (for hosted / sandboxed AI agents)
       { "mcpServers": { "craftdriver": {
           "command": "npx", "args": ["--no-install", "craftdriver", "mcp"] } } }
 
+BATCH (one round trip for commands you already know)
+  craftdriver run < script.txt      run the script against the daemon session
+  craftdriver run --session shopper < script.txt
+
+  Same one-command-per-line syntax as --ephemeral, against a live session
+  instead of a throwaway browser. The whole batch takes one session slot, so
+  nothing interleaves; it stops at the first failed step and reports which one
+  and how many were skipped; each step reports its own ok and duration; and
+  the batch returns one observation, not one per step — put --observe on the
+  last step, where =delta accumulates what the earlier steps changed.
+
+  Batch only what you already know. Return and look whenever the next selector
+  comes from the previous step, the flow crosses a navigation or a decision,
+  or you need a fresh snapshot. A batch never heals, retries or substitutes a
+  selector.
+
 EPHEMERAL MODE (sandboxed agents)
   craftdriver --ephemeral < script.txt
   (one command per line; same syntax as on the CLI)
+  Every line is parsed before any runs, and the script stops at the first
+  command that fails. Use --continue-on-error for independent probes.
 
 SELECTOR SYNTAX
   CSS by default. Prefix to switch kind:
@@ -170,6 +204,7 @@ FLAGS
   --viewport <width>x<height>       override the 1280x800 agent viewport for go
   --session <name>                  named daemon session (default: default)
   --ephemeral                       no daemon; read commands from stdin
+  --continue-on-error               run/ephemeral: go on past a failed step
 
 EXIT CODES
   0 success    1 assertion/timeout/no-match    2 usage error
@@ -186,6 +221,7 @@ const KNOWN_FLAGS = [
   '--json',
   '--pretty',
   '--ephemeral',
+  '--continue-on-error',
   '--headless',
   '--headed',
   '--browser',
@@ -305,6 +341,15 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
   attr: { min: 2, max: 2, usage: 'attr <selector> <name>' },
   value: { min: 1, max: 1, usage: 'value <selector>' },
   is: { min: 2, max: 2, usage: 'is visible|enabled|checked <selector>' },
+  expect: {
+    min: 1,
+    // Deliberately unbounded here so the per-check table below rejects the
+    // extra argument, and does it with the usage line that shows the quoting
+    // the caller was missing.
+    max: Infinity,
+    usage: 'expect visible|text|url|no-errors [selector] [expected]',
+    options: ['contains', 'since', 'observe'],
+  },
   wait: { min: 1, max: 1, usage: 'wait <selector>|load', options: ['state'] },
   pages: { min: 0, max: 0, usage: 'pages' },
   page: { min: 0, max: 2, usage: 'page list|open|select|close [target]' },
@@ -349,6 +394,7 @@ const COMMAND_SYNTAX: Record<string, CommandSyntax> = {
     options: ['agent', 'dry-run', 'mcp', 'force'],
   },
   mcp: { min: 0, max: 0, usage: 'mcp' },
+  run: { min: 0, max: 0, usage: 'run < script.txt' },
 };
 
 /**
@@ -416,6 +462,36 @@ const ACTION_COMMAND_SYNTAX: Record<string, ActionCommandSyntax> = {
       open: { min: 1, max: 2, usage: 'page open [url]' },
       select: { min: 2, max: 2, usage: 'page select <index|id>' },
       close: { min: 2, max: 2, usage: 'page close <index|id>' },
+    },
+  },
+  // No default action: a bare `expect` has no sensible "assert something".
+  // The positional minimum in COMMAND_SYNTAX catches it first and says which
+  // checks exist.
+  expect: {
+    defaultAction: '',
+    actions: {
+      visible: { min: 2, max: 2, usage: 'expect visible <selector>', options: ['observe'] },
+      // Quoting is required rather than joining the tail the way `fill` does:
+      // an extra token silently absorbed into an *expected value* changes what
+      // is being asserted, and the resulting failure reads like a page problem.
+      text: {
+        min: 2,
+        max: 3,
+        usage: `expect text <selector> '<expected>' | expect text <selector> --contains '<substring>'`,
+        options: ['contains', 'observe'],
+      },
+      url: {
+        min: 1,
+        max: 2,
+        usage: `expect url '<expected>' | expect url --contains '<substring>'`,
+        options: ['contains', 'observe'],
+      },
+      'no-errors': {
+        min: 1,
+        max: 1,
+        usage: 'expect no-errors [--since N]',
+        options: ['since', 'observe'],
+      },
     },
   },
   logs: {
@@ -662,6 +738,7 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     else if (a === '--json') flags.json = true;
     else if (a === '--pretty') flags.pretty = true;
     else if (a === '--ephemeral') flags.ephemeral = true;
+    else if (a === '--continue-on-error') flags.continueOnError = true;
     else if (a === '--headless') flags.headless = true;
     else if (a === '--headed') flags.headless = false;
     else if (a === '--browser') {
@@ -1080,6 +1157,25 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
     case 'value':
       return { cmd: 'value', args: { selector: rest[0], ...opts }, flags };
 
+    case 'expect': {
+      const what = rest[0].toLowerCase();
+      const takesSelector = what === 'visible' || what === 'text';
+      // The expected value is the argument after the selector for `text`, and
+      // the first one for `url`. Absent means `--contains` was used instead —
+      // the dispatcher requires exactly one of the two.
+      const expected = takesSelector ? rest[2] : rest[1];
+      return {
+        cmd: 'expect',
+        args: {
+          what,
+          ...(takesSelector ? { selector: rest[1] } : {}),
+          ...(expected !== undefined ? { expected } : {}),
+          ...opts,
+        },
+        flags,
+      };
+    }
+
     case 'is':
       // craftdriver is visible|enabled|checked <selector>
       return { cmd: 'is', args: { what: rest[0], selector: rest[1], ...opts }, flags };
@@ -1215,6 +1311,11 @@ export function parseArgv(argv: string[]): ParsedCommand | null {
 
     case 'mcp':
       return { cmd: 'mcp', args: { ...opts }, flags };
+
+    case 'run':
+      // craftdriver run < script.txt — the script itself arrives on stdin,
+      // one command per line, in the syntax the rest of this parser accepts.
+      return { cmd: 'run', args: { ...opts }, flags };
 
     default:
       return { cmd: '__unknown__', args: { cmd: cmd0 }, flags };

@@ -68,6 +68,7 @@ import {
 import { clickWithFastPath } from './clickFastPath.js';
 import { fillWithFastPath } from './fillFastPath.js';
 import { clearWithFastPath } from './clearFastPath.js';
+import { waitForVisibleDiagnosed } from './visibilityDiagnosis.js';
 import { runExpectScreenshot, shouldUpdateVisualBaselines } from './visual/index.js';
 import type { ExpectScreenshotOptions, ScreenshotMatchResult } from './visual/index.js';
 import { publicPageInitScript } from './initScript.js';
@@ -3051,13 +3052,30 @@ export class Browser {
     return new Page(this.driver, handle, this.getDefaultTimeout);
   }
 
+  /**
+   * Wait for `by` to be visible, and on timeout say which failure it was.
+   *
+   * Shared by the action fast paths so `click`, `fill` and `clear` cannot
+   * drift into reporting three different things for the same situation.
+   */
+  private _visibleOrDiagnosed(by: By, selector: string | By) {
+    const described = selectorToString(selector) ?? String(selector);
+    return (remaining: number) =>
+      waitForVisibleDiagnosed(
+        (t) => this.driver.wait(until.elementIsVisible(by), { timeout: t }),
+        () => this.driver.findElements(by),
+        described,
+        remaining
+      );
+  }
+
   async click(selector: string | By, opts?: { timeout?: number }): Promise<void> {
     return this._runTracedAction('click', undefined, selectorToString(selector), async () => {
       const by = typeof selector === 'string' ? By.css(selector) : selector;
       const timeout = opts?.timeout ?? this.defaults.timeout;
       await clickWithFastPath(
         () => this.driver.findElement(by),
-        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        this._visibleOrDiagnosed(by, selector),
         timeout
       );
     });
@@ -3069,7 +3087,7 @@ export class Browser {
       const timeout = opts?.timeout ?? this.defaults.timeout;
       await fillWithFastPath(
         () => this.driver.findElement(by),
-        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        this._visibleOrDiagnosed(by, selector),
         text,
         timeout
       );
@@ -3090,7 +3108,7 @@ export class Browser {
       // cannot steal focus between two protocol commands.
       await fillWithFastPath(
         () => this.driver.findElement(by),
-        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        this._visibleOrDiagnosed(by, selector),
         `${text}${Key.Enter}`,
         timeout
       );
@@ -3103,7 +3121,7 @@ export class Browser {
       const timeout = opts?.timeout ?? this.defaults.timeout;
       await clearWithFastPath(
         () => this.driver.findElement(by),
-        (remaining) => this.driver.wait(until.elementIsVisible(by), { timeout: remaining }),
+        this._visibleOrDiagnosed(by, selector),
         timeout
       );
     });

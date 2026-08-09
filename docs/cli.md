@@ -42,6 +42,79 @@ text "#result"
 ' | npx craftdriver --ephemeral
 ```
 
+Every line is parsed before any of them runs, so a typo on the last line costs
+you a message instead of a half-driven browser. Execution then **stops at the
+first command that fails**, because the lines after it were written for a page
+state the script never reached — running them anyway produces the application's
+own words ("Missing credentials") for what was really a broken selector. The
+stderr note says which step stopped it and how many were skipped. Pass
+`--continue-on-error` when the commands genuinely are independent probes.
+
+## One round trip for commands you already know
+
+Every CLI call is a separate OS process, and the process is most of the cost:
+measured on this machine against a warm daemon, five operations
+(`go` → `fill` → `check` → `select` → `click`) took **1.85 s as five
+invocations while the browser work inside them was 237 ms**. `craftdriver run`
+spends that process cost once — the same five steps take **0.54 s, a 3.4x
+improvement** — and, for an agent, collapses five turns into one.
+
+```bash
+cat <<'EOF' | npx craftdriver run --session shopper
+fill '#nickname' mitko
+check #newsletter
+select #plan pro
+click #save --observe=delta
+EOF
+```
+
+It is the `--ephemeral` script syntax against a live daemon session rather than
+a throwaway browser, so there is no second command language: the same
+selectors, the same flags, the same error codes.
+
+```json
+{"ok":true,"result":{"ok":true,"ran":4,"skipped":0,
+  "steps":[{"index":0,"cmd":"fill","ok":true,"durationMs":71,"result":{"ok":true,"selector":"#nickname"}},
+           {"index":1,"cmd":"check","ok":true,"durationMs":59,"result":{"ok":true,"checked":true}},
+           {"index":2,"cmd":"select","ok":true,"durationMs":14,"result":{"ok":true,"value":"pro"}},
+           {"index":3,"cmd":"click","ok":true,"durationMs":42,"result":{"ok":true}}],
+  "delta":"…"}}
+```
+
+What a batch guarantees:
+
+- **One session queue slot.** Nothing else addressing that session runs between
+  the steps, so the page you reasoned about is the page the next step acts on.
+- **It stops at the first failure**, reporting `failedStep` and `skipped`.
+  `--continue-on-error` opts out, for independent probes.
+- **Per-step `ok` and `durationMs`**, never a single collapsed "it worked".
+- **One observation, not one per step.** Put `--observe` on the last step;
+  `--observe=delta` there accumulates what the earlier steps changed. It is
+  refused on any other step.
+- **A failed step carries its `recoverySnapshot`** when the error had one.
+- **The same exit codes as the same commands run singly.** A step that executed
+  but answered no — `exists` matching nothing, a failed `a11y --check` — is a
+  failed step here exactly as it is exit 1 on its own and in an `--ephemeral`
+  script, and it stops the batch like any other failure. MCP is deliberately
+  different: there a read answers and `browser_expect` is what fails.
+- **No healing, no retry, no substituted selector** — ever. A batch executes
+  what you wrote and reports what happened.
+
+Batch only what you already know. Return and look between steps whenever the
+next selector comes from the previous step's delta, the flow crosses a
+navigation or a wizard step, an intermediate result decides whether to continue
+at all, or you need a fresh snapshot or ref.
+
+End the script with an `expect` step when there is an outcome worth checking —
+otherwise a batch can only tell you that every step ran, never that the
+application did the right thing. See
+[Assertions](#assertions--a-verdict-not-a-reading).
+
+The exit status is 0 when every step passed, and otherwise the status the first
+failing step would have produced on its own. A script that fails to parse exits
+2 before a daemon or browser is started. `run` needs the daemon, so it is
+unavailable on Windows — use the MCP `browser_batch` tool there.
+
 ## Commands
 
 ```
@@ -71,6 +144,13 @@ craftdriver text [selector] [--limit N]
 craftdriver attr <selector> <name>
 craftdriver value <selector>
 craftdriver is visible|enabled|checked <selector>
+
+craftdriver expect visible <selector>  # assert, with a verdict: exit 1 on
+                                       # failure. See "Assertions" below
+craftdriver expect text <selector> '<expected>'
+craftdriver expect text <selector> --contains '<substring>'
+craftdriver expect url '<expected>' | craftdriver expect url --contains '<substring>'
+craftdriver expect no-errors [--since N]
 
 craftdriver wait <selector> [--state visible|hidden|attached|detached] [--timeout ms]
 craftdriver wait load [--state load|domcontentloaded|networkidle]
@@ -113,6 +193,7 @@ craftdriver daemon start|status|stop
 craftdriver session list               # open sessions and the limit
 craftdriver session close [name]       # quit one session's browser
 
+craftdriver run < script.txt           # several known commands, one round trip
 craftdriver init [--agent claude|codex|copilot|all] [--dry-run] [--mcp]
 craftdriver mcp                        # speak MCP on stdio
 ```
@@ -124,6 +205,7 @@ That is every command. Global flags are:
 --headless | --headed                      override the default
 --session <name>                           route to a named browser
 --ephemeral                                one browser for one script on stdin
+--continue-on-error                        run/ephemeral: go on past a failed step
 --timeout <ms>                             per-command wait (default 5000)
 --json | --pretty                          force output format
 --help | --version
@@ -135,6 +217,30 @@ above; they are rejected by commands that do not return lists.
 CLI agent sessions start at a 1280x800 desktop layout so responsive pages expose
 their primary controls. `go URL --viewport WIDTHxHEIGHT` overrides it before
 that navigation when the task intentionally targets another responsive size.
+
+Every observed result also carries an **error tripwire**: `errors`, the number
+of errors (uncaught exceptions and `console.error` alike) the page logged since
+the previous observation, and `logCursor`, the value to pass as `--since` to
+read exactly those entries. An action can make the application throw while
+changing nothing an a11y snapshot can see, and `(no a11y changes)` then reads
+as all-clear; the counter closes that hole for a handful of tokens instead of a
+defensive `logs` call after every action. `errors: 0` is an affirmative answer,
+so the fields are omitted entirely — never reported as zero — when the session
+cannot capture logs at all. `logsDropped` appears only when the journal evicted
+*errors* inside the window, which makes the count a lower bound — a page that
+merely made a lot of requests does not raise it. Two qualifiers travel with
+those numbers, and both appear only as `false`: `logsDroppedExact` says the
+window reaches back past the evictions the journal still has sequence numbers
+for, so `logsDropped` is an upper bound rather than a figure; `logsSettled`
+says the driver would not confirm that pending events had been delivered, so
+`errors` is what had arrived rather than what the action caused, and the
+session itself is unwell.
+
+```bash
+$ npx craftdriver click '#btn-console-error' --observe=delta
+{"ok":true,"result":{"ok":true,"delta":"(no a11y changes)","errors":1,"logCursor":8}}
+$ npx craftdriver logs --kind error --since 8
+```
 
 `--observe=page` returns URL, title, document identity, revision, and
 `documentChange` after a mutation. The state is `same`, `changed`, or `unknown`;
@@ -175,6 +281,94 @@ or `value` reads is usually the smallest evidence path. Use `--observe=delta`
 when the next action depends on discovering what changed.
 
 Run `craftdriver --help` for the full list.
+
+## Assertions — a verdict, not a reading
+
+`find`, `text` and `is` are **reads**: they answer, exit 0 whatever the answer
+is, and leave the judgement to you. `is visible '#gone'` reporting
+`{"result":false}` is a successful command.
+
+`exists` is the exception among the reads: it answers *and* reports that answer
+as the exit status (1 when nothing matched), because agents branch on it in a
+shell. In a script — where there is no branch — that makes it an assertion, so
+it stops the run like any other failing step; `--continue-on-error` is the way
+to say you meant it as an independent probe.
+
+`expect` is the other half — the same auto-waiting the library's matchers do,
+but it **fails**: exit 1, an `EXPECT_MISMATCH`, and a message that names the
+selector, what was expected and what was actually there.
+
+```bash
+npx craftdriver expect visible 'testid=welcome'
+npx craftdriver expect text 'testid=welcome' --contains 'Welcome'
+npx craftdriver expect url --contains '/dashboard'
+npx craftdriver expect no-errors
+```
+
+Pass the expected value as an argument for an exact match, or `--contains` for
+a substring — one or the other, never both. `visible`, `text` and `url` poll
+until the deadline (`--timeout`, default 5 s), so there is no need to `wait`
+first.
+
+Failures are diagnosed rather than merely reported, because "the selector is
+wrong" and "the element is behind a modal" need different next moves:
+
+```bash
+$ npx craftdriver expect visible '#display-none-self'
+error: expected #display-none-self to be visible, but it is hidden after 5000ms (1 element matches, none displayed)
+code:  EXPECT_MISMATCH
+hint:  The element exists but never became visible — open the view containing it (modal, accordion, tab) first.
+
+$ npx craftdriver expect visible '#dispaly-none-self'
+error: expected #dispaly-none-self to be visible, but nothing matched it within 5000ms
+code:  EXPECT_MISMATCH
+hint:  The selector matched zero elements. Check it against `snapshot`, or use testid= / role= for a durable one.
+```
+
+`expect no-errors` fails if the page logged any error — uncaught exceptions and
+`console.error` alike — and quotes the first few, so the verdict is actionable
+without a follow-up `logs` call. It counts from the start of the session;
+narrow it to one window with `--since N`, using the `logCursor` an observation
+already gave you. Unlike the other three it does not poll: waiting for the
+*absence* of an error could only ever burn the whole timeout, so it reports
+what has been captured when it runs. Use `logs wait` to wait for a specific
+message. On a session that cannot capture logs at all it fails with
+`STATE_INVALID` rather than passing — "nobody was listening" must not read as
+"nothing happened".
+
+That third outcome is the whole shape of this command: a buffered error is an
+ordinary `EXPECT_MISMATCH`, but a *green* verdict is an affirmative claim, so
+it is only made when the window can support one. Two things stop it, both
+`STATE_INVALID`:
+
+- **Errors were evicted** from the bounded journal inside the window. Absence
+  of evidence is not evidence of absence; `--since <logCursor>` narrows to a
+  window that is still intact, and `logs clear` starts a fresh one. Evicted
+  *network* rows do not trigger this — only lost errors — so a chatty page
+  still gets a plain verdict.
+- **The driver would not confirm delivery.** The check takes one BiDi round
+  trip first, so an error the last action caused cannot still be in flight; if
+  that round trip fails, the session is unwell and the count is unconfirmed.
+
+An error still in the buffer outranks both: the page logged one, so the answer
+is "no" rather than "cannot tell", and the retained errors are quoted with a
+note that the count is a lower bound. Where the loss can only be bounded rather
+than counted, every message and `detail` says `up to N` and carries
+`logsDroppedExact: false` — the same qualifier an observation uses.
+
+**This is what makes a batch able to check its outcome.** Without an assertion
+step, `craftdriver run` can report that all four steps executed and nothing
+about whether the application did the right thing. A failed `expect` stops the
+steps after it, so the run does not continue against a page that is already
+wrong:
+
+```bash
+cat <<'EOF' | npx craftdriver run --session shopper
+fill '#nickname' mitko
+click '#save'
+expect text '#log' --contains saved --observe=delta
+EOF
+```
 
 ## Selector syntax
 
@@ -454,6 +648,10 @@ code:  NO_MATCH
 | `0`  | success (or `exists` matched at least one element, or an `a11y` report)          |
 | `1`  | assertion / timeout / `NO_MATCH` / `exists` matched zero / failed `a11y --check` |
 | `2`  | usage error (missing argument, unknown command)                                  |
+
+A failed `expect` is the `1` row: `EXPECT_MISMATCH`. A malformed one — an
+unknown check, or an expected value given both ways — is the `2` row, and is
+rejected before a daemon or browser is started.
 
 ## Fail-fast defaults
 

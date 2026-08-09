@@ -26,6 +26,13 @@
  * argument instead of becoming seven tools.
  */
 import type { AgentDetailedResult, AgentSessionRunner } from '../agentSession.js';
+import { CraftdriverError, ErrorCode } from '../../lib/errors.js';
+import {
+  batchRejection,
+  MAX_BATCH_STEPS,
+  type BatchRequest,
+  type BatchStep,
+} from '../batch.js';
 import { toInputSchema, validateArgs, type ParamSpecs } from './params.js';
 
 /**
@@ -52,8 +59,15 @@ export interface ToolDef {
   description: string;
   params: ParamSpecs;
   annotations: ToolAnnotations;
-  /** Map validated MCP args → dispatcher args. */
-  toDispatch: (args: Record<string, unknown>) => { cmd: string; args: Record<string, unknown> };
+  /**
+   * Map validated MCP args → dispatcher args.
+   *
+   * Absent for a tool the server executes itself rather than dispatching —
+   * `browser_batch` is not one command, it is several. Absence is also what
+   * makes such a tool unusable as a batch step, which is how a batch inside a
+   * batch is refused.
+   */
+  toDispatch?: (args: Record<string, unknown>) => { cmd: string; args: Record<string, unknown> };
 }
 
 const SELECTOR = {
@@ -313,6 +327,42 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'browser_expect',
+    // The counterpart to browser_read: a read answers, an expectation returns
+    // a verdict and *fails*. That is what lets a batch report the outcome was
+    // right rather than only that every step executed — so an assertion is
+    // usually the step a batch should end on.
+    description:
+      'Assert page state and FAIL if it does not hold — auto-waited, unlike the reads. ' +
+      'what=visible|text|url need a selector and/or expected|contains; what=no-errors fails ' +
+      'if the page logged errors. Prefer this over browser_read when you want a verdict, and ' +
+      'end a browser_batch with it to check the outcome rather than just the execution.',
+    params: {
+      what: { type: 'string', required: true, enum: ['visible', 'text', 'url', 'no-errors'] },
+      selector: { ...OPTIONAL_SELECTOR, description: `${SELECTOR.description} Required for visible/text.` },
+      expected: { type: 'string', description: 'Exact value, for what=text|url.' },
+      contains: { type: 'string', description: 'Substring instead of an exact value.' },
+      since: {
+        type: 'number',
+        min: 0,
+        description: 'what=no-errors: only count errors after this logCursor. Default: the whole session.',
+      },
+      timeout: TIMEOUT,
+    },
+    annotations: readOnly('Assert page state'),
+    toDispatch: (a) => ({
+      cmd: 'expect',
+      args: {
+        what: a.what,
+        ...(a.selector !== undefined ? { selector: a.selector } : {}),
+        ...(a.expected !== undefined ? { expected: a.expected } : {}),
+        ...(a.contains !== undefined ? { contains: a.contains } : {}),
+        ...(a.since !== undefined ? { since: a.since } : {}),
+        ...(a.timeout !== undefined ? { timeout: a.timeout } : {}),
+      },
+    }),
+  },
+  {
     name: 'browser_wait',
     description:
       'Wait for a selector to become visible/hidden/attached/detached, or for a load state ' +
@@ -555,6 +605,48 @@ export const TOOLS: ToolDef[] = [
     }),
   },
 
+  // ---- one round trip for several known calls -----------------------------
+  {
+    name: 'browser_batch',
+    // Every step is an ordinary tool call, so this tool adds no capability
+    // that the catalogue does not already have — only one turn instead of N.
+    // That is the deliberate difference from an arbitrary-code tool: there is
+    // nothing here that reaches the driver process.
+    description:
+      'Run several tool calls you ALREADY know in one round trip against the same session. ' +
+      'Each step is a normal tool name and its normal arguments. Stops at the first failure ' +
+      'and reports which step and how many were skipped; every step reports ok and duration; ' +
+      'the batch returns one observation, not one per step. Never batch past a point where ' +
+      'the next selector comes from the previous result, or where a result decides what to ' +
+      'do next — return and look instead.',
+    params: {
+      steps: {
+        type: 'object[]',
+        required: true,
+        maxItems: MAX_BATCH_STEPS,
+        itemSpecs: {
+          tool: {
+            type: 'string',
+            required: true,
+            maxLength: 64,
+            description: 'Another craftdriver tool, e.g. "browser_fill".',
+          },
+          arguments: { type: 'object', description: "That tool's own arguments." },
+        },
+      },
+      continue_on_error: {
+        type: 'boolean',
+        description: 'Run the remaining steps after one fails. Off by default.',
+      },
+      observe: {
+        type: 'string',
+        enum: ['page', 'delta'],
+        description: 'One post-batch observation. delta accumulates every step’s changes.',
+      },
+    },
+    annotations: mutating('Batch'),
+  },
+
   // ---- escape hatch -------------------------------------------------------
   {
     name: 'browser_advanced_eval',
@@ -589,13 +681,74 @@ export function validateToolArgs(tool: ToolDef, args: unknown): Record<string, u
   return validateArgs(tool.name, tool.params, args);
 }
 
+/**
+ * The dispatcher command a tool maps to.
+ *
+ * Throws for a tool the server executes itself, which is exactly the check
+ * that keeps `browser_batch` out of its own step list.
+ */
+export function toDispatch(tool: ToolDef, args: Record<string, unknown>): BatchStep {
+  if (!tool.toDispatch) {
+    throw new CraftdriverError(
+      ErrorCode.INVALID_ARGUMENT,
+      `${tool.name} is not a single command and cannot be used as a batch step`,
+      { hint: 'list its steps directly in the enclosing batch' }
+    );
+  }
+  return tool.toDispatch(args);
+}
+
+/**
+ * Compile `browser_batch` arguments into one request for the session.
+ *
+ * Each step is validated against the descriptor of the tool it names and
+ * mapped through that tool's own `toDispatch`, so a step means exactly what
+ * the standalone call means. No second argument language exists to drift.
+ */
+export function compileBatchRequest(args: Record<string, unknown>): BatchRequest {
+  const rawSteps = args.steps as Array<{ tool: string; arguments?: Record<string, unknown> }>;
+  // An empty batch is a caller mistake, not a no-op worth reporting as
+  // success — the CLI refuses an empty script for the same reason.
+  if (rawSteps.length === 0) {
+    throw new CraftdriverError(ErrorCode.INVALID_ARGUMENT, 'browser_batch: no steps to run');
+  }
+  const steps = rawSteps.map((step, index) => {
+    const target = getTool(step.tool);
+    if (!target) {
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `browser_batch: step ${index + 1} names unknown tool "${step.tool}"`,
+        { detail: { tool: step.tool } }
+      );
+    }
+    const validated = validateToolArgs(target, step.arguments ?? {});
+    const dispatched = toDispatch(target, validated);
+    const reason = batchRejection(dispatched.cmd);
+    if (reason) {
+      throw new CraftdriverError(
+        ErrorCode.INVALID_ARGUMENT,
+        `browser_batch: step ${index + 1} cannot run inside a batch — ${reason}`
+      );
+    }
+    return dispatched;
+  });
+
+  return {
+    steps,
+    ...(args.continue_on_error === true ? { continueOnError: true } : {}),
+    ...(args.observe === 'page' || args.observe === 'delta'
+      ? { observe: args.observe as 'page' | 'delta' }
+      : {}),
+  };
+}
+
 /** Map a tool to a dispatcher command and run it through the shared session. */
 export async function runTool(
   session: AgentSessionRunner,
   tool: ToolDef,
   args: Record<string, unknown>
 ): Promise<unknown> {
-  return session.run(tool.toDispatch(args));
+  return session.run(toDispatch(tool, args));
 }
 
 /**
@@ -608,5 +761,5 @@ export async function runToolDetailed(
   tool: ToolDef,
   args: Record<string, unknown>
 ): Promise<AgentDetailedResult> {
-  return session.runDetailed(tool.toDispatch(args));
+  return session.runDetailed(toDispatch(tool, args));
 }

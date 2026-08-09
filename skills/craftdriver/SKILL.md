@@ -66,6 +66,11 @@ snapshot, so do not follow it with another snapshot.
 `same`, `changed`, or `unknown`. `unknown` means there was no preceding observed
 document and must not be treated as `same`.
 
+Where log capture is available, an observation also carries `errors` — how many
+the page logged since the previous one — and `logCursor`. Only an unqualified
+zero is an all-clear; otherwise read `logs --kind error --since <logCursor>`
+before treating the action as successful. `(no a11y changes)` is not one either.
+
 On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
 only when recovery context is unavailable or more context is genuinely needed.
 Actions auto-wait; use `wait` only for a specific asynchronous selector or load
@@ -74,6 +79,34 @@ state. Do not call `status` merely to get URL or title.
 For required visual evidence, run `screenshot -o final.png`. When finished, run
 `daemon stop`; it already closes every session, so do not call `session close`
 first.
+
+## Batch what you already know
+
+When the whole sequence is already known, send it as one batch rather than one
+command per turn.
+
+```bash
+npx craftdriver run <<'EOF'
+fill ref=e7 alice
+fill ref=e9 hunter2
+click ref=e11
+expect text '#result' --contains 'Welcome' --observe=delta
+EOF
+```
+
+It stops at the first failed step and names it. `--observe` goes on the last
+step only, where `delta` accumulates what the earlier steps changed.
+`--session NAME` goes on `run`, never on a step.
+
+End with an `expect` step when the outcome matters: `expect visible|text|url`
+auto-wait and then *fail* (exit 1), and `expect no-errors` checks what the page
+logged, where `find`/`text`/`is` only report. Without one, a batch shows only
+that every step ran.
+
+Stop batching — return and look — whenever a step depends on what the previous
+one showed: a selector taken from the delta, a result that decides whether to
+continue at all, a navigation or wizard step whose next screen you cannot
+predict.
 
 ## Writing or debugging committed tests
 

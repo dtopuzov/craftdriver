@@ -15,9 +15,17 @@ import {
   SnapshotTracker,
   type SnapshotShape,
 } from './snapshot.js';
-import { SessionJournal } from './journal.js';
+import { SessionJournal, type LogTripwire } from './journal.js';
 import { AGENT_DEFAULT_VIEWPORT, type AgentViewport } from './defaults.js';
 import { truncateUtf8, utf8Bytes } from './bounds.js';
+import {
+  boundBatchSteps,
+  type BatchOutcome,
+  type BatchRequest,
+  type BatchStepResult,
+} from './batch.js';
+import { toWireError } from './wireError.js';
+import { negativeVerdict } from './verdict.js';
 
 export interface AgentCommand {
   cmd: string;
@@ -42,6 +50,12 @@ export interface AgentDetailedResult {
   value: AgentResult;
   /** Rendered diff (or full snapshot on a document change). */
   delta?: string;
+  /**
+   * Whether the action made the application log an error, and where to read
+   * it. Absent when this session cannot capture logs at all (a Classic
+   * session has no journal), which is deliberately different from `errors: 0`.
+   */
+  logs?: LogTripwire;
   snapshot?: SnapshotShape | null;
   /** Cheap-to-render state from the same atomic post-action snapshot. */
   page?: {
@@ -119,6 +133,8 @@ async function withRefRecovery(
 export interface AgentSessionRunner {
   run(command: AgentCommand): Promise<AgentResult>;
   runDetailed(command: AgentCommand): Promise<AgentDetailedResult>;
+  /** Run several known commands in one queue slot. See {@link BatchRequest}. */
+  runBatch(request: BatchRequest): Promise<BatchOutcome>;
   close(): Promise<void>;
 }
 
@@ -145,6 +161,14 @@ export class AgentSession implements AgentSessionRunner {
   private tail: Promise<void> = Promise.resolve();
   private state: 'open' | 'closing' | 'closed' = 'open';
   private closePromise: Promise<void> | null = null;
+  /**
+   * Journal cursor as of the previous observation.
+   *
+   * The tripwire answers "did *this* action log an error", so it counts from
+   * here rather than from the start of the session — a total would keep
+   * reporting the same error long after it was read and dealt with.
+   */
+  private lastLogCursor = 0;
 
   constructor(options: AgentSessionOptions) {
     const baseLaunch = options.launch ?? (() => Browser.launch(options.launchOptions));
@@ -201,71 +225,142 @@ export class AgentSession implements AgentSessionRunner {
     }
 
     const result = this.tail.then(async (): Promise<AgentDetailedResult> => {
-      const args = command.args ?? {};
-      let value: AgentResult;
-      try {
-        value = isObservedSubmit(command, this.autoSnapshot)
-          ? await (
-              await this.ctx.handle.get()
-            )[INTERNAL_RUN_WITH_NAVIGATION_FENCE](() =>
-              this.dispatcher(this.ctx, command.cmd, args)
-            )
-          : await this.dispatcher(this.ctx, command.cmd, args);
-      } catch (error) {
-        throw await withRefRecovery(this.ctx, command, error);
-      }
-      if ((!this.autoSnapshot && !command.observe) || !isMutating(command.cmd)) return { value };
-      // Only if a browser is actually up: a fake dispatcher (or a command
-      // that never needed a browser) must not cause a launch here.
-      const browser = this.ctx.handle.peek();
-      if (!browser) return { value };
+      const value = await this.dispatchOne(command);
+      // An explicit `--observe` always observes; auto-snapshot still skips
+      // reads, which is what keeps a browsing loop from paying for a snapshot
+      // after every `text` or `exists`. The two were folded together while no
+      // non-mutating command accepted the flag — `expect` does, because a
+      // batch may only carry its one observation on the last step, and the
+      // step worth ending on is the one that asserts the outcome.
+      if (!command.observe && (!this.autoSnapshot || !isMutating(command.cmd))) return { value };
+      const observation = await this.captureObservation();
+      return observation ? { value, ...observation } : { value };
+    });
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
 
-      // A modal dialog blocks script execution, so snapshotting behind one
-      // stalls for the full WebDriver script timeout (measured: 60s) and
-      // then fails anyway. Probing costs ~2ms and tells the agent the one
-      // thing it actually needs to know here.
-      const dialog = await peekDialog(browser);
-      if (dialog !== null) {
-        return {
-          value,
-          delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)`,
+  /**
+   * Run several known commands in one queue slot.
+   *
+   * The queue slot is the point. Five commands sent one at a time are five
+   * slots, and anything else addressing this session can land between them —
+   * so the page an agent reasons about is not necessarily the page its next
+   * step acts on. A batch is indivisible: nothing interleaves, and the single
+   * observation at the end describes the whole flow.
+   *
+   * What a batch deliberately does not do: heal, retry or substitute a
+   * selector. A failed step stops the rest (unless the caller opted out) and
+   * carries whatever recovery snapshot the error already had. Choosing a
+   * replacement target is the agent's decision, not the batch's.
+   */
+  runBatch(request: BatchRequest): Promise<BatchOutcome> {
+    if (this.state !== 'open') {
+      return Promise.reject(
+        new CraftdriverError(
+          ErrorCode.STATE_INVALID,
+          'AgentSession is closing or closed; it cannot accept new commands'
+        )
+      );
+    }
+
+    const result = this.tail.then(async (): Promise<BatchOutcome> => {
+      const { steps, observe } = request;
+      const results: BatchStepResult[] = [];
+      let failedStep: number | undefined;
+      let sawMutation = false;
+      // A ref failure already took a snapshot to build its recovery context,
+      // which advanced the baseline. Observing again would render an empty
+      // delta and cost a second snapshot for it.
+      //
+      // Only true of the step that ran *last*: under `continueOnError` the
+      // steps after a recovered failure keep acting on the page, and their
+      // changes happened after that snapshot was taken. Suppressing the
+      // observation then would hide exactly the part the recovery snapshot
+      // does not contain.
+      let recoveredLast = false;
+
+      for (const [index, step] of steps.entries()) {
+        const command: AgentCommand = {
+          cmd: step.cmd,
+          args: step.args,
+          // Only the last step can be observed, so only it needs the
+          // navigation fence that keeps a submit-and-navigate from racing
+          // the snapshot that follows it.
+          ...(observe && index === steps.length - 1 ? { observe } : {}),
         };
+        const started = performance.now();
+        try {
+          const value = await this.dispatchOne(command);
+          // A command can succeed and still answer no. On the CLI that is
+          // exit 1, and a script is documented to stop there; the surface
+          // that does not want it (MCP) simply does not ask for it.
+          const verdict = request.stopOnVerdict ? negativeVerdict(step.cmd, value) : null;
+          results.push({
+            index,
+            cmd: step.cmd,
+            ok: verdict === null,
+            durationMs: Math.round(performance.now() - started),
+            result: value,
+            ...(verdict ? { error: verdict } : {}),
+          });
+          if (isMutating(step.cmd)) {
+            sawMutation = true;
+            // A mutation after a recovery snapshot is exactly what that
+            // snapshot cannot describe, so the observation is owed again.
+            recoveredLast = false;
+          }
+          if (verdict) {
+            failedStep ??= index;
+            if (!request.continueOnError) break;
+          }
+        } catch (error) {
+          const wire = toWireError(error);
+          results.push({
+            index,
+            cmd: step.cmd,
+            ok: false,
+            durationMs: Math.round(performance.now() - started),
+            error: wire,
+          });
+          failedStep ??= index;
+          recoveredLast = wire.recoverySnapshot !== undefined;
+          // Stop here. The remaining steps were written for a page state this
+          // batch never reached, and running them anyway produces output that
+          // reads like an application answer rather than a step that failed.
+          if (!request.continueOnError) break;
+        }
       }
 
-      const before = this.ctx.tracker.current;
-      const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
-      if (!snap) {
-        return {
-          value,
-          delta: 'post-action snapshot unavailable',
-          snapshot: null,
-        };
-      }
-      // Ordinary failures throw above. A failed action on a previously issued
-      // ref is the one exception: its attached recovery snapshot advances the
-      // baseline so the new refs in that error are immediately usable.
-      const delta = this.ctx.tracker.advance(snap);
-      const snapshot = this.ctx.tracker.current;
+      const skipped = steps.length - results.length;
+      const observation =
+        observe && sawMutation && !recoveredLast ? await this.captureObservation() : null;
+      // The tripwire is a journal read, not a snapshot, so it still answers
+      // "did any step in this batch make the application throw" on the paths
+      // that skipped the snapshot — a recovery snapshot, a read-only batch.
+      // Those paths take the same ordering barrier, so the count means one
+      // thing on all of them rather than being weaker where it is cheaper.
+      const logs =
+        observation?.logs ?? (observe ? (await this.settledLogTripwire()).logs : undefined);
       return {
-        value,
-        ...(delta ? { delta } : {}),
-        snapshot,
-        ...(snapshot
-          ? {
-              page: {
-                url: snapshot.url,
-                title: snapshot.title,
-                documentId: snapshot.documentId,
-                revision: snapshot.revision,
-                documentChange:
-                  before === null
-                    ? 'unknown'
-                    : before.documentId === snapshot.documentId
-                      ? 'same'
-                      : 'changed',
-              },
-            }
-          : {}),
+        ok: skipped === 0 && results.every((step) => step.ok),
+        steps: boundBatchSteps(results),
+        ran: results.length,
+        skipped,
+        ...(failedStep !== undefined ? { failedStep } : {}),
+        // `page` is the richer answer and `delta` the cheaper one, but a
+        // dialog or a failed snapshot only ever produces the note in `delta`
+        // — so a `page` request falls back to it rather than reporting
+        // nothing at all about why there is no page.
+        ...(observe === 'page' && observation?.page
+          ? { page: observation.page }
+          : observation?.delta
+            ? { delta: observation.delta }
+            : {}),
+        ...(logs ? { logs } : {}),
       };
     });
     this.tail = result.then(
@@ -273,6 +368,146 @@ export class AgentSession implements AgentSessionRunner {
       () => undefined
     );
     return result;
+  }
+
+  /**
+   * The tripwire, taken after one BiDi round trip so the events the last
+   * action caused have certainly arrived.
+   *
+   * Console capture and commands share one WebSocket, in order: a reply to a
+   * request sent *after* the action proves every event the browser had already
+   * emitted was delivered first. Nothing else on this path provides that — the
+   * snapshot runs over Classic on purpose — so without the barrier the count
+   * is a race the page usually loses and occasionally wins, which is the worst
+   * kind of check. `expect no-errors` takes the same barrier for the same
+   * reason.
+   *
+   * A failed barrier does not fail the action — it was not an answer about the
+   * page — but it is not hidden either: the count goes out marked unsettled,
+   * because `errors: 0` is an affirmative claim everywhere else here and an
+   * unconfirmed zero is not one.
+   */
+  private async settledLogTripwire(): Promise<{ logs?: LogTripwire }> {
+    const browser = this.ctx.handle.peek();
+    let settled = true;
+    if (browser && this.journal.isCapturing) {
+      settled = await browser
+        .activePage()
+        .then((page) => page.url())
+        .then(() => true)
+        .catch(() => false);
+    }
+    return this.takeLogTripwire(settled);
+  }
+
+  /**
+   * The error tripwire for everything since the previous observation, moving
+   * the baseline forward as it reports.
+   *
+   * Called exactly once per observation — it is a read *and* an advance, so
+   * calling it twice would report the second window as empty.
+   */
+  private takeLogTripwire(settled = true): { logs?: LogTripwire } {
+    // No capture at all (a Classic session has no journal events) is not the
+    // same answer as "no errors", so say nothing rather than say zero.
+    if (!this.journal.isCapturing) return {};
+    const since = this.lastLogCursor;
+    const { errors, dropped, droppedExact } = this.journal.countErrorsSince(since);
+    this.lastLogCursor = this.journal.cursor;
+    return {
+      logs: {
+        errors,
+        logCursor: since,
+        // The qualifier travels with the number it qualifies, or the number
+        // arrives at an agent looking more precise than the journal can be.
+        ...(dropped > 0 ? { logsDropped: dropped } : {}),
+        ...(dropped > 0 && !droppedExact ? { logsDroppedExact: false as const } : {}),
+        ...(settled ? {} : { logsSettled: false as const }),
+      },
+    };
+  }
+
+  /** Dispatch one command, with the navigation fence and ref recovery. */
+  private async dispatchOne(command: AgentCommand): Promise<AgentResult> {
+    const args = command.args ?? {};
+    try {
+      return isObservedSubmit(command, this.autoSnapshot)
+        ? await (
+            await this.ctx.handle.get()
+          )[INTERNAL_RUN_WITH_NAVIGATION_FENCE](() => this.dispatcher(this.ctx, command.cmd, args))
+        : await this.dispatcher(this.ctx, command.cmd, args);
+    } catch (error) {
+      throw await withRefRecovery(this.ctx, command, error);
+    }
+  }
+
+  /**
+   * The one post-action snapshot, taken inside the caller's queue slot.
+   *
+   * Null means there was no browser to look at. Every other outcome — a
+   * blocking dialog, a snapshot that could not be taken — is reported, because
+   * "nothing changed" and "nothing could be seen" are different answers.
+   */
+  private async captureObservation(): Promise<Omit<AgentDetailedResult, 'value'> | null> {
+    // Only if a browser is actually up: a fake dispatcher (or a command
+    // that never needed a browser) must not cause a launch here.
+    const browser = this.ctx.handle.peek();
+    if (!browser) return null;
+
+    // A modal dialog blocks script execution, so snapshotting behind one
+    // stalls for the full WebDriver script timeout (measured: 60s) and
+    // then fails anyway. Probing costs ~2ms and tells the agent the one
+    // thing it actually needs to know here.
+    const dialog = await peekDialog(browser);
+    if (dialog !== null) {
+      return {
+        delta: `dialog open: ${dialog}\n(snapshot skipped — accept or dismiss it first)`,
+        ...(await this.settledLogTripwire()),
+      };
+    }
+
+    const before = this.ctx.tracker.current;
+    const snap = await takeSnapshot(browser, this.ctx.tracker.minRef);
+    // Counted after an explicit BiDi barrier, not merely after the snapshot.
+    // The snapshot deliberately runs over Classic, so its round trip orders
+    // nothing against the BiDi event stream the journal is fed from: it made
+    // the count *usually* right, and an uncaught exception the action caused
+    // could still land after it under load. The barrier makes it always right.
+    if (!snap) {
+      return {
+        delta: 'post-action snapshot unavailable',
+        snapshot: null,
+        ...(await this.settledLogTripwire()),
+      };
+    }
+    const logs = await this.settledLogTripwire();
+
+    // Ordinary failures throw above. A failed action on a previously issued
+    // ref is the one exception: its attached recovery snapshot advances the
+    // baseline so the new refs in that error are immediately usable.
+    const delta = this.ctx.tracker.advance(snap);
+    const snapshot = this.ctx.tracker.current;
+    return {
+      ...(delta ? { delta } : {}),
+      ...logs,
+      snapshot,
+      ...(snapshot
+        ? {
+            page: {
+              url: snapshot.url,
+              title: snapshot.title,
+              documentId: snapshot.documentId,
+              revision: snapshot.revision,
+              documentChange:
+                before === null
+                  ? 'unknown'
+                  : before.documentId === snapshot.documentId
+                    ? 'same'
+                    : 'changed',
+            },
+          }
+        : {}),
+    };
   }
 
   close(): Promise<void> {

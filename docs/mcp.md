@@ -137,6 +137,7 @@ command the CLI also has — there are no MCP-only browser semantics.
 | `browser_exists`        | **0-wait probe.** Returns `{exists, count}` in one roundtrip.       |
 | `browser_wait`          | Wait for a selector state or a load state.                          |
 | `browser_read`          | Read `text` / `attr` / `value` / `is(visible\|enabled\|checked)`.   |
+| `browser_expect`        | **Assert with a verdict.** `visible`/`text`/`url`/`no-errors`.      |
 | `browser_snapshot`      | **Sanitized DOM summary with refs.** Use `ref=eN` as a selector.    |
 | `browser_locators`      | **Turn an element into durable selectors for a test.** Never a ref. |
 | `browser_a11y`          | **axe audit/check.** Findings carry actionable refs.                |
@@ -147,12 +148,71 @@ command the CLI also has — there are no MCP-only browser semantics.
 | `browser_trace`         | Record a run to an owned directory; `zip` for a Vibium archive.     |
 | `browser_screenshot`    | Capture PNG to a file under the artifact dir; never inlined.        |
 | `browser_status`        | Browser up? Which URL is active?                                    |
+| `browser_batch`         | **Several known tool calls in one round trip.** See below.          |
 | `browser_advanced_eval` | Evaluate JS in the page. Last resort.                               |
 
 Each tool carries MCP `annotations` — `title`, `readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint` — and they are accurate:
 a tool marked read-only never dispatches a command the dispatcher treats as
 page-mutating, which is asserted by test rather than by review.
+
+### One turn, several known calls
+
+Every MCP tool call is one agent turn, and there is no shell to chain in.
+`browser_batch` runs several calls you already know against the same session
+in one turn. A step is an ordinary tool name and its ordinary arguments — the
+batch introduces no second argument language, and each step is validated
+against the schema its own tool advertises.
+
+```jsonc
+{ "name": "browser_batch", "arguments": {
+  "steps": [
+    { "tool": "browser_fill",  "arguments": { "selector": "ref=e4", "value": "alice" } },
+    { "tool": "browser_fill",  "arguments": { "selector": "ref=e6", "value": "hunter2" } },
+    { "tool": "browser_click", "arguments": { "selector": "ref=e7" } }
+  ],
+  "observe": "delta"
+} }
+```
+
+The batch runs in **one session queue slot**, so nothing interleaves; it
+**stops at the first failure** (`continue_on_error` opts out) and reports
+`failedStep` and `skipped`; every step reports its own `ok` and `durationMs`;
+it returns **one observation, not one per step**, with `delta` accumulating
+what every step changed; and a failed step keeps its `recoverySnapshot`. It
+never heals, retries, or substitutes a selector.
+
+"Failure" here means a tool that failed, not a read that answered no:
+`browser_read what=exists` finding nothing is a successful step with a `false`
+in it, and `browser_expect` is the tool that turns an unwanted answer into a
+stopped batch. (The CLI, which has exit statuses to honour, treats `exists` and
+`a11y --check` as assertions in a script — that difference is deliberate.)
+
+Batch only what is already known. Return and look whenever the next selector
+comes from the previous step's result, the flow crosses a navigation or a
+decision, or a fresh snapshot is needed.
+
+End a batch with `browser_expect` when there is an outcome worth checking.
+Without it a batch can report that every step *executed*, never that the
+result was the wanted one — and a failed assertion stops the steps after it,
+so the run does not continue against a page that is already wrong.
+
+```jsonc
+{ "tool": "browser_expect", "arguments": { "what": "text", "selector": "#result", "contains": "Welcome" } }
+```
+
+`what=visible|text|url` auto-wait like every other craftdriver wait and fail
+with the selector, the expected value, and what was actually there.
+`what=no-errors` fails if the page logged any error, which pairs with the
+`errors` counter in the observation envelope: the counter tells the agent
+whether to look, the assertion decides the run.
+
+This is deliberately not an arbitrary-code tool. Playwright's `browser_run_code`
+was renamed `browser_run_code_unsafe` after a remote-code-execution report,
+because it executes caller-supplied JavaScript in the server process.
+craftdriver has no equivalent surface: `browser_advanced_eval` runs in the
+page, not in the driver, and a batch step is just a validated tool call. See
+[There is no arbitrary-code tool](./agents.md#there-is-no-arbitrary-code-tool).
 
 ### Debugging with evidence
 
@@ -391,6 +451,13 @@ Every tool returns a content array. Tools that can change the page —
   since the old lines describe a page that no longer exists.
 - **A blocking dialog** replaces the snapshot with `dialog open: <message>`,
   because script cannot run behind a modal. Handle it with `browser_dialog`.
+- **An error tripwire** closes the observation: `errors: 1 (logCursor 8)` — the
+  number of errors (uncaught exceptions and `console.error`) the page logged
+  since the previous observation, and the cursor to pass to `browser_logs` as
+  `since` to read them. It is stated even when the count is zero and even when
+  nothing changed, because an action that changed no a11y node can still have
+  made the application throw, and silence there reads as all-clear. The line is
+  absent only when the session cannot capture logs at all.
 - `selector` echoes back the selector you passed, not the compiled WebDriver
   query — so `ref=e7` stays `ref=e7` and `role=button[name=Save]` stays
   readable. Error messages still name the compiled query
