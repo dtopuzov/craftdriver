@@ -8,12 +8,18 @@ class StubChromeService extends ChromeService {
   startCalls = 0;
   stopCalls = 0;
 
-  constructor(private readonly outputTails: string[] = []) {
+  constructor(
+    private readonly outputTails: string[] = [],
+    private readonly replacementStartError?: Error
+  ) {
     super({ binaryPath: '/tmp/craftdriver-test-chromedriver' });
   }
 
   override async start(): Promise<void> {
     this.startCalls++;
+    if (this.startCalls === 2 && this.replacementStartError) {
+      throw this.replacementStartError;
+    }
     this.endpoint = {
       protocol: 'http',
       hostname: '127.0.0.1',
@@ -95,12 +101,14 @@ describe('Builder local Chrome session recovery', () => {
     expect(error.detail?.sessionAttempts).toEqual([
       expect.objectContaining({
         attempt: 1,
+        phase: 'session-create',
         driverPath: '/tmp/craftdriver-test-chromedriver',
         endpoint: 'http://127.0.0.1:9501',
         driverOutputTail: 'first driver tail',
       }),
       expect.objectContaining({
         attempt: 2,
+        phase: 'session-create',
         driverPath: '/tmp/craftdriver-test-chromedriver',
         endpoint: 'http://127.0.0.1:9502',
         driverOutputTail: 'second driver tail',
@@ -118,6 +126,35 @@ describe('Builder local Chrome session recovery', () => {
     expect(Driver.create).toHaveBeenCalledTimes(1);
     expect(service.startCalls).toBe(1);
     expect(service.stopCalls).toBe(1);
+  });
+
+  it('retains the timed-out attempt when the replacement driver cannot start', async () => {
+    const service = new StubChromeService(
+      ['first driver tail', 'replacement startup tail'],
+      new Error('replacement driver exited before ready')
+    );
+    vi.spyOn(Driver, 'create').mockRejectedValueOnce(sessionTimeout());
+
+    let caught: unknown;
+    try {
+      await new Builder().forBrowser('chrome').setChromeService(service).build();
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(CraftdriverError.is(caught, ErrorCode.DRIVER_ERROR)).toBe(true);
+    const error = caught as CraftdriverError;
+    expect(Driver.create).toHaveBeenCalledTimes(1);
+    expect(service.startCalls).toBe(2);
+    expect(error.message).toContain('replacement driver exited before ready');
+    expect(error.detail?.sessionAttempts).toEqual([
+      expect.objectContaining({ attempt: 1, phase: 'session-create' }),
+      expect.objectContaining({
+        attempt: 2,
+        phase: 'driver-start',
+        driverOutputTail: 'replacement startup tail',
+      }),
+    ]);
   });
 
   it('does not apply the Chrome retry policy to an Electron-like service', async () => {

@@ -38,9 +38,10 @@ function isLocalSessionCreationTimeout(err: unknown): boolean {
 
 interface LocalSessionAttemptDiagnostic {
   attempt: number;
+  phase: 'driver-start' | 'session-create';
   driverPath: string;
   driverVersion?: string;
-  endpoint: string;
+  endpoint?: string;
   error: string;
   driverOutputTail?: string;
 }
@@ -53,8 +54,9 @@ function localEndpointLabel(endpoint: WebDriverEndpoint): string {
 function captureLocalSessionAttempt(
   attempt: number,
   service: DriverService,
-  endpoint: WebDriverEndpoint,
-  err: unknown
+  endpoint: WebDriverEndpoint | undefined,
+  err: unknown,
+  phase: LocalSessionAttemptDiagnostic['phase'] = 'session-create'
 ): LocalSessionAttemptDiagnostic {
   const driverPath = service.getCommand();
   const driverVersion = service.allowsFreshSessionRetry()
@@ -63,9 +65,10 @@ function captureLocalSessionAttempt(
   const driverOutputTail = service.getOutputTail().trim();
   return {
     attempt,
+    phase,
     driverPath,
     ...(driverVersion ? { driverVersion } : {}),
-    endpoint: localEndpointLabel(endpoint),
+    ...(endpoint ? { endpoint: localEndpointLabel(endpoint) } : {}),
     error: err instanceof Error ? err.message : String(err),
     ...(driverOutputTail ? { driverOutputTail } : {}),
   };
@@ -78,11 +81,11 @@ function augmentLocalSessionError(
   const summary = attempts
     .map((attempt) => {
       const lines = [
-        `Attempt ${attempt.attempt}: driver=${attempt.driverPath}`,
+        `Attempt ${attempt.attempt}: phase=${attempt.phase} driver=${attempt.driverPath}`,
         `  driverVersion=${attempt.driverVersion ?? 'unavailable'}`,
-        `  endpoint=${attempt.endpoint}`,
         `  error=${attempt.error}`,
       ];
+      if (attempt.endpoint) lines.splice(2, 0, `  endpoint=${attempt.endpoint}`);
       if (attempt.driverOutputTail) {
         lines.push(`  driver output (tail):\n${attempt.driverOutputTail}`);
       }
@@ -185,9 +188,19 @@ export class Builder {
     const localSessionAttempts: LocalSessionAttemptDiagnostic[] = [];
 
     while (true) {
-      await service.start();
-      const endpoint = service.getEndpoint();
       localSessionAttempt++;
+      try {
+        await service.start();
+      } catch (err) {
+        if (service.allowsFreshSessionRetry() && retriedAfterLocalSessionTimeout) {
+          localSessionAttempts.push(
+            captureLocalSessionAttempt(localSessionAttempt, service, undefined, err, 'driver-start')
+          );
+          throw augmentLocalSessionError(err, localSessionAttempts);
+        }
+        throw err;
+      }
+      const endpoint = service.getEndpoint();
 
       try {
         return await this.createSessionWithRetries(name, endpoint, caps);
