@@ -140,9 +140,10 @@ failed `a11y --check`) counts as a failed step, exactly as it is exit 1 run
 singly — `--continue-on-error` is how you say it was an independent probe.
 
 Batch only what is already known. Return and look between steps whenever the
-next selector comes from the previous step's delta, the flow crosses a
-navigation or a wizard step, an intermediate result decides whether to continue,
-or a fresh snapshot or ref is needed.
+next selector comes from the previous step's delta, an intermediate result
+decides whether to continue, a fresh snapshot or ref is needed, or the flow
+crosses a navigation or wizard step whose next screen you cannot predict — a
+login that lands somewhere known is a good batch, not a reason to break one.
 
 Exit status is 0 when every step passed, otherwise the status the first failing
 step would have produced alone. A script that fails to parse exits 2 before

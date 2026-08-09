@@ -66,10 +66,10 @@ snapshot, so do not follow it with another snapshot.
 `same`, `changed`, or `unknown`. `unknown` means there was no preceding observed
 document and must not be treated as `same`.
 
-Every observed result also carries `errors` — how many the page logged since the
-previous observation — and `logCursor`. Non-zero means read them with
-`logs --kind error --since <logCursor>` before treating the action as
-successful; `(no a11y changes)` alone is not an all-clear.
+Where log capture is available, an observation also carries `errors` — how many
+the page logged since the previous one — and `logCursor`. Only an unqualified
+zero is an all-clear; otherwise read `logs --kind error --since <logCursor>`
+before treating the action as successful. `(no a11y changes)` is not one either.
 
 On `STALE_REF`, use the attached `recoverySnapshot`; take `snapshot --pretty`
 only when recovery context is unavailable or more context is genuinely needed.
@@ -104,8 +104,9 @@ logged, where `find`/`text`/`is` only report. Without one, a batch shows only
 that every step ran.
 
 Stop batching — return and look — whenever a step depends on what the previous
-one showed: a selector taken from the delta, a navigation or wizard step, a
-result that decides whether to continue at all.
+one showed: a selector taken from the delta, a result that decides whether to
+continue at all, a navigation or wizard step whose next screen you cannot
+predict.
 
 ## Writing or debugging committed tests
 
