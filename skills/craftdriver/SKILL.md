@@ -1,6 +1,6 @@
 ---
 name: craftdriver
-description: Explore a live web application or write a durable CraftDriver test. Use for browser actions, page inspection, selector validation, and CraftDriver test debugging.
+description: Explore a live web application or write a durable CraftDriver test. This is the complete live-browser command guide; read it before acting and do not run global --help.
 ---
 
 # CraftDriver
@@ -38,14 +38,18 @@ fill:
 
 ```bash
 npx craftdriver fill ref=e5 "Telerik" --submit --observe=delta
-npx craftdriver click ref=e12 --observe=page
-npx craftdriver text h1
-npx craftdriver attr 'link[rel="canonical"]' href
+npx craftdriver click ref=e12 --observe=page &&
+  npx craftdriver text h1 &&
+  npx craftdriver attr 'link[rel="canonical"]' href &&
+  npx craftdriver screenshot -o final.png &&
+  npx craftdriver daemon stop
 ```
 
 The submit's delta is the search result list: choose its fresh result ref
-directly. Do not submit with `--observe=page` and then spend another turn on a
-full snapshot when the next action depends on those results.
+directly. Run the first line, inspect its delta, then send the predictable
+click, evidence reads, screenshot, and shutdown as one shell tool call. Do not
+submit with `--observe=page` and then spend another turn on a full snapshot when
+the next action depends on those results.
 
 For a conventional multi-field form, fill earlier fields normally, then submit
 from the final single-line field. Use `--observe=delta` when the resulting
