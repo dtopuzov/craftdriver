@@ -23,6 +23,15 @@ updates:
           - yazl
       tooling:
         dependency-type: development
+    # typescript-eslint's parser pins a `typescript` peer range that trails the
+    # compiler's own releases (8.69.0 still caps at `<6.1.0`). A grouped major
+    # bump therefore lands a TypeScript the linter cannot accept, and `npm ci`
+    # fails on ERESOLVE before a single check runs — which is exactly how
+    # typescript@7 got in. Majors here need a human to confirm the parser has
+    # caught up first; minors and patches stay automatic.
+    ignore:
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
