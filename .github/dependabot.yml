@@ -6,25 +6,36 @@ version: 2
 # can fix — they clear when upstream npm ships a release that bundles patched
 # copies. Something has to notice that release; this does, instead of a person
 # re-running `npm audit` and wondering whether anything moved.
+#
+# Everything lands in ONE pull request a week: npm runtime deps, npm tooling
+# and GitHub Actions together. Per-group (or per-package) PRs piled up faster
+# than they were merged and kept conflicting on package-lock.json; one batch is
+# reviewed, CI'd and merged once. The multi-ecosystem group is what lets npm
+# and github-actions share that single PR.
+multi-ecosystem-groups:
+  weekly:
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Sofia
+
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
-    # One PR per group rather than per package: the runtime dependencies are
-    # worth looking at individually, everything else is tooling churn that is
-    # better reviewed and merged in a batch.
+    multi-ecosystem-group: weekly
+    patterns: ['*']
+    # Advisory-driven fixes (mostly transitive packages such as undici or
+    # follow-redirects) are not version updates, so the weekly group never
+    # carries them. GitHub opens these as soon as an advisory lands rather than
+    # on the schedule; this at least batches whatever is open into one PR
+    # instead of one PR per package.
     groups:
-      runtime:
-        patterns:
-          - axe-core
-          - pngjs
-          - ws
-          - yazl
-      tooling:
-        dependency-type: development
+      security:
+        applies-to: security-updates
+        patterns: ['*']
     # typescript-eslint's parser pins a `typescript` peer range that trails the
-    # compiler's own releases (8.69.0 still caps at `<6.1.0`). A grouped major
+    # compiler's own releases (8.72.1 still caps at `<6.1.0`). A grouped major
     # bump therefore lands a TypeScript the linter cannot accept, and `npm ci`
     # fails on ERESOLVE before a single check runs — which is exactly how
     # typescript@7 got in. Majors here need a human to confirm the parser has
@@ -32,13 +43,8 @@ updates:
     ignore:
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
-    open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: monthly
-    groups:
-      actions:
-        patterns:
-          - '*'
+    multi-ecosystem-group: weekly
+    patterns: ['*']
