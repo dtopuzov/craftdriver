@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "audit": "npm audit --omit=dev",
     "audit:all": "npm audit",
+    "deps:bump": "node scripts/deps-bump.mjs",
     "test": "HEADLESS=true vitest run",
     "test:firefox": "BROWSER_NAME=firefox HEADLESS=true vitest run",
     "test:chrome": "BROWSER_NAME=chrome vitest run",
