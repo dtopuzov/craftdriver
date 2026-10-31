@@ -5,6 +5,11 @@ Companion: [chrome-hybrid-launch.md](chrome-hybrid-launch.md) (Plan A). This
 plan **reuses Plan A's foundation tasks A2.1–A2.3 and research A1.3–A1.7
 unchanged**. Where this file says "do A2.2", the spec is in Plan A.
 
+**Depends on [chrome-mapper-bundle.md](chrome-mapper-bundle.md) (Plan M,
+decided).** The mapper is a vendored esbuild bundle. It is not an npm
+dependency, and there's no zod and no devtools-protocol. Plan M phases M1–M2
+land before B0's A2.3.
+
 ## Read this first (agents)
 
 - Load the `craftdriver-engineering` skill before touching `src/`. It is
@@ -36,10 +41,15 @@ import):
 Derived rows subtract the paired deltas against Classic. They are estimates;
 A1.1 re-measures them directly.
 
+The cold numbers include the unbundled npm mapper's ~152 ms import (with its
+zod-based validating parser). Plan M's bundle imports in ~22 ms, so expect
+roughly 125 ms better cold numbers. Plan M task M2.2 re-measures it.
+
 What else it gives:
-- **No chromedriver for local Chrome.** That removes driver download, version
-  matching, the `driverManager` cache, and the chromedriver version-mismatch
-  retry in `builder.ts`. A whole failure class goes away for the most common
+- **No chromedriver for local Chrome.** That removes the driver download,
+  driver/Chrome version matching, and the chromedriver version-mismatch retry
+  in `builder.ts`. Chrome *version detection* stays, because routing needs
+  it against Plan M's `chromeSupport.minMajor`. A whole failure class goes away for the most common
   target.
 - **One protocol for local Chrome** instead of the Classic + BiDi split.
 - **A path to geckodriver-less Firefox.** Firefox implements BiDi natively
@@ -56,8 +66,8 @@ What it costs:
 - **Keep two Chrome paths alive indefinitely.** Electron, remote/Grid,
   `enableBiDi: false` and any unroutable option must keep the chromedriver
   path.
-- **The same 21 MB chromium-bidi dependency question as Plan A** (see its
-  "Dependency decision").
+- **No dependency cost.** The mapper is the same ~426 KB vendored bundle
+  Plan A uses (Plan M), with the same weekly update workflow.
 
 Per-command speed is **not** a reason to do this. driver-perf measured
 navigate, evaluate and locate within a few ms across all architectures.
@@ -88,7 +98,7 @@ Do these from Plan A, unchanged. If Plan A already landed, skip them.
 | A1.1 | CI measurement in driver-perf | Also report `node-mapper` vs `hybrid` paired; that's G0 here |
 | A1.3 (R2) | downloads | No chromedriver here, so a CDP/BiDi or Preferences-file answer is mandatory |
 | A1.4 (R3) | launch-time capabilities | `mobileEmulation` must be BiDi/CDP. There's no attach to delegate to |
-| A1.5 (R4) | depending on chromium-bidi | Unchanged |
+| A1.5 (R4) | mapper packaging | Moved to Plan M (bundle, no-op parser, version policy R-M2, error parity R-M1) |
 | A1.7 (R6) | process lifecycle | Unchanged; driverless owns Chrome exactly like hybrid |
 | A2.1 | BiDi transport seam | Unchanged |
 | A2.2 | `ChromeLauncher` | Unchanged |
@@ -415,7 +425,8 @@ suite becomes usable in driverless mode early.
 | Classic semantics drift (click, typing, text) silently changes test outcomes | Parity test files that run every fixture in both modes and diff the outcome and error string; vendored Selenium atoms |
 | The 38-endpoint port is larger than estimated | B1.1 verifies every row before G1; families are separate PRs, and the skeleton throws a clear `UNSUPPORTED` for unported methods, so partial progress is safe to merge behind the switch |
 | Two Chrome paths to maintain forever | The `WebDriverPort` seam keeps the paths separate; CI runs both |
-| Mapper/Chrome version skew | Plan A's R4 version window; fall back to the chromedriver path outside it |
+| Mapper/Chrome version skew | Plan M R-M2 policy plus `manifest.chromeSupport.minMajor`; route older Chrome to the chromedriver path |
+| No-op parser accepts input the validating parser would reject | Plan M R-M1 error-parity table; targeted client-side checks, never a zod dependency |
 | Gain over hybrid is small on fast Linux | Gate G0 measures driverless vs hybrid directly before any port work |
 
 ## Follow-ups (out of scope)

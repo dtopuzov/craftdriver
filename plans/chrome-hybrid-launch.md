@@ -4,6 +4,11 @@ Status: proposed (2026-10-31). Owner decision needed at gates G0 and G3.
 Companion: [chrome-driverless.md](chrome-driverless.md) (Plan B, the bigger
 alternative). Plans A and B share the foundation tasks A2.1–A2.3.
 
+**Depends on [chrome-mapper-bundle.md](chrome-mapper-bundle.md) (Plan M,
+decided).** The mapper is a vendored esbuild bundle inside craftdriver. It is
+not an npm dependency, and there's no zod and no devtools-protocol. Plan M
+phases M1–M2 must land before A2.3.
+
 ## Read this first (agents)
 
 - Load the `craftdriver-engineering` skill before touching `src/`. Its
@@ -39,6 +44,11 @@ Chrome 156, paired, against chromedriver Classic:
 
 Warm means a later session in the same Node process; cold means a fresh Node
 process, including the mapper module import (~143 ms).
+
+The cold numbers were measured with the unbundled npm package and its
+validating parser (zod), which takes ~152 ms to import. The bundle Plan M
+ships imports in ~22 ms, so cold gains should improve by roughly 125 ms.
+That's an estimate until Plan M task M2.2 re-measures it.
 
 So against today's default, hybrid saves **~410 ms warm / ~290 ms cold per
 launch**, keeps every Classic command exactly as it is, and leaves Electron,
@@ -91,31 +101,17 @@ Everything else keeps today's path unchanged.
 - **G3 (owner).** Flip the default, or keep hybrid opt-in. Decide after
   ≥ 2 weeks of the opt-in on CI with no hybrid-specific failures.
 
-## Dependency decision (owner, before A2.3)
+## Mapper packaging (decided)
 
-chromium-bidi is not small as an npm dependency. Measured install sizes:
+The mapper is bundled into craftdriver (Plan M):
+- ~426 KB of readable JS in `src/lib/bidi/vendor/`, shipped in `dist/`;
+- no runtime or dev dependency on chromium-bidi, zod or devtools-protocol;
+- chromium-bidi's no-op parser, since the validating parser is what pulls in
+  zod.
 
-| package | size |
-|---|---:|
-| chromium-bidi 157.0.8090-0 | 9.7 MB |
-| zod (its dependency) | 8.1 MB |
-| devtools-protocol (peer; types only) | 3.7 MB |
-| **total** | **~21.5 MB** |
-
-craftdriver's four runtime dependencies total ~4.3 MB today (ws 196 KB,
-axe-core 3.3 MB, pngjs 704 KB, yazl 68 KB). Options:
-
-1. **`optionalDependencies` + runtime detection (recommended).** Hybrid
-   activates only if `import('chromium-bidi/...')` resolves, and otherwise
-   falls back silently to today's path. Install-size-sensitive users can use
-   `--omit=optional`.
-2. **`peerDependencies` (optional peer).** Users who want hybrid run
-   `npm i chromium-bidi`. Clean, but the speedup becomes opt-in by
-   installation and most users never get it.
-3. **Plain `dependencies`.** Simplest, and everyone pays the 21 MB.
-
-A2.3 is written for option 1. If you pick another, only the loader in A2.3
-changes.
+The bundle is loaded lazily through `loadMapper()` from
+`src/lib/bidi/mapperBundle.ts` (Plan M task M1.3), and its version is
+updated with the `mapper-update` skill (Plan M phase M3).
 
 ---
 
@@ -203,34 +199,15 @@ which may override any directory set earlier.
 - **Blocker if:** a documented LaunchOptions feature has no hybrid
   equivalent. (Fallback: that option forces today's path; see A2.4 routing.)
 
-### A1.5 (R4) Depending on chromium-bidi safely
+### A1.5 (R4) Mapper packaging questions: moved to Plan M
 
-1. **Entry points.** The deep-import paths used in driver-perf
-   (`chromium-bidi/out/Default/gen/src/{bidiMapper/BidiMapper.js,cdp/CdpConnection.js,bidiTab/BidiParser.js}`)
-   are not a documented API. Check what Puppeteer imports: it uses the package
-   root `BidiMapper` export, and `MapperCdpConnection` is not exported there.
-   Decide between:
-   - (a) Puppeteer's approach: use `BidiMapper.BidiServer` with our own
-     `CdpConnection` adapter (≈120 lines; see
-     `puppeteer-core/src/bidi/BidiOverCdp.ts`).
-   - (b) Deep imports pinned to an exact version.
-
-   Recommendation: (a). It only uses the root export, so a chromium-bidi
-   restructure can't break it silently.
-2. **Version policy.** Since September 2026 chromium-bidi versions follow
-   Chromium's (`157.0.8090-0`). Find out which Chrome versions a given mapper
-   supports: read the chromium-bidi README/CHANGELOG and how Puppeteer pairs
-   them.
-   - Define: craftdriver pins one exact chromium-bidi; hybrid runs only when
-     the detected Chrome major is within the supported window; otherwise it
-     falls back to today's path with a one-line debug note.
-   - Write the window as a constant with its source.
-3. **Parser.** Choose `BidiParser` (validating; what chromedriver's tab uses)
-   or the no-op parser (Puppeteer's default). Requirement: error messages and
-   error codes for malformed commands must match today's, because
-   craftdriver's error mapping parses them.
-4. **Licence.** chromium-bidi is Apache-2.0. Confirm no NOTICE obligation
-   applies when depending on it (not bundling it).
+Settled by the bundling decision, or researched in Plan M:
+- **Entry points:** deep imports are fine. They're resolved once at bundle
+  build time, and a move upstream fails the build (M1.2 guard d).
+- **Version policy and the supported Chrome window:** Plan M R-M2.
+  `manifest.chromeSupport.minMajor` is the routing input for A2.4.
+- **Parser:** decided no-op; error parity is Plan M R-M1.
+- **Licence:** handled by shipping LICENSE/NOTICE with the bundle (M1.4).
 
 ### A1.6 (R5) Lazy attach: can the attach leave the critical path?
 
@@ -274,8 +251,8 @@ which may override any directory set earlier.
 
 ## Phase 2: implementation (craftdriver)
 
-Order: A2.1 → A2.2 ∥ A2.3 → A2.4 → A2.5. Each task is one PR with its own
-focused tests.
+Order: (Plan M M1–M2) → A2.1 → A2.2 ∥ A2.3 → A2.4 → A2.5. Each task is one
+PR with its own focused tests.
 
 ### A2.1 BiDi transport seam (no behavior change)
 
@@ -337,17 +314,22 @@ focused tests.
 
 - **Files:**
   - new `src/lib/bidi/inProcessMapper.ts`;
-  - `package.json` (dependency per the decision above);
   - new `tests/bidi-in-process-mapper.test.ts`.
+  - No `package.json` change: the mapper comes from the vendored bundle.
 - **Do:**
-  1. Load chromium-bidi lazily with a dynamic `import()` behind a cached
-     `loadMapper()`. If the import fails, return `undefined`; the caller falls
-     back (option 1).
-  2. Connect to `wsUrl` with `ws` (already a dependency). Build the CDP
-     adapter per R4's choice: the root-export adapter (recommended) or
-     `MapperCdpConnection`.
+  1. Get `{ BidiServer, MapperCdpConnection }` from Plan M's
+     `loadMapper()`. The bundle always ships, so there is no "not installed"
+     fallback.
+  2. Connect to `wsUrl` with `ws` (already a dependency), and wrap it in the
+     mapper's `Transport` shape (`setOnMessage`, `sendMessage`, `close`).
+     Then call `new MapperCdpConnection(transport)` and
+     `await cdpConnection.createBrowserSession()`. This mirrors
+     chromium-bidi's own in-tab entry point and driver-perf's
+     `lib/chrome-direct.mjs`.
   3. Start the server with
-     `BidiServer.createAndStart(bidiTransport, cdpConnection, browserClient, '', parser)`.
+     `BidiServer.createAndStart(bidiTransport, cdpConnection, browserClient, '')`.
+     **No parser argument**, so the mapper uses its no-op parser (no zod).
+     Error parity is checked in Plan M R-M1.
   4. Implement `BiDiTransport` from A2.1 over it. Commands go to the mapper as
      objects; responses and events come back through `sendMessage`.
      `BiDiConnection` still sees strings, so `send()` stringifies and
@@ -365,8 +347,7 @@ focused tests.
 - **Done when:** a test launches Chrome via A2.2, starts the mapper, and runs
   `session.new`, `browsingContext.getTree`, `browsingContext.navigate`,
   `script.evaluate`, a subscribed `browsingContext.load` event and an alert
-  `userPromptOpened` event. A second test with the import forced to fail
-  asserts `undefined` (no throw).
+  `userPromptOpened` event.
 
 ### A2.4 Hybrid launch path in `Browser.launch`
 
@@ -381,8 +362,9 @@ focused tests.
   - `target.kind === 'browser'`, chrome-family, not remote, not Electron;
   - `bidiRequested`;
   - the mode is enabled;
-  - chromium-bidi loads;
-  - the Chrome major is in R4's window;
+  - the Chrome major is ≥ `manifest.chromeSupport.minMajor` (Plan M R-M2).
+    Use the Chrome version `driverManager` already detects and caches for
+    driver resolution, so no extra spawn.
   - no option outside R3's supported list is in use.
 
   Otherwise use today's path. Record the chosen path and the reason on the
@@ -489,10 +471,11 @@ Tests:
 | risk | mitigation |
 |---|---|
 | Two CDP clients disagree (dialogs, emulation, focus) | Prompt behavior pinned to 'ignore' on both sides; R1 and R3 probe the rest; full-suite matrix in A3.1 |
-| chromium-bidi internals change between pinned bumps | Root-export adapter (R4), exact pin, Chrome-version window, bumps go through the deps-bump skill plus `bidi-in-process-mapper.test.ts` |
+| chromium-bidi internals change between mapper updates | Bundle built from integrity-pinned inputs; the API fingerprint stops the update script (exit 30); `tests/mapper-bundle.test.ts` plus `bidi-in-process-mapper.test.ts` gate every update (Plan M M3) |
 | Orphaned Chrome processes (we now own the process) | R6 recipe, plus the A2.2 and A2.4 leak tests |
 | Gain is small on fast Linux | Gate G0 measured on ubuntu-latest before any code |
-| 21 MB install | optionalDependency; falls back cleanly when omitted |
+| Install size and dependency audit exposure | Avoided: ~426 KB vendored bundle, no new npm dependencies (Plan M) |
+| Vendored code doesn't show up in users' `npm audit` | The weekly mapper-watch issue plus the update skill's changelog review (Plan M M3) |
 
 ## Research log
 
