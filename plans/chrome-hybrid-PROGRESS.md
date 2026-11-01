@@ -312,3 +312,18 @@ must know.)
   159.0.8136.0 = same major as Dev, so Canary adds days of warning, not a
   major. Open owner question: should craftdriver download Chrome for Testing
   (see conversation; options: only when no Chrome installed vs always pinned).
+
+- 2026-11-01 Perf (owner asked): craftdriver-perf suite, local build 964675a
+  (1.13.1), macOS x64, Chrome 156.0.8078.79, Node 24.18, default iterations
+  (startup n=10, others n=20), one run. Same build, default BiDi suite:
+  hybrid vs CRAFTDRIVER_CHROME_LAUNCH_MODE=chromedriver (means):
+  startup 1560 vs 2113 (-26%, medians 1466 vs 2118), combo 277 vs 304,
+  heavy network 199 vs 214, navigate 34 vs 39, screenshot 63 vs 250;
+  locate/keyboard/wait-visible medians equal, click median +6%. Hybrid p95
+  tails wider on click (521 vs 373) and wait-visible (152 vs 102): one run,
+  needs repeats before any claim. Screenshot 250 ms on the chromedriver
+  launch (classic suite 51, hybrid 63, July 58): not caused by this branch,
+  unexplained, check main. Same-day all-library table: craftdriver hybrid
+  startup 1560 is the fastest (Playwright 1663, selenium 1855, wdio 2161).
+  Raw: craftdriver-perf/results/*-2026-11-01*.json (uncommitted) + A/B JSON
+  in the session scratchpad.
