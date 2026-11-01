@@ -124,15 +124,30 @@ export interface HybridLaunch {
   chrome: LaunchedChrome;
 }
 
-async function chromeMajor(chrome: LaunchedChrome): Promise<number | undefined> {
-  try {
-    const res = await fetch(`http://${chrome.debuggerAddress}/json/version`);
-    const { Browser } = (await res.json()) as { Browser?: string };
-    const major = /\/(\d+)\./.exec(Browser ?? '')?.[1];
-    return major ? Number(major) : undefined;
-  } catch {
-    return undefined;
-  }
+/**
+ * Chrome's major version and its initial tab (the `data:,` page), read before
+ * anything else opens targets. Best-effort: undefined fields on failure.
+ */
+async function inspectChrome(
+  chrome: LaunchedChrome
+): Promise<{ major?: number; initialTab?: string }> {
+  const get = async <T>(path: string): Promise<T | undefined> => {
+    try {
+      return (await (await fetch(`http://${chrome.debuggerAddress}${path}`)).json()) as T;
+    } catch {
+      return undefined;
+    }
+  };
+  const [version, targets] = await Promise.all([
+    get<{ Browser?: string }>('/json/version'),
+    get<Array<{ id: string; type: string }>>('/json/list'),
+  ]);
+  const major = /\/(\d+)\./.exec(version?.Browser ?? '')?.[1];
+  const pages = targets?.filter((t) => t.type === 'page') ?? [];
+  return {
+    major: major ? Number(major) : undefined,
+    initialTab: pages.length === 1 ? pages[0].id : undefined,
+  };
 }
 
 function unavailable(strict: boolean, message: string): Error {
@@ -150,12 +165,19 @@ function unavailable(strict: boolean, message: string): Error {
 async function attachChromedriver(
   service: ChromeService,
   caps: Record<string, unknown>,
-  chrome: LaunchedChrome
+  chrome: LaunchedChrome,
+  initialTab: string | undefined
 ): Promise<{ sessionId: string; endpoint: WebDriverEndpoint }> {
   for (let attempt = 1; ; attempt++) {
     try {
       await service.start();
       const driver = await Driver.create(service.getEndpoint(), caps);
+      // An attaching chromedriver picks its current window from whatever tabs
+      // exist by then (launch-time work such as storageState restore can open
+      // more). Point it at the tab BiDi treats as the default page, as a
+      // chromedriver-launched session would be. Tab ids and window handles
+      // are the same string.
+      if (initialTab) await driver.switchToWindow(initialTab).catch(() => {});
       return { sessionId: driver.getSessionId(), endpoint: service.getEndpoint() };
     } catch (err) {
       if (
@@ -204,7 +226,7 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
       prefs: input.prefs,
     });
 
-    const major = await chromeMajor(chrome);
+    const { major, initialTab } = await inspectChrome(chrome);
     if (major !== undefined && major < MAPPER_MIN_CHROME_MAJOR) {
       throw unavailable(
         input.strict,
@@ -227,7 +249,8 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
           unhandledPromptBehavior: input.unhandledPromptBehavior,
           'goog:chromeOptions': { debuggerAddress: launched.debuggerAddress },
         },
-        launched
+        launched,
+        initialTab
       );
       Object.assign(endpoint, attached.endpoint);
       return attached.sessionId;

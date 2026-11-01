@@ -74,10 +74,10 @@ export class BiDiSession {
    * provably race-free, and the data says it isn't costing anything.
    */
   async connect(endpoint: string | BiDiTransport, opts?: BiDiConnectOptions): Promise<void> {
-    if (typeof endpoint === 'string') {
-      await this.connection.connect(endpoint);
-    } else {
+    if (typeof endpoint === 'object' && endpoint !== null) {
       this.connection.connectTransport(endpoint);
+    } else {
+      await this.connection.connect(endpoint);
     }
 
     const [treeResult] = await Promise.all([

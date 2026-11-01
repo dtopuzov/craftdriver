@@ -922,7 +922,7 @@ export class Browser {
       // Initialize BiDi session if WebSocket URL available
       const wsUrl = (driver as any).__wsUrl;
       if (hybrid) {
-        await browser.initBiDi(hybrid.transport);
+        await browser.initInProcessBiDi(hybrid.transport);
       } else if (wsUrl && bidiRequested) {
         await browser.initBiDi(wsUrl);
       }
@@ -1018,26 +1018,29 @@ export class Browser {
   }
 
   /**
-   * Initialize the BiDi session, over the driver's WebSocket URL or an
-   * in-process transport (hybrid launch).
+   * Initialize the BiDi session over an in-process transport (hybrid launch).
+   * Nothing to retry, and the caller asked for BiDi, so a failure fails the
+   * launch instead of degrading to Classic-only.
    */
-  private async initBiDi(endpoint: string | BiDiTransport): Promise<void> {
+  private async initInProcessBiDi(transport: BiDiTransport): Promise<void> {
     const session = new BiDiSession(this.driver);
     this.bidiSession = session;
-    if (typeof endpoint !== 'string') {
-      // In-process: nothing to retry, and the caller asked for BiDi, so a
-      // failure fails the launch instead of degrading to Classic-only.
-      await session.connect(endpoint, {
-        onContextTree: (contexts) => {
-          this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
-        },
-      });
-      session.network.setInternalContextPredicate((context) => this._isInternalContextId(context));
-      session.logs.setInternalContextPredicate((context) => this._isInternalContextId(context));
-      await this._ensureTopLevelContextTracking().catch(() => {});
-      return;
-    }
-    const wsUrl = endpoint;
+    await session.connect(transport, {
+      onContextTree: (contexts) => {
+        this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
+      },
+    });
+    session.network.setInternalContextPredicate((context) => this._isInternalContextId(context));
+    session.logs.setInternalContextPredicate((context) => this._isInternalContextId(context));
+    await this._ensureTopLevelContextTracking().catch(() => {});
+  }
+
+  /**
+   * Initialize BiDi WebSocket connection
+   */
+  private async initBiDi(wsUrl: string): Promise<void> {
+    const session = new BiDiSession(this.driver);
+    this.bidiSession = session;
     // Retry up to 8 times with increasing delays — Firefox may not have finished
     // binding its BiDi WebSocket yet (especially when a previous session just closed
     // on the same port, or the profile is still initialising).
@@ -1243,6 +1246,13 @@ export class Browser {
     run: () => Promise<T>
   ): Promise<T> {
     const actionIndex = this._tracer?.recordAction(name, args, selector);
+    // On a hybrid launch, Classic commands don't queue behind in-flight BiDi
+    // ones the way they do through chromedriver, so the action could navigate
+    // the page mid-capture (the mapper then fails or stalls the screenshot).
+    // Let the pre-action screenshot finish first.
+    if (actionIndex !== undefined && this._chromeLaunchPath === 'hybrid') {
+      await this._tracer?.settleCaptures();
+    }
     try {
       const result = await run();
       this._tracer?.recordActionEnd(actionIndex);

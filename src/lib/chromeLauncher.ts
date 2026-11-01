@@ -213,11 +213,18 @@ export async function launchChrome(opts: ChromeLaunchOptions): Promise<LaunchedC
       await requestBrowserClose(devtoolsUrl, CHROME_GRACEFUL_CLOSE_TIMEOUT_MS);
       await Promise.race([exited, sleep(CHROME_GRACEFUL_CLOSE_TIMEOUT_MS)]);
     }
-    if (running()) {
+    const forced = running();
+    if (forced) {
       killNow(proc);
       await exited;
     }
     removeProfile();
+    if (forced) {
+      // After a kill, helpers that outlived the browser process can still
+      // write into the profile for a moment; sweep it once more.
+      await sleep(250);
+      removeProfile();
+    }
   };
 
   const timeoutMs = opts.timeoutMs ?? CHROME_DEVTOOLS_READY_TIMEOUT_MS;

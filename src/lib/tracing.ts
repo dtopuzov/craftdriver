@@ -267,6 +267,11 @@ export class Tracer {
     this.writeLine(event);
   }
 
+  /** Resolve once every screenshot capture scheduled so far has settled. */
+  async settleCaptures(): Promise<void> {
+    await Promise.allSettled(this.pendingCaptures);
+  }
+
   private scheduleScreenshot(reason: 'action' | 'error' | 'final', actionIndex?: number): void {
     const startedAtMs = Date.now();
     const p = this.browser.screenshot().then(
