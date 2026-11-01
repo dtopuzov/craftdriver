@@ -33,31 +33,31 @@ Legend: `[x]` done, `[ ]` todo, `[~]` in progress, `[-]` skipped by decision.
 - [x] M1.6 first import commit
 - [x] M2.1 `tests/mapper-bundle.test.ts`
 - [-] M2.2 re-measure cold (owner: no measuring)
-- [ ] R-M1 no-op parser error parity
-- [ ] R-M2 version policy / `chromeSupport.minMajor`
-- [ ] R-M3 changelog source
-- [ ] M3.1 `scripts/mapper/update.mjs`
-- [ ] M3.2 `mapper-update` skill
-- [ ] M3.3 `mapper-watch.yml`
-- [ ] M3.4 deps-bump note
+- [~] R-M1 no-op parser error parity
+- [~] R-M2 version policy / `chromeSupport.minMajor`
+- [x] R-M3 changelog source
+- [x] M3.1 `scripts/mapper/update.mjs`
+- [x] M3.2 `mapper-update` skill
+- [x] M3.3 `mapper-watch.yml`
+- [~] M3.4 deps-bump note
 
 ### Plan A: hybrid + lazy attach
 
 - [-] A1.1 CI measurement / G0 (owner: no measuring)
-- [ ] A1.2 R1 attach semantics
-- [ ] A1.3 R2 downloads
-- [ ] A1.4 R3 launch-time caps
-- [ ] A1.6 R5 lazy attach (design only; no measuring)
-- [ ] A1.7 R6 process lifecycle
+- [x] A1.2 R1 attach semantics
+- [x] A1.3 R2 downloads
+- [x] A1.4 R3 launch-time caps
+- [x] A1.6 R5 lazy attach (design only; no measuring)
+- [x] A1.7 R6 process lifecycle
 - [x] A2.1 BiDi transport seam
 - [x] A2.2 `ChromeLauncher`
 - [x] A2.3 in-process mapper transport
-- [ ] A2.4 hybrid launch path + routing + `chromeLaunchMode`
-- [ ] A2.5 downloads / emulation / prefs
-- [ ] A3.3 lazy attach
-- [ ] A3.1 CI matrix leg
+- [x] A2.4 hybrid launch path + routing + `chromeLaunchMode`
+- [x] A2.5 downloads / emulation / prefs
+- [x] A3.3 lazy attach
+- [x] A3.1 CI matrix leg
 - [-] A3.2 perf arm (owner: no measuring)
-- [ ] A4.1 docs
+- [x] A4.1 docs
 
 ## Log
 
@@ -89,3 +89,77 @@ must know.)
   gate for the seam: evaluate/network/logs/dialogs/browser-context/chrome-smoke
   62/62 on the chromedriver path. Flag capture: chromedriver adds NO
   `--window-size` (driver-perf's list had one; the craftdriver constant doesn't).
+
+- 2026-11-01 research (scratch probes against chromedriver 156 + Chrome 156,
+  scripts in the session scratchpad, results here):
+  - R1 attach: with `goog:chromeOptions.debuggerAddress`, chromedriver
+    ACCEPTS args/prefs/binary/windowTypes (and ignores the launch-time ones) and
+    REJECTS mobileEmulation, excludeSwitches, detach ("unrecognized chrome
+    option"). `unhandledPromptBehavior` + `pageLoadStrategy` are honored.
+    Windows: new tab via Classic shows up in BiDi getTree with the same id;
+    switching works with the mapper attached. Alert opened via BiDi is read and
+    accepted via Classic. `DELETE /session` leaves Chrome running. Version
+    mismatch on attach: not reproducible locally; hybridLaunch retries once
+    after invalidating the driver cache (same as Builder).
+  - R2 downloads: prefs written to `<profile>/Default/Preferences` before spawn
+    make downloads land in downloadsDir even though the mapper sends
+    `Browser.setDownloadBehavior default` at start. Without it they go to
+    ~/Downloads. → option 1 implemented (chromeLauncher prefs).
+  - R3 caps: args → Chrome CLI (after defaults), browserPath → spawn binary,
+    downloadsDir → Preferences, headless → `--headless=new`, mobileEmulation →
+    NOT supported (routes to chromedriver; explicit hybrid throws). Args with
+    `--remote-debugging-*` also route to chromedriver.
+  - R5 lazy attach (no measuring by owner decision): implemented as
+    `WebDriverEndpoint.pendingSession` — HttpClient awaits it and swaps the
+    placeholder session id; one choke point, no Driver/WebElement changes.
+  - R6 lifecycle: SIGKILL of the main Chrome process left helpers alive long
+    enough to re-create `chrome_debug.log` in the removed profile (5/5 leaks in
+    vitest). Fix: CDP `Browser.close` first (as chromedriver does), kill after
+    3 s (`CHROME_GRACEFUL_CLOSE_TIMEOUT_MS`), then rm with retries; plus a
+    process 'exit' hook that SIGKILLs any live Chrome. Leak test passes.
+    Windows: proc.kill() (TerminateProcess) — untested locally; CI smoke runs it.
+  - R-M3 changelog: `gh api repos/GoogleChromeLabs/chromium-bidi/commits?since&until`
+    with the two npm publish times works (update.mjs prints it).
+  - R-M2: policy implemented (eligible = puppeteer-core@latest pin, ≤ Stable+2).
+    NEW FACT: npm now also publishes release-branch patches, e.g.
+    `157.0.8103-0 … 157.0.8103-35` (Chrome 157 branch) and `158.0.8127-N`; so a
+    Stable-branch-matching release DOES exist from 157 on. Not used yet (policy
+    still follows Puppeteer). Old-Chrome matrix (Stable−1..−3) NOT run;
+    minMajor stays 156 (only version verified).
+  - R-M1: no dedicated error-diff table. Coverage instead: the full default
+    Chrome suite in hybrid mode (see below) exercises craftdriver's real error
+    paths through the no-op parser.
+
+- 2026-11-01 A2.4/A2.5/A3.3: `src/lib/hybridLaunch.ts` (routing
+  `chooseChromeLaunchPath`, `launchHybridChrome`), `LaunchOptions.chromeLaunchMode`
+  ('auto'|'chromedriver'|'hybrid', 'auto' = chromedriver until the owner flips
+  it), env `CRAFTDRIVER_CHROME_LAUNCH_MODE` (best-effort: unroutable launches
+  fall back; explicit option is strict → UNSUPPORTED). Lazy attach is the only
+  hybrid behaviour (launch resolves on BiDi-ready). Quit order: BiDi → DELETE
+  /session (awaits attach) → chromedriver stop → Chrome graceful close.
+  Tests: `tests/hybrid-launch.test.ts` (routing table, pending-session HTTP
+  contract incl. failure, Classic+BiDi interop, onDialog + Classic alert,
+  downloads, 5× launch/quit leak check, env fallback with mobileEmulation).
+
+- 2026-11-01 IMPORTANT design change: the mapper leaves internal promise
+  rejections unhandled (e.g. `Fetch domain is not enabled`,
+  `Page.removeScriptToEvaluateOnNewDocument … connection has been closed`).
+  In-process they surfaced as Node unhandled rejections (would crash user
+  processes by default). The mapper now runs in a worker_thread
+  (`inProcessMapper.ts`, eval'd WORKER_SOURCE, Node's built-in WebSocket),
+  whose own `process.on('unhandledRejection')` contains them; the caller's
+  process semantics are untouched (verified). `mapperBundle.ts` now only
+  exports `mapperBundleUrl()`; the .d.ts documents the API the worker uses.
+  Follow-up idea (needs measuring, owner said no measuring now): one shared
+  worker per process instead of one per session.
+
+- 2026-11-01 M3: `scripts/mapper/update.mjs` (--status/--to/--check-only,
+  exits 0/1/10/20/30/40/50, fixture + fault-injection seams),
+  `tests/mapper-update.test.ts`, `.claude/skills/mapper-update/SKILL.md`,
+  `.github/workflows/mapper-watch.yml`. M3.4: the deps-bump skill lives on
+  `chore/halloween-deps` (PR #87), not on this branch — add the one-line
+  "vendored mapper is updated by mapper-update" note there after #87 merges.
+  A3.1: ci.yml gets a non-blocking `chrome-hybrid` job (full suite, env
+  hybrid) and a non-blocking hybrid smoke step on macOS + Windows.
+  A4.1: docs/driver-configuration.md "Chrome launch mode (experimental)" +
+  env var row. No CHANGELOG perf entry (no numbers, by decision).

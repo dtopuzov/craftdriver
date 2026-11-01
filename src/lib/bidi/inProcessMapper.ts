@@ -1,17 +1,23 @@
 /**
- * Run chromium-bidi's BiDi-CDP mapper inside this Node process and expose it
- * as a {@link BiDiTransport}.
+ * Run chromium-bidi's BiDi-CDP mapper in this Node process and expose it as a
+ * {@link BiDiTransport}.
  *
  * chromedriver normally runs the same mapper in a hidden Chrome tab and
  * proxies BiDi through its own WebSocket. Here the mapper talks CDP straight
- * to Chrome's DevTools endpoint, and BiDi messages reach it by function call.
- * The bootstrap mirrors chromium-bidi's in-tab entry point (and Puppeteer's
- * `BidiOverCdp`): one `MapperCdpConnection`, its browser session, then
- * `BidiServer.createAndStart`.
+ * to Chrome's DevTools endpoint from a worker thread. The bootstrap mirrors
+ * chromium-bidi's in-tab entry point (and Puppeteer's `BidiOverCdp`): one
+ * `MapperCdpConnection`, its browser session, then `BidiServer.createAndStart`.
+ *
+ * Why a worker: the mapper leaves some internal promises unhandled (e.g. CDP
+ * calls that fail because a target or the connection closed). Inside
+ * Chrome's tab that is harmless; in the caller's process it would trip Node's
+ * default `unhandledRejection` crash. A worker has its own `process` events,
+ * so the mapper's rejections are contained there without touching the
+ * caller's handlers.
  */
 
-import { WebSocket } from 'ws';
-import { loadMapper, type BidiServer, type MapperBidiCommand } from './mapperBundle.js';
+import { Worker } from 'node:worker_threads';
+import { mapperBundleUrl } from './mapperBundle.js';
 import type { BiDiTransport } from './transport.js';
 import { BIDI_TIMEOUT_MS } from '../timing.js';
 
@@ -25,56 +31,88 @@ export interface InProcessMapperOptions {
   timeoutMs?: number;
 }
 
-function openCdpSocket(url: string, timeoutMs: number): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
-    const timer = setTimeout(() => {
-      ws.terminate();
-      reject(new Error(`CDP connection timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-    ws.once('open', () => {
-      clearTimeout(timer);
-      resolve(ws);
-    });
-    ws.once('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
+/** Messages between the worker and this thread. BiDi payloads stay JSON text. */
+type FromWorker =
+  | { type: 'ready' }
+  | { type: 'failed'; message: string }
+  | { type: 'bidi'; data: string }
+  | { type: 'closed' };
 
-class InProcessMapperTransport implements BiDiTransport {
+/**
+ * The worker body (CommonJS, evaluated). It connects to Chrome with Node's
+ * built-in WebSocket, starts the mapper with no parser (the validating parser
+ * and its zod dependency are not in the bundle), opens the session with id 0
+ * (BiDiConnection numbers from 1), and then relays JSON text both ways.
+ */
+const WORKER_SOURCE = `
+const { parentPort, workerData } = require('node:worker_threads');
+const post = (m) => parentPort.postMessage(m);
+process.on('unhandledRejection', () => {});
+
+(async () => {
+  const { BidiServer, MapperCdpConnection } = await import(workerData.bundleUrl);
+  const ws = new WebSocket(workerData.cdpWsUrl);
+  await new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true });
+    ws.addEventListener('error', () => reject(new Error('CDP WebSocket failed to open')), { once: true });
+  });
+  let onCdp = () => {};
+  ws.addEventListener('message', (e) => onCdp(e.data));
+  ws.addEventListener('close', () => post({ type: 'closed' }));
+  const cdp = new MapperCdpConnection({
+    setOnMessage: (h) => { onCdp = h; },
+    sendMessage: (m) => ws.send(m),
+    close: () => ws.close(),
+  });
+
+  let toMapper = () => {};
+  let sessionOpened;
+  const opened = new Promise((r) => { sessionOpened = r; });
+  const server = await BidiServer.createAndStart(
+    {
+      setOnMessage: (h) => { toMapper = h; },
+      sendMessage: (m) => {
+        if (m.id === 0) sessionOpened(m);
+        else post({ type: 'bidi', data: JSON.stringify(m) });
+      },
+      close: () => {},
+    },
+    cdp,
+    await cdp.createBrowserSession(),
+    ''
+  );
+
+  parentPort.on('message', (m) => {
+    if (m.type === 'bidi') void toMapper(JSON.parse(m.data));
+    else if (m.type === 'close') {
+      try { server.close(); } finally { cdp.close(); }
+    }
+  });
+
+  toMapper({ id: 0, method: 'session.new', params: { capabilities: { alwaysMatch: workerData.capabilities } } });
+  const reply = await opened;
+  if (reply.type === 'error') throw new Error('BiDi session.new failed [' + reply.error + ']: ' + reply.message);
+  post({ type: 'ready' });
+})().catch((err) => post({ type: 'failed', message: String(err && err.message || err) }));
+`;
+
+class WorkerMapperTransport implements BiDiTransport {
   private messageHandler: (data: string) => void = () => {};
   private closeHandlers: Array<() => void> = [];
-  /** The mapper's inbound-command handler, set by `BidiServer.createAndStart`. */
-  toMapper: (command: MapperBidiCommand) => Promise<void> | void = () => {};
-  /** Responses the bootstrap waits for itself, before the transport is handed out. */
-  readonly internal = new Map<number, (message: Record<string, unknown>) => void>();
-  server?: BidiServer;
   private closed = false;
 
-  constructor(
-    private cdp: WebSocket,
-    private closeCdp: () => void
-  ) {
-    cdp.on('close', () => this.markClosed());
-  }
-
-  /** Called by the mapper with each response or event. */
-  fromMapper(message: Record<string, unknown>): void {
-    const id = message.id;
-    if (typeof id === 'number' && this.internal.has(id)) {
-      const resolve = this.internal.get(id)!;
-      this.internal.delete(id);
-      resolve(message);
-      return;
-    }
-    this.messageHandler(JSON.stringify(message));
+  constructor(private worker: Worker) {
+    worker.on('message', (m: FromWorker) => {
+      if (m.type === 'bidi') this.messageHandler(m.data);
+      else if (m.type === 'closed') this.markClosed();
+    });
+    worker.on('error', () => this.markClosed());
+    worker.on('exit', () => this.markClosed());
   }
 
   send(message: string): void {
     if (this.closed) throw new Error('BiDi connection not established');
-    void this.toMapper(JSON.parse(message) as MapperBidiCommand);
+    this.worker.postMessage({ type: 'bidi', data: message });
   }
 
   onMessage(handler: (data: string) => void): void {
@@ -86,18 +124,15 @@ class InProcessMapperTransport implements BiDiTransport {
   }
 
   isOpen(): boolean {
-    return !this.closed && this.cdp.readyState === WebSocket.OPEN;
+    return !this.closed;
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
-    // Mapper first, then the CDP socket it was using.
-    try {
-      this.server?.close();
-    } finally {
-      this.closeCdp();
-      this.markClosed();
-    }
+    // Mapper first, then the CDP socket it was using, then the thread.
+    this.worker.postMessage({ type: 'close' });
+    this.markClosed();
+    await this.worker.terminate();
   }
 
   private markClosed(): void {
@@ -116,61 +151,40 @@ export async function startInProcessMapper(
   opts: InProcessMapperOptions
 ): Promise<BiDiTransport> {
   const timeoutMs = opts.timeoutMs ?? BIDI_TIMEOUT_MS;
-  const [{ BidiServer, MapperCdpConnection }, cdp] = await Promise.all([
-    loadMapper(),
-    openCdpSocket(cdpWsUrl, timeoutMs),
-  ]);
-
-  let onCdpMessage: (message: string) => Promise<void> | void = () => {};
-  cdp.on('message', (data: Buffer | string) => void onCdpMessage(data.toString()));
-  // Errors after open are followed by 'close', which the transport handles.
-  cdp.on('error', () => {});
-  const cdpConnection = new MapperCdpConnection({
-    setOnMessage: (handler) => {
-      onCdpMessage = handler;
-    },
-    sendMessage: (message) => cdp.send(message),
-    close: () => cdp.close(),
+  const worker = new Worker(WORKER_SOURCE, {
+    eval: true,
+    workerData: { bundleUrl: mapperBundleUrl(), cdpWsUrl, capabilities: opts.capabilities },
   });
-
-  const transport = new InProcessMapperTransport(cdp, () => cdpConnection.close());
+  // Don't hold the caller's process open; quit() terminates the worker.
+  worker.unref();
   try {
-    const browserClient = await cdpConnection.createBrowserSession();
-    transport.server = await BidiServer.createAndStart(
-      {
-        setOnMessage: (handler) => {
-          transport.toMapper = handler;
-        },
-        sendMessage: (message) => transport.fromMapper(message),
-        close: () => {},
-      },
-      cdpConnection,
-      browserClient,
-      /* selfTargetId= */ ''
-    );
-
-    // BiDiConnection numbers its commands from 1, so id 0 never collides.
-    const reply = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`BiDi session.new timeout after ${timeoutMs}ms`)),
+        () => reject(new Error(`BiDi mapper did not start within ${timeoutMs}ms`)),
         timeoutMs
       );
-      transport.internal.set(0, (message) => {
+      const done = (err?: Error) => {
         clearTimeout(timer);
-        resolve(message);
-      });
-      void transport.toMapper({
-        id: 0,
-        method: 'session.new',
-        params: { capabilities: { alwaysMatch: opts.capabilities } },
-      });
+        worker.off('message', onMessage);
+        worker.off('error', onError);
+        worker.off('exit', onExit);
+        if (err) reject(err);
+        else resolve();
+      };
+      const onMessage = (m: FromWorker) => {
+        if (m.type === 'ready') done();
+        else if (m.type === 'failed') done(new Error(`BiDi mapper failed to start: ${m.message}`));
+        else if (m.type === 'closed') done(new Error('Chrome closed the CDP connection'));
+      };
+      const onError = (err: Error) => done(err);
+      const onExit = (code: number) => done(new Error(`BiDi mapper worker exited (${code})`));
+      worker.on('message', onMessage);
+      worker.on('error', onError);
+      worker.on('exit', onExit);
     });
-    if (reply.type === 'error') {
-      throw new Error(`BiDi session.new failed [${String(reply.error)}]: ${String(reply.message)}`);
-    }
-    return transport;
   } catch (err) {
-    await transport.close().catch(() => {});
+    await worker.terminate().catch(() => {});
     throw err;
   }
+  return new WorkerMapperTransport(worker);
 }

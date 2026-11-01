@@ -1,5 +1,8 @@
 # Plan A: hybrid Chrome launch (chromedriver attached for Classic + BiDi mapper in-process)
 
+> **Implementation progress:** tracked in [chrome-hybrid-PROGRESS.md](chrome-hybrid-PROGRESS.md)
+> (task checklist with [x]/[ ]/[-] status, research answers, and how to resume).
+
 Status: proposed (2026-10-31). Owner decision needed at gates G0 and G3.
 Companion: [chrome-driverless.md](chrome-driverless.md) (Plan B, the bigger
 alternative). Plans A and B share the foundation tasks A2.1–A2.3.

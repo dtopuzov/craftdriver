@@ -19,7 +19,7 @@ function isChromeFamily(name: string): boolean {
   return name === 'chrome' || name === 'chromium';
 }
 
-function isChromeDriverVersionMismatch(err: unknown): boolean {
+export function isChromeDriverVersionMismatch(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return (
     /session not created/i.test(message) &&

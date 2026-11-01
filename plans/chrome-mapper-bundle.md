@@ -1,5 +1,8 @@
 # Plan M: bundle the chromium-bidi mapper into craftdriver (+ the update workflow)
 
+> **Implementation progress:** tracked in [chrome-hybrid-PROGRESS.md](chrome-hybrid-PROGRESS.md)
+> (task checklist with [x]/[ ]/[-] status, research answers, and how to resume).
+
 Status: **decided** (owner, 2026-10-31). Bundle the mapper. No `zod`, no
 `devtools-protocol`, no chromium-bidi in `dependencies` or `devDependencies`.
 

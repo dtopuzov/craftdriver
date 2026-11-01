@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CraftdriverError, ErrorCode } from './errors.js';
-import { CHROME_DEVTOOLS_READY_TIMEOUT_MS } from './timing.js';
+import { WebSocket } from 'ws';
+import { CHROME_DEVTOOLS_READY_TIMEOUT_MS, CHROME_GRACEFUL_CLOSE_TIMEOUT_MS } from './timing.js';
 
 /**
  * The switches chromedriver passes to Chrome, from chromedriver 156's
@@ -114,6 +115,27 @@ export function userDataDirFromArgs(args: readonly string[] = []): string | unde
   return undefined;
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Send CDP `Browser.close`; resolves once sent and answered, closed, or timed out. */
+function requestBrowserClose(wsUrl: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(wsUrl);
+    const done = () => {
+      clearTimeout(timer);
+      ws.removeAllListeners();
+      ws.on('error', () => {});
+      ws.terminate();
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    ws.once('open', () => ws.send(JSON.stringify({ id: 1, method: 'Browser.close' })));
+    ws.once('message', done);
+    ws.once('close', done);
+    ws.once('error', done);
+  });
+}
+
 // Chrome processes still running in this Node process. If Node exits without
 // closing them (a test runner tearing down a worker, an uncaught error), the
 // 'exit' hook kills them synchronously rather than leaving orphans.
@@ -179,10 +201,19 @@ export async function launchChrome(opts: ChromeLaunchOptions): Promise<LaunchedC
     proc.once('error', () => resolve());
   });
   let closed = false;
+  let devtoolsUrl: string | undefined;
+  const running = () => proc.exitCode === null && proc.signalCode === null;
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
-    if (proc.exitCode === null && proc.signalCode === null) {
+    // Ask Chrome to shut down first, as chromedriver does: killing only the
+    // browser process leaves helpers alive long enough to re-create files in
+    // the profile after it was removed. Kill if it doesn't exit in time.
+    if (running() && devtoolsUrl) {
+      await requestBrowserClose(devtoolsUrl, CHROME_GRACEFUL_CLOSE_TIMEOUT_MS);
+      await Promise.race([exited, sleep(CHROME_GRACEFUL_CLOSE_TIMEOUT_MS)]);
+    }
+    if (running()) {
       killNow(proc);
       await exited;
     }
@@ -233,6 +264,7 @@ export async function launchChrome(opts: ChromeLaunchOptions): Promise<LaunchedC
     );
   }
 
+  devtoolsUrl = wsUrl;
   const { host } = new URL(wsUrl);
   return {
     wsUrl,

@@ -29,6 +29,11 @@ export class Driver {
     private sessionId: string
   ) { }
 
+  /** The WebDriver session id (a placeholder until a background attach completes). */
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
   /**
    * True for sessions created against a remote WebDriver endpoint.
    * `poolKey` is only ever stamped by `parseRemoteEndpoint()` (`remote.ts`),

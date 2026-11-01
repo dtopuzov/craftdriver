@@ -132,6 +132,46 @@ jobs:
           HEADLESS: true
           BROWSER_NAME: firefox
 
+      # Hybrid Chrome launch (craftdriver launches Chrome, in-process BiDi
+      # mapper, chromedriver attached). Non-blocking until it has a green
+      # track record on every OS.
+      - name: Chrome hybrid launch smoke test
+        continue-on-error: true
+        shell: bash
+        run: npx vitest run tests/chrome-smoke.test.ts tests/chrome-launcher.test.ts tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts
+        env:
+          HEADLESS: true
+          CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
+
+  # The default Chrome suite with every routable launch on the hybrid path.
+  # Non-blocking until it has a green track record; failures are root-caused,
+  # never retried away.
+  chrome-hybrid:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start test server
+        run: npm run serve &
+
+      - name: Wait for server
+        run: timeout 2m bash -c "until curl -I http://127.0.0.1:8080/login.html; do sleep 1; done"
+
+      - name: Run tests (Chrome, hybrid launch)
+        run: npm test
+        env:
+          CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
+
   safari:
     runs-on: macos-latest
     steps:

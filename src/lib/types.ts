@@ -44,6 +44,14 @@ export interface WebDriverEndpoint {
    * `HttpClient.send()` when the caller doesn't pass its own `timeoutMs`.
    */
   commandTimeoutMs?: number;
+  /**
+   * Set by a hybrid Chrome launch while chromedriver is still attaching to
+   * the browser in the background (local only). `HttpClient` waits for
+   * `ready` before every request and swaps `placeholder` for the real session
+   * id in the request path; a failed attach rejects every Classic command with
+   * the attach error.
+   */
+  pendingSession?: { placeholder: string; ready: Promise<string> };
 }
 
 /**

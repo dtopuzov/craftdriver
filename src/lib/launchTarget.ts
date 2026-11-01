@@ -123,6 +123,7 @@ const REMOTE_CONFLICTS: Array<[string, string]> = [
   ['args', 'pass browser flags via remote.capabilities (e.g. goog:chromeOptions.args) instead'],
   ['browserPath', 'a remote session launches whatever browser the grid/provider offers'],
   ['downloadsDir', 'remote sessions have no client-visible downloads directory'],
+  ['chromeLaunchMode', 'the remote endpoint launches the browser'],
 ];
 
 function resolveRemoteLaunchTarget(
@@ -328,6 +329,7 @@ export function resolveLaunchTarget(options: Record<string, unknown>): LaunchTar
     ['mobileEmulation', 'mobile emulation does not model a desktop Electron shell'],
     ['args', 'put application/Electron/Chromium arguments in electron.args'],
     ['browserPath', 'electron.appBinaryPath is the executable path'],
+    ['chromeLaunchMode', 'Electron is always launched by chromedriver'],
   ];
   for (const [key, guidance] of conflicts) {
     if (hasValue(options, key)) {

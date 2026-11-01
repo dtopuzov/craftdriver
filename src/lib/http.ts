@@ -115,7 +115,17 @@ function buildTransportError(err: Error, method: string, path: string): Craftdri
 export class HttpClient {
   constructor(private endpoint: WebDriverEndpoint) {}
 
-  async send<T = unknown>({
+  async send<T = unknown>(request: RequestOptions): Promise<CommandResponse<T>> {
+    const pending = this.endpoint.pendingSession;
+    if (!pending) return this.sendNow(request);
+    const sessionId = await pending.ready;
+    return this.sendNow({
+      ...request,
+      path: request.path.replace(`/session/${pending.placeholder}`, `/session/${sessionId}`),
+    });
+  }
+
+  private async sendNow<T>({
     method,
     path,
     body,

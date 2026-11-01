@@ -8,6 +8,16 @@ import { FirefoxService } from './firefox.js';
 import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
+import {
+  CHROME_LAUNCH_MODE_ENV,
+  HybridUnavailableError,
+  chooseChromeLaunchPath,
+  launchHybridChrome,
+  type ChromeLaunchMode,
+  type HybridLaunch,
+} from './hybridLaunch.js';
+import type { LaunchedChrome } from './chromeLauncher.js';
+import type { BiDiTransport } from './bidi/transport.js';
 import { resolveLaunchTarget, type RemoteLaunchTarget } from './launchTarget.js';
 import {
   parseRemoteEndpoint,
@@ -333,6 +343,20 @@ interface BrowserLaunchOptions extends SharedLaunchOptions {
    * silently. See "Browser Binary Configuration" in docs/driver-configuration.md.
    */
   browserPath?: string;
+  /**
+   * How a local Chrome/Chromium session starts (experimental):
+   * - `'chromedriver'` — chromedriver launches Chrome and provides BiDi.
+   * - `'hybrid'` — craftdriver launches Chrome, runs the BiDi mapper in this
+   *   process, and attaches chromedriver for Classic commands in the
+   *   background. Requires BiDi; throws `UNSUPPORTED` for launches it can't
+   *   serve (Firefox, Safari, `mobileEmulation`).
+   * - `'auto'` (default) — currently `'chromedriver'`.
+   *
+   * The `CRAFTDRIVER_CHROME_LAUNCH_MODE` env var sets the default; launches
+   * the env value can't apply to keep the chromedriver path. See
+   * "Chrome launch mode" in docs/driver-configuration.md.
+   */
+  chromeLaunchMode?: ChromeLaunchMode;
 }
 
 interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
@@ -354,6 +378,7 @@ interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
   mobileEmulation?: never;
   args?: never;
   browserPath?: never;
+  chromeLaunchMode?: never;
 }
 
 interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
@@ -376,6 +401,7 @@ interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
   mobileEmulation?: never;
   args?: never;
   browserPath?: never;
+  chromeLaunchMode?: never;
   /** Remote sessions have no client-visible downloads directory; omit this option. */
   downloadsDir?: never;
 }
@@ -628,6 +654,10 @@ export class Browser {
   private _browserInitScriptIds = new Set<string>();
   private _downloadsDir?: string;
   private _driverService?: { stop: () => Promise<void> };
+  /** Chrome started by a hybrid launch; this Browser owns and closes it. */
+  private _chrome?: LaunchedChrome;
+  /** Which path started a local Chrome session (internal; asserted by tests). */
+  private _chromeLaunchPath?: 'hybrid' | 'chromedriver';
   /** Main-process inspector endpoint, set when launched with `electron.mainProcess`. */
   private _electronInspect?: { host: string; port: number };
   /** The launched Electron app's executable path (for deep-link routing on Windows). */
@@ -809,8 +839,39 @@ export class Browser {
       builder.setFirefoxService(driverService as FirefoxService);
     }
     builder.withCapabilities(caps);
+
+    const route = chooseChromeLaunchPath({
+      kind: target.kind,
+      browserName: name,
+      bidiRequested,
+      option: target.kind === 'browser' ? options.chromeLaunchMode : undefined,
+      env: process.env[CHROME_LAUNCH_MODE_ENV],
+      mobileEmulation: target.kind === 'browser' && options.mobileEmulation !== undefined,
+      args: launchArgs,
+    });
+    let hybrid: HybridLaunch | undefined;
+    if (route.path === 'hybrid') {
+      const chromeOptions = caps['goog:chromeOptions'] as { prefs: Record<string, unknown> };
+      try {
+        hybrid = await launchHybridChrome({
+          browserBinary,
+          headless: isHeadless,
+          args: launchArgs,
+          prefs: chromeOptions.prefs,
+          service: driverService as ChromeService,
+          unhandledPromptBehavior: caps.unhandledPromptBehavior,
+          strict: route.strict,
+        });
+      } catch (err) {
+        // Only an env-requested hybrid launch falls back; an explicit one throws.
+        if (!(err instanceof HybridUnavailableError)) throw err;
+      }
+    }
+
     let driver;
-    if (target.kind === 'electron') {
+    if (hybrid) {
+      driver = hybrid.driver;
+    } else if (target.kind === 'electron') {
       try {
         driver = await builder.build();
       } catch (err) {
@@ -835,6 +896,10 @@ export class Browser {
     browser._engine = name;
     browser._electronInspect = electronInspect;
     browser._electronAppBinaryPath = electronBinary;
+    browser._chrome = hybrid?.chrome;
+    if (target.kind === 'browser' && isChromeFamily) {
+      browser._chromeLaunchPath = hybrid ? 'hybrid' : 'chromedriver';
+    }
 
     // With main-process access enabled, open the inspector bridge now so
     // main-process console/error capture (browser.electron.mainLogs) starts at
@@ -856,7 +921,9 @@ export class Browser {
     try {
       // Initialize BiDi session if WebSocket URL available
       const wsUrl = (driver as any).__wsUrl;
-      if (wsUrl && bidiRequested) {
+      if (hybrid) {
+        await browser.initBiDi(hybrid.transport);
+      } else if (wsUrl && bidiRequested) {
         await browser.initBiDi(wsUrl);
       }
 
@@ -951,11 +1018,26 @@ export class Browser {
   }
 
   /**
-   * Initialize BiDi WebSocket connection
+   * Initialize the BiDi session, over the driver's WebSocket URL or an
+   * in-process transport (hybrid launch).
    */
-  private async initBiDi(wsUrl: string): Promise<void> {
+  private async initBiDi(endpoint: string | BiDiTransport): Promise<void> {
     const session = new BiDiSession(this.driver);
     this.bidiSession = session;
+    if (typeof endpoint !== 'string') {
+      // In-process: nothing to retry, and the caller asked for BiDi, so a
+      // failure fails the launch instead of degrading to Classic-only.
+      await session.connect(endpoint, {
+        onContextTree: (contexts) => {
+          this._topLevelContextTracking = this._startTopLevelContextTracking(contexts);
+        },
+      });
+      session.network.setInternalContextPredicate((context) => this._isInternalContextId(context));
+      session.logs.setInternalContextPredicate((context) => this._isInternalContextId(context));
+      await this._ensureTopLevelContextTracking().catch(() => {});
+      return;
+    }
+    const wsUrl = endpoint;
     // Retry up to 8 times with increasing delays — Firefox may not have finished
     // binding its BiDi WebSocket yet (especially when a previous session just closed
     // on the same port, or the profile is still initialising).
@@ -1913,6 +1995,11 @@ export class Browser {
       await this._driverService.stop().catch(() => {});
       this._driverService = undefined;
     }
+    // A hybrid launch owns Chrome: DELETE /session leaves it running.
+    if (this._chrome) {
+      await this._chrome.close().catch(() => {});
+      this._chrome = undefined;
+    }
   }
 
   // ─── Tracing ─────────────────────────────────────────────────────────────
@@ -2042,10 +2129,7 @@ export class Browser {
    * callers should use {@link evaluate}, which preserves the documented BiDi
    * serialization and exception semantics.
    */
-  async [INTERNAL_EVALUATE_CLASSIC]<T = unknown>(
-    script: string,
-    ...args: unknown[]
-  ): Promise<T> {
+  async [INTERNAL_EVALUATE_CLASSIC]<T = unknown>(script: string, ...args: unknown[]): Promise<T> {
     return this.driver.executeScript<T>(script, args);
   }
 

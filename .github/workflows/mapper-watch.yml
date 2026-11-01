@@ -1,0 +1,80 @@
+name: Mapper watch
+
+# Weekly: is a newer chromium-bidi mapper eligible for the vendored bundle?
+# Opens (or updates) one issue; never pushes code. The vendored bundle is
+# invisible to Dependabot and npm audit, so this is its update signal.
+
+on:
+  schedule:
+    - cron: '0 5 * * 1' # Monday 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Check mapper status
+        id: status
+        run: |
+          set +e
+          node scripts/mapper/update.mjs --status --json > status.json
+          code=$?
+          set -e
+          cat status.json
+          if [ "$code" = 10 ]; then echo "update=true" >> "$GITHUB_OUTPUT"; elif [ "$code" != 0 ]; then exit "$code"; fi
+          echo "verdict=$(jq -r .verdict status.json)" >> "$GITHUB_OUTPUT"
+          echo "eligible=$(jq -r .eligible status.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Dry-run the update
+        id: check
+        if: steps.status.outputs.update == 'true'
+        run: |
+          set +e
+          node scripts/mapper/update.mjs --check-only > check.log 2>&1
+          code=$?
+          set -e
+          cat check.log
+          case "$code" in
+            0) echo "kind=clean" >> "$GITHUB_OUTPUT" ;;
+            20) echo "kind=needs mapper-update skill: build guard" >> "$GITHUB_OUTPUT" ;;
+            30) echo "kind=needs mapper-update skill: upstream API changed" >> "$GITHUB_OUTPUT" ;;
+            *) echo "kind=needs mapper-update skill: check failed (exit $code)" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Open or update the issue
+        if: steps.status.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ELIGIBLE: ${{ steps.status.outputs.eligible }}
+          KIND: ${{ steps.check.outputs.kind }}
+        run: |
+          gh label create mapper-update --color 0E8A16 --description 'Vendored chromium-bidi mapper' 2>/dev/null || true
+          title="chromium-bidi $ELIGIBLE eligible ($KIND)"
+          {
+            echo "A newer chromium-bidi mapper is eligible for the vendored bundle."
+            echo
+            echo "Run the \`mapper-update\` skill, or \`npm run mapper:update -- --to $ELIGIBLE\`."
+            echo
+            echo '```json'; cat status.json; echo '```'
+            echo
+            echo '<details><summary>--check-only output</summary>'
+            echo; echo '```'; cat check.log; echo '```'; echo '</details>'
+          } > body.md
+          existing=$(gh issue list --label mapper-update --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body-file body.md
+          else
+            gh issue create --title "$title" --label mapper-update --body-file body.md
+          fi

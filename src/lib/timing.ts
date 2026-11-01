@@ -105,6 +105,12 @@ export const FIREFOX_READINESS_TIMEOUT_MS = 15_000;
  */
 export const CHROME_DEVTOOLS_READY_TIMEOUT_MS = 30_000;
 
+/**
+ * How long a directly launched Chrome gets to exit after CDP `Browser.close`
+ * before it is killed (and, separately, for the close request itself).
+ */
+export const CHROME_GRACEFUL_CLOSE_TIMEOUT_MS = 3_000;
+
 /** Timeout for the `<driver|browser> --version` capability probe spawn. */
 export const VERSION_PROBE_TIMEOUT_MS = 5_000;
 

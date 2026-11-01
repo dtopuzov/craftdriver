@@ -125,6 +125,7 @@ at a pinned driver instead of relying on auto-detection in that case.
 | `CRAFTDRIVER_CACHE_DIR` | Directory for cached driver downloads | `~/.cache/craftdriver` |
 | `CRAFTDRIVER_OFFLINE` | Set to `1` to disable all network calls | — |
 | `CRAFTDRIVER_DRIVER_TTL` | Driver-resolution cache lifetime, in seconds (both browsers). `0` disables the cache | `86400` (24 h) |
+| `CRAFTDRIVER_CHROME_LAUNCH_MODE` | Default [Chrome launch mode](#chrome-launch-mode-experimental): `auto`, `chromedriver` or `hybrid` | `auto` |
 
 ## Examples
 
@@ -272,6 +273,62 @@ calls), not raw local launch speed. If you adopt them, **measure on your own
 environment** — the payoff is environment-dependent, and some flags can change
 behavior (e.g. `--no-sandbox`, or `--disable-features=...` entries a page or
 fixture relies on).
+
+## Chrome launch mode (experimental)
+
+By default chromedriver launches Chrome, and BiDi runs through the mapper
+chromedriver injects into a hidden tab. `chromeLaunchMode: 'hybrid'` splits
+the work differently:
+
+- craftdriver launches Chrome itself (with the same switches chromedriver
+  uses);
+- the BiDi mapper ([chromium-bidi](https://github.com/GoogleChromeLabs/chromium-bidi),
+  bundled inside craftdriver) runs in a worker thread of your Node process and
+  talks to Chrome directly;
+- chromedriver attaches to the running Chrome for Classic commands, in the
+  background: `Browser.launch()` returns once BiDi is ready, and the first
+  Classic command waits for the attach to finish.
+
+```typescript
+const browser = await Browser.launch({ browserName: 'chrome', chromeLaunchMode: 'hybrid' });
+```
+
+```bash
+# Or for a whole run, without code changes:
+CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid npx vitest run
+```
+
+| Mode | Behaviour |
+|---|---|
+| `'auto'` (default) | Currently the same as `'chromedriver'` |
+| `'chromedriver'` | chromedriver launches Chrome and provides BiDi |
+| `'hybrid'` | As described above |
+
+Hybrid needs a local Chrome/Chromium launch with BiDi enabled. It does not
+apply to Firefox, Safari, Electron or remote sessions, and not to
+`mobileEmulation` (chromedriver only applies emulation to a Chrome it launched
+itself), or to `args` that set their own `--remote-debugging-*` endpoint:
+
+- an explicit `chromeLaunchMode: 'hybrid'` on such a launch throws
+  `UNSUPPORTED` with the reason;
+- the env var is a default for a whole run, so such launches keep the
+  chromedriver path.
+
+Hybrid also requires Chrome 156 or newer (the oldest version the bundled
+mapper is verified against).
+
+Things that work differently in hybrid mode:
+
+- **Who closes Chrome.** `browser.quit()` asks Chrome to shut down over CDP
+  and kills it if it doesn't exit within 3 s. If your Node process exits
+  without `quit()`, craftdriver kills any Chrome it launched on process exit.
+- **Attach errors surface late.** If chromedriver can't attach (a broken or
+  mismatched driver), `Browser.launch()` still succeeds, and the first
+  Classic command fails with the attach error and the driver output.
+- **Vendored code.** The mapper ships inside craftdriver
+  (`dist/lib/bidi/vendor/`, Apache-2.0, licence and notice included) rather
+  than as an npm dependency, so `npm audit` does not cover it. The project
+  tracks upstream releases itself.
 
 ## Pinning via code
 
