@@ -21,7 +21,8 @@
   ],
   "chromeSupport": {
     "minMajor": 140,
-    "source": "hybrid suites passed on Chrome for Testing 140, 145, 150, 155, 157, 158 and Chrome 156 (macOS x64, 2026-11-01)"
+    "maxMajor": 159,
+    "source": "hybrid suites passed on Chrome for Testing 140, 145, 150, 155, 157, 158, 159 and Chrome 156 (macOS x64, 2026-11-01)"
   },
   "output": {
     "bytes": 422476,

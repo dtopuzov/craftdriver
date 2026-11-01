@@ -126,6 +126,7 @@ at a pinned driver instead of relying on auto-detection in that case.
 | `CRAFTDRIVER_OFFLINE` | Set to `1` to disable all network calls | — |
 | `CRAFTDRIVER_DRIVER_TTL` | Driver-resolution cache lifetime, in seconds (both browsers). `0` disables the cache | `86400` (24 h) |
 | `CRAFTDRIVER_CHROME_LAUNCH_MODE` | Default [Chrome launch mode](#chrome-launch-mode-experimental): `auto`, `chromedriver` or `hybrid` | `auto` |
+| `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION` | Set to `1` to use hybrid launch on any Chrome version, outside the [verified range](#chrome-versions) too | — |
 
 ## Examples
 
@@ -314,10 +315,25 @@ itself), or to `args` that set their own `--remote-debugging-*` endpoint:
 - the env var is a default for a whole run, so such launches keep the
   chromedriver path.
 
-Hybrid also requires Chrome 140 or newer. The bundled mapper speaks WebDriver
-BiDi to craftdriver but Chrome's own DevTools protocol to the browser, so
-support is per Chrome version: CI runs the hybrid tests weekly against the
-oldest supported version and the current Stable, Beta and Dev builds.
+### Chrome versions
+
+The bundled mapper speaks WebDriver BiDi to craftdriver but Chrome's own
+DevTools protocol to the browser, so hybrid support is per Chrome version.
+Each craftdriver release records the Chrome versions its hybrid tests passed
+on (currently Chrome 140 to 159), and CI reruns them weekly against the oldest
+supported version and the current Stable, Beta and Dev builds.
+
+Outside that range, what happens depends on how hybrid was requested:
+
+| Chrome | `CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid` | `chromeLaunchMode: 'hybrid'` |
+|---|---|---|
+| In the range | Hybrid | Hybrid |
+| Newer than the range (not verified yet) | chromedriver, with a one-time notice | Hybrid, with a one-time warning |
+| Older than the range (not supported) | chromedriver, with a one-time notice | Throws `UNSUPPORTED` |
+
+So a Chrome update never breaks a run that uses the env var: at worst it
+runs on the chromedriver path until you upgrade craftdriver. To try hybrid on
+a Chrome outside the range anyway, set `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1`.
 
 Things that work differently in hybrid mode:
 

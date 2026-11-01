@@ -9,10 +9,12 @@ import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
 import {
+  CHROME_HYBRID_ANY_VERSION_ENV,
   CHROME_LAUNCH_MODE_ENV,
   HybridUnavailableError,
   chooseChromeLaunchPath,
   launchHybridChrome,
+  noticeHybridFallback,
   type ChromeLaunchMode,
   type HybridLaunch,
 } from './hybridLaunch.js';
@@ -861,10 +863,12 @@ export class Browser {
           service: driverService as ChromeService,
           unhandledPromptBehavior: caps.unhandledPromptBehavior,
           strict: route.strict,
+          anyChromeVersion: process.env[CHROME_HYBRID_ANY_VERSION_ENV] === '1',
         });
       } catch (err) {
         // Only an env-requested hybrid launch falls back; an explicit one throws.
         if (!(err instanceof HybridUnavailableError)) throw err;
+        noticeHybridFallback(err);
       }
     }
 

@@ -18,6 +18,7 @@
     "audit:all": "npm audit",
     "mapper:build": "node scripts/mapper/build.mjs",
     "mapper:check": "node scripts/mapper/build.mjs --check",
+    "mapper:chrome-range": "node scripts/mapper/chrome-range.mjs",
     "mapper:status": "node scripts/mapper/update.mjs --status",
     "mapper:update": "node scripts/mapper/update.mjs",
     "test": "HEADLESS=true vitest run",

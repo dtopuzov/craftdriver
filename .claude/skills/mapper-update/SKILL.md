@@ -3,8 +3,10 @@ name: mapper-update
 description: >
   Update the vendored chromium-bidi mapper bundle in craftdriver
   (src/lib/bidi/vendor/) to a newer release. Use when the mapper-watch workflow
-  opens an issue, when asked to bump/refresh the BiDi mapper, or when a Chrome
-  release breaks the in-process mapper (hybrid Chrome launch).
+  opens an issue, when the chrome-compat workflow opens an issue (raise the
+  verified Chrome range, or a Chrome build failing), when asked to bump/refresh
+  the BiDi mapper, or when a Chrome release breaks the in-process mapper
+  (hybrid Chrome launch).
 ---
 
 # Updating the vendored chromium-bidi mapper
@@ -43,15 +45,35 @@ latest `puppeteer-core` pins, which Puppeteer tests against the Chrome it ships.
 | 1    | error                                | Read the message (network, bad version) and retry or report.                                                                                                                                                                                                                                                                                                                                                                                |
 
 After a 40/50 the vendor dir holds the new bundle; `git checkout
-   src/lib/bidi/vendor` restores the old one. 5. Check Chrome coverage: run the `Chrome compatibility (hybrid launch)`
-workflow (`gh workflow run chrome-compat.yml --ref <branch>`). It tests the
-oldest supported major (`chromeSupport.minMajor`) plus Stable, Beta and
-Dev. If the oldest major now fails, either fix the regression or raise
-`minMajor` (an owner decision: it drops support for that Chrome), then
-rerun `npm run mapper:build` so the manifest stays generated output.
-Locally: download a Chrome for Testing build and point
-`CRAFTDRIVER_CHROME_PATH` at it with `CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid`. 6. `npm run mapper:check`, then open a PR whose body carries the script's
-report and your upstream-changes summary.
+src/lib/bidi/vendor` restores the old one.
+
+5. Check Chrome coverage: run the `Chrome compatibility (hybrid launch)`
+   workflow (`gh workflow run chrome-compat.yml --ref <branch>`). It tests the
+   oldest supported major plus Stable, Beta and Dev, with hybrid forced on
+   every cell. Then adjust the verified range (next section).
+6. `npm run mapper:check`, then open a PR whose body carries the script's
+   report and your upstream-changes summary.
+
+## Verified Chrome range
+
+`chromeSupport` in the manifest (`minMajor`..`maxMajor`) is the Chrome range
+hybrid launch trusts. Outside it, env-requested hybrid falls back to
+chromedriver, so a stale `maxMajor` costs speed, never correctness. Change it
+only with `npm run mapper:chrome-range -- [--min N] [--max N] --source "<what passed>"`,
+and only to majors the hybrid gates passed on.
+
+- **`chrome-compat` issue "Chrome N passed ...: raise the verified range"**:
+  run the command the issue gives, `npm run mapper:check`, open a PR.
+- **`chrome-compat` issue "Hybrid launch failing ..."**: open the run, find
+  the failing cell. Beta/Dev: run this skill's procedure (a newer mapper
+  usually fixes it). The oldest major: fix the regression, or raise `--min`
+  (an owner decision: it drops hybrid support for that Chrome).
+- **Locally**: download a Chrome for Testing build and run the gates with
+  `CRAFTDRIVER_CHROME_PATH=<binary> CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1`
+  (the gate list is in `.github/workflows/chrome-compat.yml`).
+- **One mapper only.** If the newest mapper fails on a Chrome inside the
+  range and the previous one fails on new Chrome, report it to the owner;
+  don't vendor a second mapper yourself.
 
 ## Never
 

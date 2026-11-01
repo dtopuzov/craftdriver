@@ -59,6 +59,32 @@ Legend: `[x]` done, `[ ]` todo, `[~]` in progress, `[-]` skipped by decision.
 - [-] A3.2 perf arm (owner: no measuring)
 - [x] A4.1 docs
 
+### Verified Chrome range (owner approved 2026-11-01)
+
+Goal: a Chrome version never fails a test; at worst craftdriver uses the
+slower chromedriver path. One mapper, a tested range, chromedriver outside it.
+Add a second mapper only if CI shows one mapper + fallback can't cover the
+promised range.
+
+| Chrome major      | env / future `auto`              | explicit `'hybrid'`          |
+| ----------------- | -------------------------------- | ---------------------------- |
+| in [min, max]     | hybrid                           | hybrid                       |
+| > max (unverified)| chromedriver + one-time notice   | hybrid + one-time warning    |
+| < min (unsupported)| chromedriver + one-time notice  | throws UNSUPPORTED (as now)  |
+| unknown           | hybrid (as now)                  | hybrid                       |
+
+`CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1` skips the range (compat CI uses it).
+
+- [x] V1 manifest `chromeSupport.maxMajor` (= 159, highest verified) + range read at call time
+- [x] V2 pure `chromeVersionVerdict()`; launch path applies the table above
+- [x] V3 per-process memo binary→major: skip launching Chrome when it is known out of range
+- [x] V4 one-time notices (fallback) / warning (explicit above max)
+- [x] V5 tests: verdict table (unit) + env fallback & explicit-above-max (real Chrome, mocked range)
+- [x] V6 `scripts/mapper/chrome-range.mjs` + `npm run mapper:chrome-range` (edit range, keep build output)
+- [x] V7 chrome-compat.yml: set ANY_VERSION; report job opens/updates a `chrome-compat` issue
+      (failure, or Dev passed above max → raise maxMajor)
+- [x] V8 docs + mapper-update skill + memory
+
 ## Log
 
 (Newest last. Date, task, what changed, commit, anything the next session
@@ -204,6 +230,8 @@ must know.)
    process; A3.2 perf arm; Plan M M2.2.
 4. (done 2026-11-01, see log) Chrome version matrix; minMajor = 140.
 5. After PR #87 merges: one-line note in the deps-bump skill (M3.4).
+6. When G3 flips `'auto'` to hybrid, `auto` must get the env column of the
+   verified-range table (fall back outside the range), not the explicit one.
 
 - 2026-11-01 R-M2 Chrome version matrix (owner: "craftdriver must work for any
   recent Chrome"). Chrome for Testing mac-x64 140, 145, 150, 155, 157, 158 +
@@ -221,3 +249,25 @@ must know.)
   the gate on ubuntu against CfT {minMajor, Stable, Beta, Dev}; disables the
   runner's preinstalled chromedriver so a matching one is downloaded.
   Untested: the workflow itself has not run yet (needs a push).
+
+- 2026-11-01 Verified Chrome range (V1–V8). Owner approved: one mapper, a
+  tested range, chromedriver outside it; second mapper only on CI evidence.
+  - `chromeSupport.maxMajor` added; range read at call time
+    (`mapperChromeRange()`), pure `chromeVersionVerdict()`, table applied in
+    `launchHybridChrome` (`checkChromeVersion`). Per-process memo binary→major
+    so a known out-of-range binary falls back before Chrome is launched.
+  - One-time `[craftdriver]` stderr notices (env fallback) / warning (explicit
+    hybrid above max). `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1` skips the range.
+  - CfT Dev was already 159 → ran the 68-test gate on CfT 159.0.8130.0 mac-x64:
+    all pass → maxMajor = 159 (via the new `npm run mapper:chrome-range`).
+  - chrome-compat.yml: `resolve` job pins exact CfT versions for the matrix,
+    cells force hybrid, `report` job opens/updates one `chrome-compat` issue
+    (failure, or all green + Dev > maxMajor → exact `mapper:chrome-range`
+    command). resolve/report shell dry-run locally against live CfT data;
+    the workflow itself still hasn't run (needs a push).
+  - Tests: tests/hybrid-chrome-range.test.ts (mocked manifest range; env
+    newer/older fallback, explicit newer warns+runs, explicit older throws,
+    ANY_VERSION) + verdict table in hybrid-launch. Gates: hybrid-launch,
+    hybrid-chrome-range, chrome-launcher, mapper-bundle/build/update 66/66.
+  - Not asserted by a test: that the memo actually skips the Chrome launch
+    (only that the second fallback launch works).

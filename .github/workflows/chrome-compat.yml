@@ -3,8 +3,13 @@ name: Chrome compatibility (hybrid launch)
 # The vendored chromium-bidi mapper talks CDP, Chrome's own protocol, so its
 # compatibility is per Chrome version. Run the hybrid-launch gates against the
 # oldest supported major (manifest chromeSupport.minMajor) and the current
-# Stable, Beta and Dev builds from Chrome for Testing. A red Dev/Beta cell is
-# an early warning to run the mapper-update skill before that Chrome ships.
+# Stable, Beta and Dev builds from Chrome for Testing. Hybrid is forced on
+# every cell, including majors above the verified range (chromeSupport.maxMajor).
+#
+# The report job opens (or updates) one `chrome-compat` issue when a cell
+# fails, which is an early warning to run the mapper-update skill before that
+# Chrome ships, or when every cell passed and Dev is newer than maxMajor, so
+# the verified range can be raised.
 
 on:
   schedule:
@@ -22,11 +27,38 @@ permissions:
   contents: read
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+      dev: ${{ steps.versions.outputs.dev }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Resolve Chrome for Testing versions
+        id: versions
+        run: |
+          base=https://googlechromelabs.github.io/chrome-for-testing
+          major=$(jq -r .chromeSupport.minMajor src/lib/bidi/vendor/chromium-bidi-mapper.manifest.json)
+          min=$(curl -sf "$base/latest-versions-per-milestone.json" | jq -r ".milestones[\"$major\"].version")
+          good=$(curl -sf "$base/last-known-good-versions.json")
+          matrix=$(jq -nc --arg min "$min" --argjson good "$good" \
+            '[{target: "min", version: $min}] + (["Stable", "Beta", "Dev"] | map({target: ., version: $good.channels[.].version}))')
+          echo "$matrix"
+          if jq -e 'any(.[]; .version == null or .version == "null")' <<<"$matrix" >/dev/null; then
+            echo "::error::Could not resolve every Chrome for Testing version"; exit 1
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "dev=$(jq -r .channels.Dev.version <<<"$good")" >> "$GITHUB_OUTPUT"
+
   compat:
+    needs: resolve
+    name: compat (${{ matrix.target }} ${{ matrix.version }})
     strategy:
       fail-fast: false
       matrix:
-        target: [min, Stable, Beta, Dev]
+        include: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,17 +72,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download Chrome for Testing (${{ matrix.target }})
+      - name: Download Chrome for Testing ${{ matrix.version }}
         run: |
-          base=https://googlechromelabs.github.io/chrome-for-testing
-          if [ "${{ matrix.target }}" = min ]; then
-            major=$(jq -r .chromeSupport.minMajor src/lib/bidi/vendor/chromium-bidi-mapper.manifest.json)
-            version=$(curl -sf "$base/latest-versions-per-milestone.json" | jq -r ".milestones[\"$major\"].version")
-          else
-            version=$(curl -sf "$base/last-known-good-versions.json" | jq -r ".channels.${{ matrix.target }}.version")
-          fi
-          echo "Chrome $version"
-          curl -sfL -o chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/$version/linux64/chrome-linux64.zip"
+          curl -sfL -o chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${{ matrix.version }}/linux64/chrome-linux64.zip"
           unzip -q chrome.zip -d "$RUNNER_TEMP"
           echo "CRAFTDRIVER_CHROME_PATH=$RUNNER_TEMP/chrome-linux64/chrome" >> "$GITHUB_ENV"
 
@@ -63,12 +87,69 @@ jobs:
       - name: Hybrid launch gates
         run: >
           npx vitest run tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts
-          tests/chrome-smoke.test.ts tests/dialogs.test.ts tests/evaluate.test.ts
-          tests/network.test.ts
+          tests/hybrid-chrome-range.test.ts tests/chrome-smoke.test.ts tests/dialogs.test.ts
+          tests/evaluate.test.ts tests/network.test.ts
         env:
           HEADLESS: true
           CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
+          # Test this Chrome even when it is outside the verified range.
+          CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION: '1'
           # The runner's preinstalled chromedriver matches its own Chrome, not
           # the one under test: skip it so craftdriver downloads a matching one.
           CHROMEWEBDRIVER: ''
           CRAFTDRIVER_SKIP_PATH_PROBE: '1'
+
+  report:
+    needs: [resolve, compat]
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.compat.result }}
+          MATRIX: ${{ needs.resolve.outputs.matrix }}
+          DEV: ${{ needs.resolve.outputs.dev }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          max=$(jq -r .chromeSupport.maxMajor src/lib/bidi/vendor/chromium-bidi-mapper.manifest.json)
+          dev_major=${DEV%%.*}
+          tested=$(jq -r 'map("\(.target) \(.version)") | join(", ")' <<<"$MATRIX")
+          if [ "$RESULT" = success ]; then
+            if [ "$dev_major" -le "$max" ]; then echo "All green; Dev $DEV is within the verified range (max $max)."; exit 0; fi
+            title="Chrome $dev_major passed the hybrid gates: raise the verified range"
+            {
+              echo "Every cell passed ($tested), and Dev is newer than \`chromeSupport.maxMajor\` ($max)."
+              echo
+              echo "Raise the range, then run \`npm run mapper:check\` and open a PR:"
+              echo
+              echo '```'
+              echo "npm run mapper:chrome-range -- --max $dev_major --source \"chrome-compat passed on Chrome for Testing $tested (linux64)\""
+              echo '```'
+              echo
+              echo "Run: $RUN_URL"
+            } > body.md
+          elif [ "$RESULT" = failure ]; then
+            title="Hybrid launch failing on Chrome for Testing ($tested)"
+            {
+              echo "At least one cell of the Chrome compatibility workflow failed: $RUN_URL"
+              echo
+              echo "Tested: $tested. A failing Beta/Dev cell gives weeks of warning before that"
+              echo "Chrome reaches Stable: run the \`mapper-update\` skill."
+            } > body.md
+          else
+            echo "compat result: $RESULT; nothing to report."; exit 0
+          fi
+          gh label create chrome-compat --color 1D76DB --description 'Hybrid launch vs Chrome versions' 2>/dev/null || true
+          existing=$(gh issue list --label chrome-compat --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body-file body.md
+          else
+            gh issue create --title "$title" --label chrome-compat --body-file body.md
+          fi

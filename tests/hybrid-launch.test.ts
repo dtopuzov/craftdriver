@@ -14,7 +14,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Browser } from '../src';
 import { CraftdriverError, ErrorCode } from '../src/lib/errors';
 import { HttpClient } from '../src/lib/http';
-import { chooseChromeLaunchPath, type ChromeLaunchRouteInput } from '../src/lib/hybridLaunch';
+import {
+  chooseChromeLaunchPath,
+  chromeVersionVerdict,
+  mapperChromeRange,
+  type ChromeLaunchRouteInput,
+} from '../src/lib/hybridLaunch';
 import type { WebDriverEndpoint } from '../src/lib/types';
 import { EXAMPLES_BASE_URL, IS_CHROMIUM } from './utils';
 
@@ -60,6 +65,21 @@ describe('chrome launch routing', () => {
     const fallback = route({ ...over, env: 'hybrid' });
     expect(fallback.path).toBe('chromedriver');
     expect((fallback as { reason: string }).reason).toMatch(reason);
+  });
+
+  it.each<[number | undefined, string]>([
+    [139, 'older'],
+    [140, 'verified'],
+    [158, 'verified'],
+    [159, 'newer'],
+    [undefined, 'unknown'],
+  ])('places Chrome %s in the verified range as %s', (major, verdict) => {
+    expect(chromeVersionVerdict(major, { min: 140, max: 158 })).toBe(verdict);
+  });
+
+  it('reads a verified range that is not empty', () => {
+    const { min, max } = mapperChromeRange();
+    expect(Number.isInteger(min) && Number.isInteger(max) && min <= max).toBe(true);
   });
 
   it('rejects unknown modes from the option and the env var', () => {

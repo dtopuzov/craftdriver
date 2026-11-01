@@ -29,8 +29,32 @@ export const CHROME_LAUNCH_MODE_ENV = 'CRAFTDRIVER_CHROME_LAUNCH_MODE';
 
 const MODES: readonly ChromeLaunchMode[] = ['auto', 'chromedriver', 'hybrid'];
 
-/** Oldest Chrome major the vendored mapper is verified against. */
-export const MAPPER_MIN_CHROME_MAJOR: number = manifest.chromeSupport.minMajor;
+/**
+ * Set to `1` to run hybrid on any Chrome version, skipping the verified range.
+ * For testing new Chrome builds; craftdriver's own compatibility CI uses it.
+ */
+export const CHROME_HYBRID_ANY_VERSION_ENV = 'CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION';
+
+/** Chrome majors (inclusive) the vendored mapper is verified against. */
+export function mapperChromeRange(): { min: number; max: number } {
+  return { min: manifest.chromeSupport.minMajor, max: manifest.chromeSupport.maxMajor };
+}
+
+/**
+ * Where a Chrome major sits relative to the verified range. `older` is below
+ * the supported floor; `newer` is not verified yet but expected to work.
+ */
+export type ChromeVersionVerdict = 'verified' | 'newer' | 'older' | 'unknown';
+
+export function chromeVersionVerdict(
+  major: number | undefined,
+  range: { min: number; max: number }
+): ChromeVersionVerdict {
+  if (major === undefined) return 'unknown';
+  if (major < range.min) return 'older';
+  if (major > range.max) return 'newer';
+  return 'verified';
+}
 
 export interface ChromeLaunchRouteInput {
   kind: 'browser' | 'electron' | 'remote';
@@ -105,6 +129,19 @@ export function chooseChromeLaunchPath(input: ChromeLaunchRouteInput): ChromeLau
 /** Raised when an env-requested hybrid launch can't proceed and should fall back. */
 export class HybridUnavailableError extends Error {}
 
+const notices = new Set<string>();
+
+function noticeOnce(text: string): void {
+  if (notices.has(text)) return;
+  notices.add(text);
+  process.stderr.write(`[craftdriver] ${text}\n`);
+}
+
+/** Tell the user, once per process and reason, that hybrid fell back. */
+export function noticeHybridFallback(err: HybridUnavailableError): void {
+  noticeOnce(`${err.message} Using chromedriver.`);
+}
+
 export interface HybridLaunchInput {
   /** Resolved custom browser binary; the system Chrome when undefined. */
   browserBinary?: string;
@@ -116,6 +153,8 @@ export interface HybridLaunchInput {
   /** Used for both the Classic session and the mapper's `session.new`. */
   unhandledPromptBehavior: unknown;
   strict: boolean;
+  /** Skip the verified Chrome range ({@link CHROME_HYBRID_ANY_VERSION_ENV}). */
+  anyChromeVersion?: boolean;
 }
 
 export interface HybridLaunch {
@@ -156,6 +195,45 @@ function unavailable(strict: boolean, message: string): Error {
         hint: "Omit chromeLaunchMode or set it to 'chromedriver'.",
       })
     : new HybridUnavailableError(message);
+}
+
+/**
+ * Chrome majors seen per binary in this process, so a binary known to be
+ * outside the verified range falls back before Chrome is launched for
+ * nothing. A stale entry (Chrome updated under a long-lived process) can only
+ * cause an unneeded fallback: in-range launches are re-checked after launch.
+ */
+const knownMajors = new Map<string, number>();
+
+/**
+ * Apply the verified Chrome range. Below it: unsupported, so an explicit
+ * request throws and an env request falls back. Above it: not verified yet,
+ * so an env request falls back (never fail because of the Chrome version)
+ * while an explicit request proceeds with a one-time warning.
+ */
+function checkChromeVersion(major: number | undefined, input: HybridLaunchInput): void {
+  if (input.anyChromeVersion) return;
+  const range = mapperChromeRange();
+  const verdict = chromeVersionVerdict(major, range);
+  if (verdict === 'older') {
+    throw unavailable(
+      input.strict,
+      `chromeLaunchMode 'hybrid' needs Chrome ${range.min} or newer (found ${major}).`
+    );
+  }
+  if (verdict === 'newer') {
+    const unverified =
+      `Chrome ${major} is newer than the newest Chrome this craftdriver release ` +
+      `verified for hybrid launch (${range.max}).`;
+    if (!input.strict) {
+      throw new HybridUnavailableError(
+        `${unverified} A newer craftdriver may support hybrid launch on it.`
+      );
+    }
+    noticeOnce(
+      `${unverified} Continuing because chromeLaunchMode is 'hybrid'; upgrade craftdriver if you hit problems.`
+    );
+  }
 }
 
 /**
@@ -212,6 +290,10 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
     throw unavailable(input.strict, 'Could not find a Chrome/Chromium installation to launch.');
   }
 
+  // Before launching anything: a binary seen earlier needs no second launch.
+  const known = knownMajors.get(binary);
+  if (known !== undefined) checkChromeVersion(known, input);
+
   // chromedriver resolution and boot overlap Chrome's boot.
   const serviceStart = input.service.start();
   serviceStart.catch(() => {});
@@ -227,12 +309,8 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
     });
 
     const { major, initialTab } = await inspectChrome(chrome);
-    if (major !== undefined && major < MAPPER_MIN_CHROME_MAJOR) {
-      throw unavailable(
-        input.strict,
-        `chromeLaunchMode 'hybrid' needs Chrome ${MAPPER_MIN_CHROME_MAJOR} or newer (found ${major}).`
-      );
-    }
+    if (major !== undefined) knownMajors.set(binary, major);
+    checkChromeVersion(major, input);
 
     const caps = { unhandledPromptBehavior: input.unhandledPromptBehavior };
     transport = await startInProcessMapper(chrome.wsUrl, { capabilities: caps });
