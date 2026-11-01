@@ -70,7 +70,11 @@ describe('evaluate()', () => {
   // a barrier the BiDi side respects: an immediately following { context } call
   // can race the realm swap and throw "execution contexts cleared". evaluate()
   // retries that pre-execution error (the script never ran).
-  it('retries past a transient "execution contexts cleared" error', async () => {
+  it.each([
+    'execution contexts cleared',
+    // CDP's wording for the same race, seen through the in-process mapper.
+    'Cannot find context with specified id',
+  ])('retries past a transient "%s" error', async (message) => {
     if (!browser.isBiDiEnabled()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const conn = (browser as any).bidiSession.getConnection();
@@ -79,7 +83,7 @@ describe('evaluate()', () => {
     conn.send = (method: string, params: Record<string, unknown> = {}) => {
       if (method === 'script.callFunction' && injected === 0) {
         injected++;
-        return Promise.reject(new Error('BiDi error [unknown error]: execution contexts cleared'));
+        return Promise.reject(new Error(`BiDi error [unknown error]: ${message}`));
       }
       return original(method, params);
     };

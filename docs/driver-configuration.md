@@ -314,8 +314,10 @@ itself), or to `args` that set their own `--remote-debugging-*` endpoint:
 - the env var is a default for a whole run, so such launches keep the
   chromedriver path.
 
-Hybrid also requires Chrome 156 or newer (the oldest version the bundled
-mapper is verified against).
+Hybrid also requires Chrome 140 or newer. The bundled mapper speaks WebDriver
+BiDi to craftdriver but Chrome's own DevTools protocol to the browser, so
+support is per Chrome version: CI runs the hybrid tests weekly against the
+oldest supported version and the current Stable, Beta and Dev builds.
 
 Things that work differently in hybrid mode:
 

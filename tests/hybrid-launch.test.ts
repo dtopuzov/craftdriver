@@ -198,8 +198,12 @@ describe.runIf(IS_CHROMIUM && process.platform !== 'win32')('hybrid launch clean
         ._chrome;
       // Quit before chromedriver may even have finished attaching.
       await browser.quit();
-      expect(chromeProcessesWith(chrome.userDataDir)).toEqual([]);
-      expect(fs.existsSync(chrome.userDataDir)).toBe(false);
+      // Helpers may take a moment to exit after the browser process; the
+      // contract is that nothing is left shortly after quit().
+      await expect
+        .poll(() => chromeProcessesWith(chrome.userDataDir), { timeout: 3_000 })
+        .toEqual([]);
+      await expect.poll(() => fs.existsSync(chrome.userDataDir), { timeout: 3_000 }).toBe(false);
     }
   });
 

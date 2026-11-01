@@ -37,16 +37,20 @@ latest `puppeteer-core` pins, which Puppeteer tests against the Chrome it ships.
 | ---- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0    | built, gates green                   | Read the "Upstream commits" list. Open commits whose subjects touch what craftdriver relies on: prompt handling / `unhandledPromptBehavior`, `session.new` capabilities, download behaviour (`Browser.setDownloadBehavior` at start), sharedId format (`f.<frame>.d.<loader>.e.<n>`), event names, minimum Chrome version. Summarize the relevant ones (or "none relevant") in the commit body. Commit with the script's suggested message. |
 | 20   | build guard                          | A new bundled package: read its licence, confirm it is runtime code (not a parser/type leak), then add it to `bundledPackages` and rerun. **Never accept zod or devtools-protocol**: if upstream now needs them at runtime, stop and escalate to the owner. Size budget: report the delta and the biggest inputs; raising the budget is the owner's call.                                                                                   |
-| 30   | upstream API changed                 | Read the printed signature diff. Update `src/lib/bidi/vendor/chromium-bidi-mapper.d.ts` and the worker bootstrap (`WORKER_SOURCE`) in `src/lib/bidi/inProcessMapper.ts`. Then rerun with `--accept-api-change`.                                                                                                                                                                                                                           |
+| 30   | upstream API changed                 | Read the printed signature diff. Update `src/lib/bidi/vendor/chromium-bidi-mapper.d.ts` and the worker bootstrap (`WORKER_SOURCE`) in `src/lib/bidi/inProcessMapper.ts`. Then rerun with `--accept-api-change`.                                                                                                                                                                                                                             |
 | 40   | `tests/mapper-bundle.test.ts` failed | Reproduce with `npx vitest run tests/mapper-bundle.test.ts`. Bisect across intermediate npm releases with `--to <v>` (each run is cheap). Find the upstream change, fix craftdriver's usage, and add a regression assertion to `tests/mapper-bundle.test.ts`. If upstream is wrong: pin the last good version and note it in the PR.                                                                                                        |
 | 50   | hybrid gates failed                  | Same as 40 with `tests/hybrid-launch.test.ts` / `tests/chrome-launcher.test.ts`.                                                                                                                                                                                                                                                                                                                                                            |
 | 1    | error                                | Read the message (network, bad version) and retry or report.                                                                                                                                                                                                                                                                                                                                                                                |
 
 After a 40/50 the vendor dir holds the new bundle; `git checkout
-   src/lib/bidi/vendor` restores the old one. 5. If the oldest Chrome the mapper supports changed (upstream raised its
-minimum, or a test against an older Chrome fails), update
-`chromeSupport.minMajor` in the manifest **and** rerun
-`npm run mapper:build` so the manifest stays generated output. 6. `npm run mapper:check`, then open a PR whose body carries the script's
+   src/lib/bidi/vendor` restores the old one. 5. Check Chrome coverage: run the `Chrome compatibility (hybrid launch)`
+workflow (`gh workflow run chrome-compat.yml --ref <branch>`). It tests the
+oldest supported major (`chromeSupport.minMajor`) plus Stable, Beta and
+Dev. If the oldest major now fails, either fix the regression or raise
+`minMajor` (an owner decision: it drops support for that Chrome), then
+rerun `npm run mapper:build` so the manifest stays generated output.
+Locally: download a Chrome for Testing build and point
+`CRAFTDRIVER_CHROME_PATH` at it with `CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid`. 6. `npm run mapper:check`, then open a PR whose body carries the script's
 report and your upstream-changes summary.
 
 ## Never

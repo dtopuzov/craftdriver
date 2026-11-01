@@ -34,7 +34,7 @@ Legend: `[x]` done, `[ ]` todo, `[~]` in progress, `[-]` skipped by decision.
 - [x] M2.1 `tests/mapper-bundle.test.ts`
 - [-] M2.2 re-measure cold (owner: no measuring)
 - [~] R-M1 no-op parser error parity
-- [~] R-M2 version policy / `chromeSupport.minMajor`
+- [x] R-M2 version policy / `chromeSupport.minMajor`
 - [x] R-M3 changelog source
 - [x] M3.1 `scripts/mapper/update.mjs`
 - [x] M3.2 `mapper-update` skill
@@ -202,5 +202,22 @@ must know.)
 2. Decide G3: flip `'auto'` to hybrid (currently chromedriver).
 3. Optional, needs measuring (deferred by owner): shared mapper worker per
    process; A3.2 perf arm; Plan M M2.2.
-4. R-M2 old-Chrome matrix (CfT Stable−1..−3) to lower `chromeSupport.minMajor`.
+4. (done 2026-11-01, see log) Chrome version matrix; minMajor = 140.
 5. After PR #87 merges: one-line note in the deps-bump skill (M3.4).
+
+- 2026-11-01 R-M2 Chrome version matrix (owner: "craftdriver must work for any
+  recent Chrome"). Chrome for Testing mac-x64 140, 145, 150, 155, 157, 158 +
+  system 156, gate = mapper-bundle + hybrid-launch + chrome-smoke + dialogs +
+  evaluate + network in hybrid mode (57 tests). ALL PASS after two fixes:
+  - Chrome 140: evaluate failed every parallel run with CDP's "Cannot find
+    context with specified id" (same pre-execution realm race as "execution
+    contexts cleared"; chromedriver path on 140 was clean) → added to
+    `withRealmRetry` (src/lib/bidi/evaluate.ts) + test case.
+  - Chrome 158: cleanup test saw a helper still exiting right after quit
+    (gone moments later) → test polls up to 3 s; close() schedules an unref'd
+    late profile sweep.
+  `chromeSupport.minMajor` = 140 (oldest tested; older untested, not known bad).
+  New `.github/workflows/chrome-compat.yml`: weekly + on mapper changes, runs
+  the gate on ubuntu against CfT {minMajor, Stable, Beta, Dev}; disables the
+  runner's preinstalled chromedriver so a matching one is downloaded.
+  Untested: the workflow itself has not run yet (needs a push).

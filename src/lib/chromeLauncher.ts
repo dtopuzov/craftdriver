@@ -225,6 +225,15 @@ export async function launchChrome(opts: ChromeLaunchOptions): Promise<LaunchedC
       await sleep(250);
       removeProfile();
     }
+    // A helper that is still exiting can re-create a log file after the
+    // sweep. One late sweep catches it without delaying quit().
+    setTimeout(() => {
+      try {
+        removeProfile();
+      } catch {
+        // best effort
+      }
+    }, 1_000).unref();
   };
 
   const timeoutMs = opts.timeoutMs ?? CHROME_DEVTOOLS_READY_TIMEOUT_MS;
