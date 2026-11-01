@@ -163,3 +163,44 @@ must know.)
   hybrid) and a non-blocking hybrid smoke step on macOS + Windows.
   A4.1: docs/driver-configuration.md "Chrome launch mode (experimental)" +
   env var row. No CHANGELOG perf entry (no numbers, by decision).
+
+- 2026-11-01 full-suite parity (macOS Intel, Chrome 156, local, HEADLESS):
+  - Run 1 (mapper on main thread): 15 failed / 1620 passed + 5 unhandled
+    rejections from the mapper → moved the mapper to a worker.
+  - Run 2 (worker): 12 failed / 1635, no unhandled errors. Root causes, fixed in
+    e19351a: (1) fake grids echo `webSocketUrl: true`, which my
+    `typeof !== 'string'` check routed to the transport path → separate
+    `initInProcessBiDi()`; (2) late attach picked a different "current window"
+    when launch-time storageState restore had opened tabs → attach now switches
+    to Chrome's initial tab (read from /json/list right after launch);
+    (3) tracer pre-action screenshots raced Classic navigation (chromedriver
+    orders Classic behind in-flight BiDi; hybrid doesn't), and the mapper fails
+    or HANGS a captureScreenshot whose page navigates mid-capture (reproduced
+    with 157.0.8090-0, 157.0.8103-35 and 17.0.2 → not version-specific,
+    upstream robustness bug) → on hybrid launches a traced action awaits its
+    pre-action screenshot.
+  - Run 3: 3 failed / 1644 = 2 popup tests (pre-existing, see below) + my
+    fake-Chrome 300ms timeout test under load (bumped to 2000ms).
+  - Default chromedriver path after all changes: 5 failed / 1642, all popup
+    tests (`pages.test.ts` ×4, `browser-context-hooks` on('page') popups) —
+    the SAME failures reproduce on the pre-branch commit d9369be on this
+    machine, so they're environmental/pre-existing, not from this branch.
+    Hybrid passes more of them (on('page') + 2 of 4 pages tests).
+  - Known gap (document if it bites): a user-issued `browser.screenshot()`
+    racing a Classic navigation can stall up to the BiDi timeout (30 s) in
+    hybrid mode (upstream mapper). Tracing is protected; plain concurrent
+    screenshot+navigate is not.
+  - Flake seen once under parallel load: hybrid cleanup test found the temp
+    profile/process after quit; cause unconfirmed (likely graceful close >3 s
+    → kill → helper re-creates chrome_debug.log). Added a second profile sweep
+    after a forced kill; not reproduced since (2 parallel runs + full suite).
+
+## Next steps (owner decides)
+
+1. Push the branch / open a PR; watch the non-blocking `chrome-hybrid` CI job
+   and the macOS/Windows hybrid smoke (Windows close path is untested locally).
+2. Decide G3: flip `'auto'` to hybrid (currently chromedriver).
+3. Optional, needs measuring (deferred by owner): shared mapper worker per
+   process; A3.2 perf arm; Plan M M2.2.
+4. R-M2 old-Chrome matrix (CfT Stable−1..−3) to lower `chromeSupport.minMajor`.
+5. After PR #87 merges: one-line note in the deps-bump skill (M3.4).

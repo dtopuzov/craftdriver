@@ -123,9 +123,9 @@ describe.skipIf(isWindows)('chrome launcher: DevTools handshake (fake Chrome)', 
 
   it('times out, kills Chrome and removes the profile when no URL arrives', async () => {
     const bin = fakeChrome('hangs', 'echo "still booting" >&2\nexec sleep 30');
-    const err = await launchChrome({ binary: bin, headless: true, timeoutMs: 300 }).catch((e) => e);
+    const err = await launchChrome({ binary: bin, headless: true, timeoutMs: 2000 }).catch((e) => e);
     expect(CraftdriverError.is(err, ErrorCode.DRIVER_ERROR)).toBe(true);
-    expect(err.message).toContain('within 300ms');
+    expect(err.message).toContain('within 2000ms');
     expect(err.message).toContain('still booting');
     expect(fs.existsSync(profileDir(`${bin}.args`))).toBe(false);
   });
