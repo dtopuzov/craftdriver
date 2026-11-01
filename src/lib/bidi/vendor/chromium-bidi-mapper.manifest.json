@@ -1,0 +1,31 @@
+{
+  "chromiumBidi": {
+    "version": "157.0.8090-0",
+    "integrity": "sha512-KJw7IQgqXwxpJgJlEIPg5mr2ZoqA+jkTRtc5EABI7sUJ3bu3cpI7NuEBoj4Gn1AsF78CaT9So5WQWspK3/wYag=="
+  },
+  "mitt": {
+    "version": "3.0.1",
+    "integrity": "sha512-vKivATfr97l2/QBCYAkXYDbrIWPM2IIKEl7YPhjCvKlG3kE2gm+uBo6nEXK3M5/Ffh/FLpKExzOQ3JJoJGFKBw=="
+  },
+  "esbuild": {
+    "version": "0.28.2",
+    "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA=="
+  },
+  "entryExports": [
+    "BidiServer",
+    "MapperCdpConnection"
+  ],
+  "bundledPackages": [
+    "chromium-bidi",
+    "mitt"
+  ],
+  "chromeSupport": {
+    "minMajor": 156,
+    "source": "verified locally against Chrome 156 (2026-11-01)"
+  },
+  "output": {
+    "bytes": 422476,
+    "sha256": "e18b8f95b1c7a9be2032f354a5555083d32d5988fbb66cf13c24247ca93f2eb3"
+  },
+  "apiFingerprint": "ccc8951c8f133b43d8a1332dbbf116df13c179f9116b57b1c8b64c52fb240e26"
+}

@@ -1,0 +1,57 @@
+// bidiMapper/BidiServer.d.ts
+import type { CdpClient } from '../cdp/CdpClient.js';
+import type { CdpConnection } from '../cdp/CdpConnection.js';
+import type { ChromiumBidi } from '../protocol/protocol.js';
+import { EventEmitter } from '../utils/EventEmitter.js';
+import { type LoggerFn } from '../utils/log.js';
+import type { Result } from '../utils/result.js';
+import type { BidiCommandParameterParser } from './BidiParser.js';
+import type { BidiTransport } from './BidiTransport.js';
+import type { OutgoingMessage } from './OutgoingMessage.js';
+interface BidiServerEvent extends Record<string | symbol, unknown> {
+message: ChromiumBidi.Command;
+}
+export declare class BidiServer extends EventEmitter<BidiServerEvent> {
+#private;
+private constructor();
+static createAndStart(bidiTransport: BidiTransport, cdpConnection: CdpConnection, browserCdpClient: CdpClient, selfTargetId: string, parser?: BidiCommandParameterParser, logger?: LoggerFn): Promise<BidiServer>;
+emitOutgoingMessage(messageEntry: Promise<Result<OutgoingMessage>>, event: string): void;
+close(): void;
+}
+export {};
+
+// bidiMapper/BidiTransport.d.ts
+import type { ChromiumBidi } from '../protocol/protocol.js';
+export interface BidiTransport {
+setOnMessage: (handler: (message: ChromiumBidi.Command) => Promise<void> | void) => void;
+sendMessage: (message: ChromiumBidi.Message) => Promise<void> | void;
+close(): void;
+}
+
+// cdp/CdpConnection.d.ts
+import type { Protocol } from 'devtools-protocol';
+import type { ProtocolMapping } from 'devtools-protocol/types/protocol-mapping.js';
+import { LogType } from '../utils/log.js';
+import type { LoggerFn } from '../utils/log.js';
+import type { Transport } from '../utils/transport.js';
+import { MapperCdpClient, type CdpClient } from './CdpClient.js';
+export interface CdpConnection {
+getCdpClient(sessionId: Protocol.Target.SessionID): CdpClient;
+}
+export declare class MapperCdpConnection implements CdpConnection {
+#private;
+static readonly LOGGER_PREFIX_RECV: `${LogType.cdp}:RECV ◂`;
+static readonly LOGGER_PREFIX_SEND: `${LogType.cdp}:SEND ▸`;
+constructor(transport: Transport, logger?: LoggerFn);
+close(): void;
+createBrowserSession(): Promise<MapperCdpClient>;
+getCdpClient(sessionId: Protocol.Target.SessionID): MapperCdpClient;
+sendCommand<CdpMethod extends keyof ProtocolMapping.Commands>(method: CdpMethod, params?: ProtocolMapping.Commands[CdpMethod]['paramsType'][0], sessionId?: Protocol.Target.SessionID): Promise<object>;
+}
+
+// utils/transport.d.ts
+export interface Transport {
+setOnMessage: (handler: (message: string) => Promise<void> | void) => void;
+sendMessage: (message: string) => Promise<void> | void;
+close(): void;
+}

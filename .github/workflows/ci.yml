@@ -34,6 +34,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Rebuilds the vendored chromium-bidi mapper from its pinned manifest and
+      # fails on any byte difference (hand edits, stale manifest).
+      - name: Check vendored BiDi mapper
+        run: npm run mapper:check
+
       - name: Build package
         run: npm run build
 
@@ -91,6 +96,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Same rebuild as the Linux job: proves the bundle is byte-identical
+      # across operating systems.
+      - name: Check vendored BiDi mapper
+        shell: bash
+        run: npm run mapper:check
 
       - name: Start test server
         shell: bash
