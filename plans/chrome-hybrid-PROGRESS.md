@@ -304,3 +304,11 @@ must know.)
   CRAFTDRIVER_CHROME_LAUNCH_MODE=chromedriver 25/25 (CRAFTDRIVER_DEBUG
   confirms the path per launch). Still untested: Windows/Linux hybrid by
   default (CI on push).
+
+- 2026-11-01 chrome-compat: added a Canary cell (warning-only; not part of
+  the verified range) and per-cell results in the report job (gh api jobs,
+  needs actions: read). Dry-run of the body step for none/Canary/Beta failing
+  against live CfT data: correct titles/bodies. Note: CfT Canary was
+  159.0.8136.0 = same major as Dev, so Canary adds days of warning, not a
+  major. Open owner question: should craftdriver download Chrome for Testing
+  (see conversation; options: only when no Chrome installed vs always pinned).

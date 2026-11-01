@@ -3,13 +3,14 @@ name: Chrome compatibility (hybrid launch)
 # The vendored chromium-bidi mapper talks CDP, Chrome's own protocol, so its
 # compatibility is per Chrome version. Run the hybrid-launch gates against the
 # oldest supported major (manifest chromeSupport.minMajor) and the current
-# Stable, Beta and Dev builds from Chrome for Testing. Hybrid is forced on
-# every cell, including majors above the verified range (chromeSupport.maxMajor).
+# Stable, Beta, Dev and Canary builds from Chrome for Testing. Hybrid is
+# forced on every cell, including majors above the verified range
+# (chromeSupport.maxMajor).
 #
 # The report job opens (or updates) one `chrome-compat` issue when a cell
-# fails, which is an early warning to run the mapper-update skill before that
-# Chrome ships, or when every cell passed and Dev is newer than maxMajor, so
-# the verified range can be raised.
+# fails (a Canary-only failure is an early warning: Canary changes daily and
+# is not part of the verified range), or when every cell passed and Dev is
+# newer than maxMajor, so the verified range can be raised.
 
 on:
   schedule:
@@ -44,7 +45,7 @@ jobs:
           min=$(curl -sf "$base/latest-versions-per-milestone.json" | jq -r ".milestones[\"$major\"].version")
           good=$(curl -sf "$base/last-known-good-versions.json")
           matrix=$(jq -nc --arg min "$min" --argjson good "$good" \
-            '[{target: "min", version: $min}] + (["Stable", "Beta", "Dev"] | map({target: ., version: $good.channels[.].version}))')
+            '[{target: "min", version: $min}] + (["Stable", "Beta", "Dev", "Canary"] | map({target: ., version: $good.channels[.].version}))')
           echo "$matrix"
           if jq -e 'any(.[]; .version == null or .version == "null")' <<<"$matrix" >/dev/null; then
             echo "::error::Could not resolve every Chrome for Testing version"; exit 1
@@ -101,19 +102,28 @@ jobs:
 
   report:
     needs: [resolve, compat]
-    if: always() && needs.resolve.result == 'success'
+    if: always() && needs.resolve.result == 'success' && needs.compat.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       issues: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Open or update the issue
+      - name: Collect cell results
         env:
           GH_TOKEN: ${{ github.token }}
-          RESULT: ${{ needs.compat.result }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name | startswith("compat (")) | {name, conclusion}]' > cells.json
+          cat cells.json
+
+      - name: Write the issue body
+        id: body
+        env:
           MATRIX: ${{ needs.resolve.outputs.matrix }}
           DEV: ${{ needs.resolve.outputs.dev }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -121,35 +131,58 @@ jobs:
           max=$(jq -r .chromeSupport.maxMajor src/lib/bidi/vendor/chromium-bidi-mapper.manifest.json)
           dev_major=${DEV%%.*}
           tested=$(jq -r 'map("\(.target) \(.version)") | join(", ")' <<<"$MATRIX")
-          if [ "$RESULT" = success ]; then
-            if [ "$dev_major" -le "$max" ]; then echo "All green; Dev $DEV is within the verified range (max $max)."; exit 0; fi
+          failed=$(jq -r '[.[] | select(.conclusion != "success") | .name] | join(", ")' cells.json)
+          failed_verified=$(jq -r '[.[] | select(.conclusion != "success" and (.name | startswith("compat (Canary") | not)) | .name] | join(", ")' cells.json)
+          raise="npm run mapper:chrome-range -- --max $dev_major --source \"chrome-compat passed on Chrome for Testing $tested (linux64)\""
+          if [ -n "$failed_verified" ]; then
+            title="Hybrid launch failing: $failed_verified"
+            {
+              echo "Failing: $failed. Run: $RUN_URL"
+              echo
+              echo "Tested: $tested. A Stable or min failure affects users now (they fall back to"
+              echo "chromedriver only if the launch itself fails). Beta/Dev give weeks of warning."
+              echo "Run the \`mapper-update\` skill."
+            } > body.md
+          elif [ -n "$failed" ]; then
+            title="Early warning: hybrid launch failing on Chrome Canary"
+            {
+              echo "Only Canary failed ($failed). Run: $RUN_URL"
+              echo
+              echo "Tested: $tested. Canary changes daily: rerun the workflow before acting. If it"
+              echo "keeps failing, find the Chrome change and run the \`mapper-update\` skill before it reaches Dev."
+              if [ "$dev_major" -gt "$max" ]; then
+                echo
+                echo "Every other cell passed and Dev is newer than \`chromeSupport.maxMajor\` ($max):"
+                echo; echo '```'; echo "$raise"; echo '```'
+              fi
+            } > body.md
+          elif [ "$dev_major" -gt "$max" ]; then
             title="Chrome $dev_major passed the hybrid gates: raise the verified range"
             {
               echo "Every cell passed ($tested), and Dev is newer than \`chromeSupport.maxMajor\` ($max)."
               echo
               echo "Raise the range, then run \`npm run mapper:check\` and open a PR:"
-              echo
-              echo '```'
-              echo "npm run mapper:chrome-range -- --max $dev_major --source \"chrome-compat passed on Chrome for Testing $tested (linux64)\""
-              echo '```'
+              echo; echo '```'; echo "$raise"; echo '```'
               echo
               echo "Run: $RUN_URL"
             } > body.md
-          elif [ "$RESULT" = failure ]; then
-            title="Hybrid launch failing on Chrome for Testing ($tested)"
-            {
-              echo "At least one cell of the Chrome compatibility workflow failed: $RUN_URL"
-              echo
-              echo "Tested: $tested. A failing Beta/Dev cell gives weeks of warning before that"
-              echo "Chrome reaches Stable: run the \`mapper-update\` skill."
-            } > body.md
           else
-            echo "compat result: $RESULT; nothing to report."; exit 0
+            echo "All green; Dev $DEV is within the verified range (max $max)."
+            exit 0
           fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          cat body.md
+
+      - name: Open or update the issue
+        if: steps.body.outputs.title != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.body.outputs.title }}
+        run: |
           gh label create chrome-compat --color 1D76DB --description 'Hybrid launch vs Chrome versions' 2>/dev/null || true
           existing=$(gh issue list --label chrome-compat --state open --json number --jq '.[0].number')
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" --title "$title" --body-file body.md
+            gh issue edit "$existing" --title "$TITLE" --body-file body.md
           else
-            gh issue create --title "$title" --label chrome-compat --body-file body.md
+            gh issue create --title "$TITLE" --label chrome-compat --body-file body.md
           fi
