@@ -1,7 +1,7 @@
 /**
- * Hybrid Chrome launch (`chromeLaunchMode: 'hybrid'`): craftdriver launches
- * Chrome, runs the BiDi mapper in-process, and attaches chromedriver for
- * Classic commands in the background.
+ * Hybrid Chrome launch (the default for local Chrome with BiDi): craftdriver
+ * launches Chrome, runs the BiDi mapper in-process, and attaches chromedriver
+ * for Classic commands in the background.
  *
  * Covers the routing table, the background-attach contract of the Classic
  * HTTP layer, Classic/BiDi interop on one session, and process cleanup.
@@ -34,15 +34,18 @@ describe('chrome launch routing', () => {
   const route = (over: Partial<ChromeLaunchRouteInput>) =>
     chooseChromeLaunchPath({ ...chromeBase, ...over });
 
-  it('defaults to chromedriver', () => {
-    expect(route({})).toEqual({ path: 'chromedriver', reason: "chromeLaunchMode is 'auto'" });
-    expect(route({ option: 'chromedriver', env: 'hybrid' }).path).toBe('chromedriver');
+  it('takes the hybrid path by default, forced only by the override', () => {
+    expect(route({})).toEqual({ path: 'hybrid', forced: false });
+    expect(route({ browserName: 'chromium' })).toEqual({ path: 'hybrid', forced: false });
+    expect(route({ env: 'hybrid' })).toEqual({ path: 'hybrid', forced: true });
+    expect(route({ env: '' })).toEqual({ path: 'hybrid', forced: false });
   });
 
-  it('takes the hybrid path when asked, strictly for the option', () => {
-    expect(route({ option: 'hybrid' })).toEqual({ path: 'hybrid', strict: true });
-    expect(route({ env: 'hybrid' })).toEqual({ path: 'hybrid', strict: false });
-    expect(route({ env: 'hybrid', browserName: 'chromium' }).path).toBe('hybrid');
+  it('uses chromedriver when the override says so', () => {
+    expect(route({ env: 'chromedriver' })).toEqual({
+      path: 'chromedriver',
+      reason: "CRAFTDRIVER_CHROME_LAUNCH_MODE is 'chromedriver'",
+    });
   });
 
   it.each<[string, Partial<ChromeLaunchRouteInput>, RegExp]>([
@@ -52,19 +55,13 @@ describe('chrome launch routing', () => {
     ['mobile emulation', { mobileEmulation: true }, /mobileEmulation/],
     ['own debugging port', { args: ['--remote-debugging-port=9333'] }, /remote-debugging/],
     ['electron', { kind: 'electron' }, /electron launches/],
-  ])('%s: explicit hybrid throws, env hybrid falls back', (_, over, reason) => {
-    let err: unknown;
-    try {
-      route({ ...over, option: 'hybrid' });
-    } catch (e) {
-      err = e;
+    ['remote', { kind: 'remote' }, /remote launches/],
+  ])('%s: uses chromedriver, also when hybrid is forced', (_, over, reason) => {
+    for (const env of [undefined, 'hybrid']) {
+      const fallback = route({ ...over, env });
+      expect(fallback.path).toBe('chromedriver');
+      expect((fallback as { reason: string }).reason).toMatch(reason);
     }
-    expect(CraftdriverError.is(err, ErrorCode.UNSUPPORTED)).toBe(true);
-    expect((err as Error).message).toMatch(reason);
-
-    const fallback = route({ ...over, env: 'hybrid' });
-    expect(fallback.path).toBe('chromedriver');
-    expect((fallback as { reason: string }).reason).toMatch(reason);
   });
 
   it.each<[number | undefined, string]>([
@@ -82,24 +79,17 @@ describe('chrome launch routing', () => {
     expect(Number.isInteger(min) && Number.isInteger(max) && min <= max).toBe(true);
   });
 
-  it('rejects unknown modes from the option and the env var', () => {
-    expect(() => route({ option: 'fast' })).toThrow(/chromeLaunchMode must be one of/);
-    expect(() => route({ env: 'yes' })).toThrow(/CRAFTDRIVER_CHROME_LAUNCH_MODE must be one of/);
-  });
-
-  it('rejects chromeLaunchMode on Electron and remote launches', async () => {
-    await expect(
-      Browser.launch({
-        electron: { appBinaryPath: '/nope' },
-        chromeLaunchMode: 'hybrid',
-      } as never)
-    ).rejects.toThrow(/electron cannot be combined with chromeLaunchMode/);
-    await expect(
-      Browser.launch({
-        remote: { url: 'http://127.0.0.1:1/wd/hub' },
-        chromeLaunchMode: 'hybrid',
-      } as never)
-    ).rejects.toThrow(/remote cannot be combined with chromeLaunchMode/);
+  it('rejects unknown override values', () => {
+    let err: unknown;
+    try {
+      route({ env: 'auto' });
+    } catch (e) {
+      err = e;
+    }
+    expect(CraftdriverError.is(err, ErrorCode.INVALID_ARGUMENT)).toBe(true);
+    expect((err as Error).message).toMatch(
+      /CRAFTDRIVER_CHROME_LAUNCH_MODE must be 'chromedriver' or 'hybrid'/
+    );
   });
 });
 
@@ -161,11 +151,28 @@ function chromeProcessesWith(needle: string): string[] {
   }
 }
 
+/** Launch with `CRAFTDRIVER_CHROME_LAUNCH_MODE` set, restoring it afterwards. */
+async function launchWithMode(
+  mode: 'hybrid' | undefined,
+  options: Parameters<typeof Browser.launch>[0] = { browserName: 'chrome' }
+): Promise<Browser> {
+  const before = process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE;
+  if (mode) process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE = mode;
+  else delete process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE;
+  try {
+    return await Browser.launch(options);
+  } finally {
+    if (before === undefined) delete process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE;
+    else process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE = before;
+  }
+}
+
 describe.runIf(IS_CHROMIUM)('hybrid launch with real Chrome', () => {
   let browser: Browser;
 
   beforeAll(async () => {
-    browser = await Browser.launch({ browserName: 'chrome', chromeLaunchMode: 'hybrid' });
+    // Forced, so a failure fails here instead of falling back to chromedriver.
+    browser = await launchWithMode('hybrid');
   });
   afterAll(async () => {
     await browser?.quit();
@@ -213,7 +220,7 @@ describe.runIf(IS_CHROMIUM)('hybrid launch with real Chrome', () => {
 describe.runIf(IS_CHROMIUM && process.platform !== 'win32')('hybrid launch cleanup', () => {
   it('leaves no Chrome process or profile behind across repeated launches', async () => {
     for (let i = 0; i < 5; i++) {
-      const browser = await Browser.launch({ browserName: 'chrome', chromeLaunchMode: 'hybrid' });
+      const browser = await launchWithMode('hybrid');
       const chrome = (browser as unknown as { _chrome: { userDataDir: string; pid: number } })
         ._chrome;
       // Quit before chromedriver may even have finished attaching.
@@ -227,21 +234,17 @@ describe.runIf(IS_CHROMIUM && process.platform !== 'win32')('hybrid launch clean
     }
   });
 
-  it('falls back to chromedriver when the env asks for hybrid but mobileEmulation is set', async () => {
-    const before = process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE;
-    process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE = 'hybrid';
+  it('uses chromedriver by default when mobileEmulation is set', async () => {
+    const browser = await launchWithMode(undefined, {
+      browserName: 'chrome',
+      mobileEmulation: 'iPhone 14',
+    });
     try {
-      const browser = await Browser.launch({ browserName: 'chrome', mobileEmulation: 'iPhone 14' });
-      try {
-        expect((browser as unknown as { _chromeLaunchPath: string })._chromeLaunchPath).toBe(
-          'chromedriver'
-        );
-      } finally {
-        await browser.quit();
-      }
+      expect((browser as unknown as { _chromeLaunchPath: string })._chromeLaunchPath).toBe(
+        'chromedriver'
+      );
     } finally {
-      if (before === undefined) delete process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE;
-      else process.env.CRAFTDRIVER_CHROME_LAUNCH_MODE = before;
+      await browser.quit();
     }
   });
 });

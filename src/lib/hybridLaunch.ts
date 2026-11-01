@@ -5,9 +5,10 @@
  *
  * `Browser.launch` resolves as soon as BiDi is ready. chromedriver keeps
  * attaching in the background; the first Classic command waits for it (see
- * `WebDriverEndpoint.pendingSession`). Only local, chrome-family, BiDi
- * launches can take this path; everything else uses chromedriver to launch
- * Chrome as before.
+ * `WebDriverEndpoint.pendingSession`). It is the default for local,
+ * chrome-family, BiDi launches on a Chrome version the mapper is verified
+ * against. Everything else, and any hybrid launch that fails before
+ * `Browser.launch` returns, uses chromedriver to launch Chrome as before.
  */
 
 import crypto from 'node:crypto';
@@ -22,28 +23,23 @@ import { startInProcessMapper } from './bidi/inProcessMapper.js';
 import manifest from './bidi/vendor/chromium-bidi-mapper.manifest.json' with { type: 'json' };
 import type { WebDriverEndpoint } from './types.js';
 
-export type ChromeLaunchMode = 'auto' | 'chromedriver' | 'hybrid';
-
-/** Env default for {@link ChromeLaunchMode}; the `chromeLaunchMode` option wins. */
+/**
+ * Troubleshooting override, not a setting. Unset, craftdriver picks the
+ * launch path itself. `chromedriver` always lets chromedriver launch Chrome
+ * (to work around a hybrid-launch bug). `hybrid` forces hybrid on any Chrome
+ * version and fails instead of falling back (compatibility testing, bug
+ * reports).
+ */
 export const CHROME_LAUNCH_MODE_ENV = 'CRAFTDRIVER_CHROME_LAUNCH_MODE';
 
-const MODES: readonly ChromeLaunchMode[] = ['auto', 'chromedriver', 'hybrid'];
-
-/**
- * Set to `1` to run hybrid on any Chrome version, skipping the verified range.
- * For testing new Chrome builds; craftdriver's own compatibility CI uses it.
- */
-export const CHROME_HYBRID_ANY_VERSION_ENV = 'CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION';
+const OVERRIDES = ['chromedriver', 'hybrid'] as const;
 
 /** Chrome majors (inclusive) the vendored mapper is verified against. */
 export function mapperChromeRange(): { min: number; max: number } {
   return { min: manifest.chromeSupport.minMajor, max: manifest.chromeSupport.maxMajor };
 }
 
-/**
- * Where a Chrome major sits relative to the verified range. `older` is below
- * the supported floor; `newer` is not verified yet but expected to work.
- */
+/** Where a Chrome major sits relative to the verified range. */
 export type ChromeVersionVerdict = 'verified' | 'newer' | 'older' | 'unknown';
 
 export function chromeVersionVerdict(
@@ -60,8 +56,6 @@ export interface ChromeLaunchRouteInput {
   kind: 'browser' | 'electron' | 'remote';
   browserName: string;
   bidiRequested: boolean;
-  /** `LaunchOptions.chromeLaunchMode`, unvalidated. */
-  option?: unknown;
   /** `process.env[CHROME_LAUNCH_MODE_ENV]`. */
   env?: string;
   mobileEmulation: boolean;
@@ -69,18 +63,7 @@ export interface ChromeLaunchRouteInput {
 }
 
 export type ChromeLaunchRoute =
-  { path: 'hybrid'; strict: boolean } | { path: 'chromedriver'; reason: string };
-
-function parseMode(value: unknown, source: string): ChromeLaunchMode | undefined {
-  if (value === undefined || value === '') return undefined;
-  if (typeof value === 'string' && (MODES as readonly string[]).includes(value)) {
-    return value as ChromeLaunchMode;
-  }
-  throw new CraftdriverError(
-    ErrorCode.INVALID_ARGUMENT,
-    `${source} must be one of ${MODES.map((m) => `'${m}'`).join(', ')} (got ${JSON.stringify(value)}).`
-  );
-}
+  { path: 'hybrid'; forced: boolean } | { path: 'chromedriver'; reason: string };
 
 /** Why a launch can't take the hybrid path, or undefined when it can. */
 function hybridBlocker(input: ChromeLaunchRouteInput): string | undefined {
@@ -101,45 +84,56 @@ function hybridBlocker(input: ChromeLaunchRouteInput): string | undefined {
 /**
  * Pick the Chrome launch path. Pure, so the routing table is unit-tested.
  *
- * An explicit `chromeLaunchMode: 'hybrid'` is strict: an unroutable launch
- * throws `UNSUPPORTED` with the reason. The env var is a default for a whole
- * run, so launches it can't apply to (Firefox, mobile emulation, ...) quietly
- * keep the chromedriver path. `'auto'` currently means `'chromedriver'`.
+ * Local Chrome/Chromium launches with BiDi take the hybrid path; launches it
+ * can't serve (Firefox, mobile emulation, ...) use chromedriver, also when
+ * the override forces hybrid, since it applies to a whole run.
  */
 export function chooseChromeLaunchPath(input: ChromeLaunchRouteInput): ChromeLaunchRoute {
-  const option = parseMode(input.option, 'chromeLaunchMode');
-  const env = parseMode(input.env, CHROME_LAUNCH_MODE_ENV);
-  const mode = option ?? env ?? 'auto';
-  if (mode !== 'hybrid') {
-    return { path: 'chromedriver', reason: `chromeLaunchMode is '${mode}'` };
-  }
-  const strict = option === 'hybrid';
-  const blocker = hybridBlocker(input);
-  if (!blocker) return { path: 'hybrid', strict };
-  if (strict) {
+  const env = input.env || undefined;
+  if (env !== undefined && !(OVERRIDES as readonly string[]).includes(env)) {
     throw new CraftdriverError(
-      ErrorCode.UNSUPPORTED,
-      `chromeLaunchMode 'hybrid' is not available for this launch: ${blocker}.`,
-      { hint: "Omit chromeLaunchMode or set it to 'chromedriver'." }
+      ErrorCode.INVALID_ARGUMENT,
+      `${CHROME_LAUNCH_MODE_ENV} must be ${OVERRIDES.map((m) => `'${m}'`).join(' or ')} (got ${JSON.stringify(env)}).`
     );
   }
-  return { path: 'chromedriver', reason: blocker };
+  if (env === 'chromedriver') {
+    return { path: 'chromedriver', reason: `${CHROME_LAUNCH_MODE_ENV} is 'chromedriver'` };
+  }
+  const blocker = hybridBlocker(input);
+  if (blocker) return { path: 'chromedriver', reason: blocker };
+  return { path: 'hybrid', forced: env === 'hybrid' };
 }
 
-/** Raised when an env-requested hybrid launch can't proceed and should fall back. */
+/**
+ * The hybrid path does not apply to this launch (Chrome outside the verified
+ * range, no Chrome binary to launch). Expected, so the fallback is silent.
+ */
 export class HybridUnavailableError extends Error {}
 
 const notices = new Set<string>();
 
-function noticeOnce(text: string): void {
+/**
+ * Report a fallback to chromedriver. Expected ones only show with
+ * `CRAFTDRIVER_DEBUG=1`; a failed hybrid launch prints once per process.
+ */
+export function noticeHybridFallback(err: unknown): void {
+  if (err instanceof HybridUnavailableError) {
+    debugChromeLaunch(`chromedriver (${err.message})`);
+    return;
+  }
+  const message = err instanceof Error ? err.message.split('\n')[0] : String(err);
+  const text =
+    `[craftdriver] Hybrid Chrome launch failed, using chromedriver instead: ${message}\n` +
+    `[craftdriver] Please report this. ${CHROME_LAUNCH_MODE_ENV}=chromedriver skips the hybrid attempt.\n`;
   if (notices.has(text)) return;
   notices.add(text);
-  process.stderr.write(`[craftdriver] ${text}\n`);
+  process.stderr.write(text);
 }
 
-/** Tell the user, once per process and reason, that hybrid fell back. */
-export function noticeHybridFallback(err: HybridUnavailableError): void {
-  noticeOnce(`${err.message} Using chromedriver.`);
+/** `CRAFTDRIVER_DEBUG=1`: which path a Chrome launch took and why. */
+export function debugChromeLaunch(detail: string): void {
+  if (process.env.CRAFTDRIVER_DEBUG !== '1' && process.env.CRAFTDRIVER_DEBUG !== 'true') return;
+  process.stderr.write(`[craftdriver:chrome] launch=${detail}\n`);
 }
 
 export interface HybridLaunchInput {
@@ -152,9 +146,8 @@ export interface HybridLaunchInput {
   service: ChromeService;
   /** Used for both the Classic session and the mapper's `session.new`. */
   unhandledPromptBehavior: unknown;
-  strict: boolean;
-  /** Skip the verified Chrome range ({@link CHROME_HYBRID_ANY_VERSION_ENV}). */
-  anyChromeVersion?: boolean;
+  /** Forced by the override: any Chrome version, failures are not remembered. */
+  forced: boolean;
 }
 
 export interface HybridLaunch {
@@ -189,14 +182,6 @@ async function inspectChrome(
   };
 }
 
-function unavailable(strict: boolean, message: string): Error {
-  return strict
-    ? new CraftdriverError(ErrorCode.UNSUPPORTED, message, {
-        hint: "Omit chromeLaunchMode or set it to 'chromedriver'.",
-      })
-    : new HybridUnavailableError(message);
-}
-
 /**
  * Chrome majors seen per binary in this process, so a binary known to be
  * outside the verified range falls back before Chrome is launched for
@@ -206,32 +191,18 @@ function unavailable(strict: boolean, message: string): Error {
 const knownMajors = new Map<string, number>();
 
 /**
- * Apply the verified Chrome range. Below it: unsupported, so an explicit
- * request throws and an env request falls back. Above it: not verified yet,
- * so an env request falls back (never fail because of the Chrome version)
- * while an explicit request proceeds with a one-time warning.
+ * Binaries whose hybrid launch failed in this process. Later launches go
+ * straight to chromedriver instead of failing the same way again.
  */
+const failedBinaries = new Set<string>();
+
 function checkChromeVersion(major: number | undefined, input: HybridLaunchInput): void {
-  if (input.anyChromeVersion) return;
+  if (input.forced) return;
   const range = mapperChromeRange();
   const verdict = chromeVersionVerdict(major, range);
-  if (verdict === 'older') {
-    throw unavailable(
-      input.strict,
-      `chromeLaunchMode 'hybrid' needs Chrome ${range.min} or newer (found ${major}).`
-    );
-  }
-  if (verdict === 'newer') {
-    const unverified =
-      `Chrome ${major} is newer than the newest Chrome this craftdriver release ` +
-      `verified for hybrid launch (${range.max}).`;
-    if (!input.strict) {
-      throw new HybridUnavailableError(
-        `${unverified} A newer craftdriver may support hybrid launch on it.`
-      );
-    }
-    noticeOnce(
-      `${unverified} Continuing because chromeLaunchMode is 'hybrid'; upgrade craftdriver if you hit problems.`
+  if (verdict === 'older' || verdict === 'newer') {
+    throw new HybridUnavailableError(
+      `Chrome ${major} is outside the Chrome versions verified for hybrid launch (${range.min}-${range.max})`
     );
   }
 }
@@ -287,10 +258,18 @@ async function attachChromedriver(
 export async function launchHybridChrome(input: HybridLaunchInput): Promise<HybridLaunch> {
   const binary = input.browserBinary ?? findChromeBinary();
   if (!binary) {
-    throw unavailable(input.strict, 'Could not find a Chrome/Chromium installation to launch.');
+    const message = 'no Chrome/Chromium installation found to launch';
+    throw input.forced
+      ? new CraftdriverError(ErrorCode.DRIVER_ERROR, `Hybrid Chrome launch: ${message}.`)
+      : new HybridUnavailableError(message);
   }
 
   // Before launching anything: a binary seen earlier needs no second launch.
+  if (!input.forced && failedBinaries.has(binary)) {
+    throw new HybridUnavailableError(
+      'hybrid launch already failed for this Chrome in this process'
+    );
+  }
   const known = knownMajors.get(binary);
   if (known !== undefined) checkChromeVersion(known, input);
 
@@ -339,6 +318,7 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
 
     return { driver: new Driver(endpoint, placeholder), transport, chrome };
   } catch (err) {
+    if (!input.forced && !(err instanceof HybridUnavailableError)) failedBinaries.add(binary);
     await transport?.close().catch(() => {});
     await serviceStart.catch(() => {});
     await input.service.stop().catch(() => {});

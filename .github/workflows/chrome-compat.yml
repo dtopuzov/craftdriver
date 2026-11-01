@@ -87,13 +87,13 @@ jobs:
       - name: Hybrid launch gates
         run: >
           npx vitest run tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts
-          tests/hybrid-chrome-range.test.ts tests/chrome-smoke.test.ts tests/dialogs.test.ts
+          tests/hybrid-fallback.test.ts tests/chrome-smoke.test.ts tests/dialogs.test.ts
           tests/evaluate.test.ts tests/network.test.ts
         env:
           HEADLESS: true
+          # Force hybrid: run it on this Chrome even outside the verified
+          # range, and fail instead of falling back to chromedriver.
           CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
-          # Test this Chrome even when it is outside the verified range.
-          CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION: '1'
           # The runner's preinstalled chromedriver matches its own Chrome, not
           # the one under test: skip it so craftdriver downloads a matching one.
           CHROMEWEBDRIVER: ''

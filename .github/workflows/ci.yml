@@ -132,23 +132,27 @@ jobs:
           HEADLESS: true
           BROWSER_NAME: firefox
 
-      # Hybrid Chrome launch (craftdriver launches Chrome, in-process BiDi
-      # mapper, chromedriver attached). Non-blocking until it has a green
-      # track record on every OS.
-      - name: Chrome hybrid launch smoke test
-        continue-on-error: true
+      # Chrome launches through the hybrid path by default (craftdriver
+      # launches Chrome, in-process BiDi mapper, chromedriver attached), so
+      # the smoke test above covers it. These cover its launcher, its fallback,
+      # and the chromedriver launch it falls back to.
+      - name: Chrome hybrid launch and fallback
         shell: bash
-        run: npx vitest run tests/chrome-smoke.test.ts tests/chrome-launcher.test.ts tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts
+        run: npx vitest run tests/chrome-launcher.test.ts tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts tests/hybrid-fallback.test.ts
         env:
           HEADLESS: true
-          CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
 
-  # The default Chrome suite with every routable launch on the hybrid path.
-  # Non-blocking until it has a green track record; failures are root-caused,
-  # never retried away.
-  chrome-hybrid:
+      - name: Chrome smoke test (chromedriver launch)
+        shell: bash
+        run: npx vitest run tests/chrome-smoke.test.ts
+        env:
+          HEADLESS: true
+          CRAFTDRIVER_CHROME_LAUNCH_MODE: chromedriver
+
+  # The Chrome suite on the chromedriver launch, which every Chrome launch
+  # falls back to when hybrid launch does not apply or fails.
+  chrome-chromedriver-launch:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -167,10 +171,10 @@ jobs:
       - name: Wait for server
         run: timeout 2m bash -c "until curl -I http://127.0.0.1:8080/login.html; do sleep 1; done"
 
-      - name: Run tests (Chrome, hybrid launch)
+      - name: Run tests (Chrome, chromedriver launch)
         run: npm test
         env:
-          CRAFTDRIVER_CHROME_LAUNCH_MODE: hybrid
+          CRAFTDRIVER_CHROME_LAUNCH_MODE: chromedriver
 
   safari:
     runs-on: macos-latest

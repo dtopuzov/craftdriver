@@ -57,8 +57,9 @@ src/lib/bidi/vendor` restores the old one.
 ## Verified Chrome range
 
 `chromeSupport` in the manifest (`minMajor`..`maxMajor`) is the Chrome range
-hybrid launch trusts. Outside it, env-requested hybrid falls back to
-chromedriver, so a stale `maxMajor` costs speed, never correctness. Change it
+hybrid launch, the default Chrome launch, trusts. Outside it craftdriver
+silently launches through chromedriver, so a stale `maxMajor` costs speed,
+never correctness. Change it
 only with `npm run mapper:chrome-range -- [--min N] [--max N] --source "<what passed>"`,
 and only to majors the hybrid gates passed on.
 
@@ -69,7 +70,8 @@ and only to majors the hybrid gates passed on.
   usually fixes it). The oldest major: fix the regression, or raise `--min`
   (an owner decision: it drops hybrid support for that Chrome).
 - **Locally**: download a Chrome for Testing build and run the gates with
-  `CRAFTDRIVER_CHROME_PATH=<binary> CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1`
+  `CRAFTDRIVER_CHROME_PATH=<binary> CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid` (forces hybrid
+  on any version and disables the fallback)
   (the gate list is in `.github/workflows/chrome-compat.yml`).
 - **One mapper only.** If the newest mapper fails on a Chrome inside the
   range and the previous one fails on new Chrome, report it to the owner;

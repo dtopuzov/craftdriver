@@ -125,8 +125,6 @@ at a pinned driver instead of relying on auto-detection in that case.
 | `CRAFTDRIVER_CACHE_DIR` | Directory for cached driver downloads | `~/.cache/craftdriver` |
 | `CRAFTDRIVER_OFFLINE` | Set to `1` to disable all network calls | — |
 | `CRAFTDRIVER_DRIVER_TTL` | Driver-resolution cache lifetime, in seconds (both browsers). `0` disables the cache | `86400` (24 h) |
-| `CRAFTDRIVER_CHROME_LAUNCH_MODE` | Default [Chrome launch mode](#chrome-launch-mode-experimental): `auto`, `chromedriver` or `hybrid` | `auto` |
-| `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION` | Set to `1` to use hybrid launch on any Chrome version, outside the [verified range](#chrome-versions) too | — |
 
 ## Examples
 
@@ -275,67 +273,39 @@ environment** — the payoff is environment-dependent, and some flags can change
 behavior (e.g. `--no-sandbox`, or `--disable-features=...` entries a page or
 fixture relies on).
 
-## Chrome launch mode (experimental)
+## How Chrome is launched
 
-By default chromedriver launches Chrome, and BiDi runs through the mapper
-chromedriver injects into a hidden tab. `chromeLaunchMode: 'hybrid'` splits
-the work differently:
+For a local Chrome or Chromium with BiDi (the default), craftdriver:
 
-- craftdriver launches Chrome itself (with the same switches chromedriver
-  uses);
-- the BiDi mapper ([chromium-bidi](https://github.com/GoogleChromeLabs/chromium-bidi),
-  bundled inside craftdriver) runs in a worker thread of your Node process and
-  talks to Chrome directly;
-- chromedriver attaches to the running Chrome for Classic commands, in the
+- launches Chrome itself, with the same switches chromedriver uses;
+- runs the BiDi mapper ([chromium-bidi](https://github.com/GoogleChromeLabs/chromium-bidi),
+  bundled inside craftdriver) in a worker thread of your Node process,
+  talking to Chrome directly;
+- attaches chromedriver to the running Chrome for Classic commands, in the
   background: `Browser.launch()` returns once BiDi is ready, and the first
   Classic command waits for the attach to finish.
 
-```typescript
-const browser = await Browser.launch({ browserName: 'chrome', chromeLaunchMode: 'hybrid' });
-```
+There is nothing to configure. craftdriver lets chromedriver launch Chrome
+instead, as it always did, when:
 
-```bash
-# Or for a whole run, without code changes:
-CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid npx vitest run
-```
+- the launch is not a local Chrome/Chromium with BiDi (Firefox, Safari,
+  Electron, remote sessions, `enableBiDi: false`);
+- `mobileEmulation` is set (chromedriver only emulates on a Chrome it
+  launched itself), or `args` set their own `--remote-debugging-*` endpoint;
+- the installed Chrome is outside the versions this craftdriver release was
+  tested with (currently Chrome 140 to 159). The bundled mapper speaks
+  WebDriver BiDi to craftdriver but Chrome's own DevTools protocol to the
+  browser, so support is per Chrome version; CI reruns the tests weekly on
+  the oldest supported version and the current Stable, Beta and Dev builds.
+  After a Chrome update, a newer craftdriver release restores the hybrid
+  launch;
+- the hybrid launch fails. craftdriver prints one notice, launches through
+  chromedriver, and skips the hybrid attempt for that Chrome for the rest of
+  the process.
 
-| Mode | Behaviour |
-|---|---|
-| `'auto'` (default) | Currently the same as `'chromedriver'` |
-| `'chromedriver'` | chromedriver launches Chrome and provides BiDi |
-| `'hybrid'` | As described above |
+Set `CRAFTDRIVER_DEBUG=1` to see which launch each session used and why.
 
-Hybrid needs a local Chrome/Chromium launch with BiDi enabled. It does not
-apply to Firefox, Safari, Electron or remote sessions, and not to
-`mobileEmulation` (chromedriver only applies emulation to a Chrome it launched
-itself), or to `args` that set their own `--remote-debugging-*` endpoint:
-
-- an explicit `chromeLaunchMode: 'hybrid'` on such a launch throws
-  `UNSUPPORTED` with the reason;
-- the env var is a default for a whole run, so such launches keep the
-  chromedriver path.
-
-### Chrome versions
-
-The bundled mapper speaks WebDriver BiDi to craftdriver but Chrome's own
-DevTools protocol to the browser, so hybrid support is per Chrome version.
-Each craftdriver release records the Chrome versions its hybrid tests passed
-on (currently Chrome 140 to 159), and CI reruns them weekly against the oldest
-supported version and the current Stable, Beta and Dev builds.
-
-Outside that range, what happens depends on how hybrid was requested:
-
-| Chrome | `CRAFTDRIVER_CHROME_LAUNCH_MODE=hybrid` | `chromeLaunchMode: 'hybrid'` |
-|---|---|---|
-| In the range | Hybrid | Hybrid |
-| Newer than the range (not verified yet) | chromedriver, with a one-time notice | Hybrid, with a one-time warning |
-| Older than the range (not supported) | chromedriver, with a one-time notice | Throws `UNSUPPORTED` |
-
-So a Chrome update never breaks a run that uses the env var: at worst it
-runs on the chromedriver path until you upgrade craftdriver. To try hybrid on
-a Chrome outside the range anyway, set `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION=1`.
-
-Things that work differently in hybrid mode:
+Things to know:
 
 - **Who closes Chrome.** `browser.quit()` asks Chrome to shut down over CDP
   and kills it if it doesn't exit within 3 s. If your Node process exits
@@ -347,6 +317,14 @@ Things that work differently in hybrid mode:
   (`dist/lib/bidi/vendor/`, Apache-2.0, licence and notice included) rather
   than as an npm dependency, so `npm audit` does not cover it. The project
   tracks upstream releases itself.
+
+### Troubleshooting the Chrome launch
+
+If you suspect the hybrid launch (a problem that only shows up on Chrome),
+run with `CRAFTDRIVER_CHROME_LAUNCH_MODE=chromedriver` to let chromedriver
+launch Chrome. If that fixes it, please open an issue. The other value,
+`hybrid`, forces the hybrid launch on any Chrome version and fails instead of
+falling back; it is for testing craftdriver against new Chrome builds.
 
 ## Pinning via code
 

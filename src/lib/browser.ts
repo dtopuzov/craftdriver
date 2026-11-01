@@ -9,13 +9,11 @@ import { SafariService } from './safari.js';
 import { resolveBrowserBinaryPath } from './driverManager.js';
 import { buildLaunchCapabilities } from './capabilities.js';
 import {
-  CHROME_HYBRID_ANY_VERSION_ENV,
   CHROME_LAUNCH_MODE_ENV,
-  HybridUnavailableError,
+  debugChromeLaunch,
   chooseChromeLaunchPath,
   launchHybridChrome,
   noticeHybridFallback,
-  type ChromeLaunchMode,
   type HybridLaunch,
 } from './hybridLaunch.js';
 import type { LaunchedChrome } from './chromeLauncher.js';
@@ -345,20 +343,6 @@ interface BrowserLaunchOptions extends SharedLaunchOptions {
    * silently. See "Browser Binary Configuration" in docs/driver-configuration.md.
    */
   browserPath?: string;
-  /**
-   * How a local Chrome/Chromium session starts (experimental):
-   * - `'chromedriver'` — chromedriver launches Chrome and provides BiDi.
-   * - `'hybrid'` — craftdriver launches Chrome, runs the BiDi mapper in this
-   *   process, and attaches chromedriver for Classic commands in the
-   *   background. Requires BiDi; throws `UNSUPPORTED` for launches it can't
-   *   serve (Firefox, Safari, `mobileEmulation`).
-   * - `'auto'` (default) — currently `'chromedriver'`.
-   *
-   * The `CRAFTDRIVER_CHROME_LAUNCH_MODE` env var sets the default; launches
-   * the env value can't apply to keep the chromedriver path. See
-   * "Chrome launch mode" in docs/driver-configuration.md.
-   */
-  chromeLaunchMode?: ChromeLaunchMode;
 }
 
 interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
@@ -380,7 +364,6 @@ interface ElectronTargetLaunchOptions extends SharedLaunchOptions {
   mobileEmulation?: never;
   args?: never;
   browserPath?: never;
-  chromeLaunchMode?: never;
 }
 
 interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
@@ -403,7 +386,6 @@ interface RemoteTargetLaunchOptions extends SharedLaunchOptions {
   mobileEmulation?: never;
   args?: never;
   browserPath?: never;
-  chromeLaunchMode?: never;
   /** Remote sessions have no client-visible downloads directory; omit this option. */
   downloadsDir?: never;
 }
@@ -846,7 +828,6 @@ export class Browser {
       kind: target.kind,
       browserName: name,
       bidiRequested,
-      option: target.kind === 'browser' ? options.chromeLaunchMode : undefined,
       env: process.env[CHROME_LAUNCH_MODE_ENV],
       mobileEmulation: target.kind === 'browser' && options.mobileEmulation !== undefined,
       args: launchArgs,
@@ -862,14 +843,17 @@ export class Browser {
           prefs: chromeOptions.prefs,
           service: driverService as ChromeService,
           unhandledPromptBehavior: caps.unhandledPromptBehavior,
-          strict: route.strict,
-          anyChromeVersion: process.env[CHROME_HYBRID_ANY_VERSION_ENV] === '1',
+          forced: route.forced,
         });
+        debugChromeLaunch('hybrid');
       } catch (err) {
-        // Only an env-requested hybrid launch falls back; an explicit one throws.
-        if (!(err instanceof HybridUnavailableError)) throw err;
+        // Nothing of the hybrid attempt is left running: fall back to the
+        // chromedriver launch below, unless the override forced hybrid.
+        if (route.forced) throw err;
         noticeHybridFallback(err);
       }
+    } else if (isChromeFamily && target.kind === 'browser') {
+      debugChromeLaunch(`chromedriver (${route.reason})`);
     }
 
     let driver;

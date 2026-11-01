@@ -85,6 +85,31 @@ promised range.
       (failure, or Dev passed above max → raise maxMajor)
 - [x] V8 docs + mapper-update skill + memory
 
+Superseded the same day by "hybrid by default" below: the per-request columns
+of the table collapsed into one behaviour (auto = env column).
+
+### Hybrid by default (owner 2026-11-01: "simple, optimal by default")
+
+Owner: use the mapper when the Chrome version is supported, fall back only on
+a problem, no public knobs; any fallback switch must be non-default and
+low-profile. This is G3, decided.
+
+- [x] D1 `'auto'` = hybrid; `chromeLaunchMode` option REMOVED (never released)
+- [x] D2 auto falls back on: blockers, Chrome outside range (silent;
+      `CRAFTDRIVER_DEBUG=1` shows it), any hybrid launch failure (one notice
+      per process + binary remembered so later launches skip hybrid)
+- [x] D3 one override, troubleshooting only: `CRAFTDRIVER_CHROME_LAUNCH_MODE`
+      = `chromedriver` | `hybrid` (forced: any version, no fallback).
+      `CRAFTDRIVER_CHROME_HYBRID_ANY_VERSION` REMOVED (folded into `hybrid`)
+- [x] D4 tests: routing rewritten; tests/hybrid-fallback.test.ts (mocked range
+      + mocked mapper failure: silent range fallback, debug line, forced,
+      forced-throws, failure notice once + memo asserted via mapper call count)
+- [x] D5 CI: OS smoke runs hybrid by default + fallback tests + chromedriver
+      smoke; `chrome-hybrid` job → blocking `chrome-chromedriver-launch` full
+      suite; chrome-compat forces hybrid
+- [x] D6 docs "How Chrome is launched" + troubleshooting; skill
+- [x] D7 full suite with the new default (local) — see log
+
 ## Log
 
 (Newest last. Date, task, what changed, commit, anything the next session
@@ -225,13 +250,11 @@ must know.)
 
 1. Push the branch / open a PR; watch the non-blocking `chrome-hybrid` CI job
    and the macOS/Windows hybrid smoke (Windows close path is untested locally).
-2. Decide G3: flip `'auto'` to hybrid (currently chromedriver).
+2. (done 2026-11-01) G3: `'auto'` is hybrid; see "Hybrid by default".
 3. Optional, needs measuring (deferred by owner): shared mapper worker per
    process; A3.2 perf arm; Plan M M2.2.
 4. (done 2026-11-01, see log) Chrome version matrix; minMajor = 140.
 5. After PR #87 merges: one-line note in the deps-bump skill (M3.4).
-6. When G3 flips `'auto'` to hybrid, `auto` must get the env column of the
-   verified-range table (fall back outside the range), not the explicit one.
 
 - 2026-11-01 R-M2 Chrome version matrix (owner: "craftdriver must work for any
   recent Chrome"). Chrome for Testing mac-x64 140, 145, 150, 155, 157, 158 +
@@ -271,3 +294,13 @@ must know.)
     hybrid-chrome-range, chrome-launcher, mapper-bundle/build/update 66/66.
   - Not asserted by a test: that the memo actually skips the Chrome launch
     (only that the second fallback launch works).
+
+- 2026-11-01 Hybrid by default (D1–D7). Full suite, default env, macOS, system
+  Chrome 156: 1659 passed, 2 failed (pages.test.ts popup x2, environmental:
+  fail on both paths and pre-branch, see earlier log), 229 s. The only
+  "Hybrid Chrome launch failed" notice in the log came from the simulated
+  failure in tests/hybrid-fallback.test.ts, so no real launch fell back.
+  Override check: chrome-smoke + hybrid-launch with
+  CRAFTDRIVER_CHROME_LAUNCH_MODE=chromedriver 25/25 (CRAFTDRIVER_DEBUG
+  confirms the path per launch). Still untested: Windows/Linux hybrid by
+  default (CI on push).
