@@ -4,6 +4,7 @@
  */
 
 import { BiDiConnection } from './connection.js';
+import type { BiDiTransport } from './transport.js';
 import { NetworkInterceptor } from './network.js';
 import { LogMonitor } from './logs.js';
 import { SessionStateManager, type StorageStateOptions } from './storage.js';
@@ -72,8 +73,12 @@ export class BiDiSession {
    * network subscription eager is not a shortcut here — it's simplest,
    * provably race-free, and the data says it isn't costing anything.
    */
-  async connect(wsUrl: string, opts?: BiDiConnectOptions): Promise<void> {
-    await this.connection.connect(wsUrl);
+  async connect(endpoint: string | BiDiTransport, opts?: BiDiConnectOptions): Promise<void> {
+    if (typeof endpoint === 'string') {
+      await this.connection.connect(endpoint);
+    } else {
+      this.connection.connectTransport(endpoint);
+    }
 
     const [treeResult] = await Promise.all([
       this.connection.send<{ contexts: BiDiContextTreeEntry[] }>('browsingContext.getTree', {

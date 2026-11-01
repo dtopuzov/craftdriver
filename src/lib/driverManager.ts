@@ -344,6 +344,22 @@ function chromeBrowserCandidates(browserPath?: string): string[] {
   return browserPath ? [browserPath] : (CHROME_CANDIDATES[platform] ?? ['google-chrome']);
 }
 
+/**
+ * The Chrome executable to launch directly (no chromedriver): the explicit or
+ * env-configured path from {@link resolveBrowserBinaryPath}, else the first
+ * installed system candidate — the same list driver auto-resolution probes.
+ */
+export function findChromeBinary(explicitPath?: string): string | undefined {
+  const configured = resolveBrowserBinaryPath('chrome', explicitPath);
+  if (configured) return configured;
+  for (const candidate of chromeBrowserCandidates()) {
+    if (path.isAbsolute(candidate) ? fs.existsSync(candidate) : commandOnPath(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 function downloadedChromeDriverPath(browserVersion: string): string {
   return path.join(cacheDir(), 'chromedriver', browserVersion, cftPlatform(), driverBinName());
 }

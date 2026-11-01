@@ -31,7 +31,7 @@ Legend: `[x]` done, `[ ]` todo, `[~]` in progress, `[-]` skipped by decision.
 - [x] M1.4 ship in `dist/` (postbuild copy, `.prettierignore`)
 - [x] M1.5 `mapper:check` in CI
 - [x] M1.6 first import commit
-- [ ] M2.1 `tests/mapper-bundle.test.ts`
+- [x] M2.1 `tests/mapper-bundle.test.ts`
 - [-] M2.2 re-measure cold (owner: no measuring)
 - [ ] R-M1 no-op parser error parity
 - [ ] R-M2 version policy / `chromeSupport.minMajor`
@@ -49,9 +49,9 @@ Legend: `[x]` done, `[ ]` todo, `[~]` in progress, `[-]` skipped by decision.
 - [ ] A1.4 R3 launch-time caps
 - [ ] A1.6 R5 lazy attach (design only; no measuring)
 - [ ] A1.7 R6 process lifecycle
-- [ ] A2.1 BiDi transport seam
-- [ ] A2.2 `ChromeLauncher`
-- [ ] A2.3 in-process mapper transport
+- [x] A2.1 BiDi transport seam
+- [x] A2.2 `ChromeLauncher`
+- [x] A2.3 in-process mapper transport
 - [ ] A2.4 hybrid launch path + routing + `chromeLaunchMode`
 - [ ] A2.5 downloads / emulation / prefs
 - [ ] A3.3 lazy attach
@@ -77,3 +77,15 @@ must know.)
   so Windows checkouts keep LF. CI runs `mapper:check` on ubuntu + macOS +
   Windows (drop the non-Linux ones once green twice).
   `chromeSupport.minMajor` = 156 (only Chrome verified so far; R-M2 may lower it).
+
+- 2026-11-01 A2.1–A2.3 + M2.1: `src/lib/bidi/transport.ts` (BiDiTransport +
+  WebSocketTransport; BiDiConnection.connectTransport, BiDiSession.connect
+  accepts a transport), `src/lib/chromeLauncher.ts` (launchChrome, chromedriver
+  156's exact switch list, Preferences-file prefs, exit-hook kill, temp profile
+  removal), `driverManager.findChromeBinary()`, `src/lib/bidi/inProcessMapper.ts`
+  (startInProcessMapper → BiDiTransport; session.new sent internally as id 0).
+  Tests: `tests/chrome-launcher.test.ts` (9), `tests/mapper-bundle.test.ts` (6;
+  merges M2.1 and A2.3's planned test — it is the update gate). No-regression
+  gate for the seam: evaluate/network/logs/dialogs/browser-context/chrome-smoke
+  62/62 on the chromedriver path. Flag capture: chromedriver adds NO
+  `--window-size` (driver-perf's list had one; the craftdriver constant doesn't).

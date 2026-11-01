@@ -98,6 +98,13 @@ export const SESSION_CREATE_TIMEOUT_MS = 30_000;
  */
 export const FIREFOX_READINESS_TIMEOUT_MS = 15_000;
 
+/**
+ * How long a directly launched Chrome may take to print its DevTools URL
+ * (hybrid launch; chromedriver's own equivalent is inside `POST /session`).
+ * Same order as {@link SESSION_CREATE_TIMEOUT_MS}.
+ */
+export const CHROME_DEVTOOLS_READY_TIMEOUT_MS = 30_000;
+
 /** Timeout for the `<driver|browser> --version` capability probe spawn. */
 export const VERSION_PROBE_TIMEOUT_MS = 5_000;
 

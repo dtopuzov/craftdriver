@@ -3,7 +3,6 @@
  * Handles bidirectional communication with the browser
  */
 
-import { WebSocket } from 'ws';
 import type {
   BiDiCommand,
   BiDiMessage,
@@ -11,6 +10,7 @@ import type {
   BiDiEvent,
 } from './types.js';
 import { BIDI_TIMEOUT_MS, BIDI_RECONNECT_DELAY_MS } from '../timing.js';
+import { WebSocketTransport, type BiDiTransport } from './transport.js';
 
 export type EventHandler = (params: Record<string, unknown>) => void;
 
@@ -22,7 +22,7 @@ export interface ConnectionOptions {
 }
 
 export class BiDiConnection {
-  private ws: WebSocket | null = null;
+  private transport: BiDiTransport | null = null;
   private messageId = 0;
   private pending = new Map<
     number,
@@ -44,46 +44,32 @@ export class BiDiConnection {
    * Connect to WebDriver BiDi WebSocket endpoint
    */
   async connect(wsUrl: string): Promise<void> {
-    if (this.connected && this.ws) {
+    if (this.connected && this.transport) {
       return;
     }
 
     this.wsUrl = wsUrl;
+    this.attach(await WebSocketTransport.open(wsUrl, this.options.timeout!));
+  }
 
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`BiDi connection timeout after ${this.options.timeout}ms`));
-      }, this.options.timeout);
+  /**
+   * Connect over an already-open transport (e.g. the in-process mapper).
+   * Auto-reconnect never applies: there is no URL to reconnect to.
+   */
+  connectTransport(transport: BiDiTransport): void {
+    this.wsUrl = '';
+    this.attach(transport);
+  }
 
-      try {
-        this.ws = new WebSocket(wsUrl);
-
-        this.ws.on('open', () => {
-          clearTimeout(timeout);
-          this.connected = true;
-          resolve();
-        });
-
-        this.ws.on('message', (data: Buffer | string) => {
-          this.handleMessage(data.toString());
-        });
-
-        this.ws.on('close', () => {
-          this.connected = false;
-          this.rejectAllPending(new Error('WebSocket connection closed'));
-          if (this.options.autoReconnect && this.wsUrl) {
-            setTimeout(() => this.connect(this.wsUrl).catch(() => { }), BIDI_RECONNECT_DELAY_MS);
-          }
-        });
-
-        this.ws.on('error', (err) => {
-          clearTimeout(timeout);
-          this.connected = false;
-          reject(err);
-        });
-      } catch (err) {
-        clearTimeout(timeout);
-        reject(err);
+  private attach(transport: BiDiTransport): void {
+    this.transport = transport;
+    this.connected = true;
+    transport.onMessage((data) => this.handleMessage(data));
+    transport.onClose(() => {
+      this.connected = false;
+      this.rejectAllPending(new Error('WebSocket connection closed'));
+      if (this.options.autoReconnect && this.wsUrl) {
+        setTimeout(() => this.connect(this.wsUrl).catch(() => { }), BIDI_RECONNECT_DELAY_MS);
       }
     });
   }
@@ -92,7 +78,7 @@ export class BiDiConnection {
    * Check if connected to BiDi endpoint
    */
   isConnected(): boolean {
-    return this.connected && this.ws?.readyState === WebSocket.OPEN;
+    return this.connected && (this.transport?.isOpen() ?? false);
   }
 
   /**
@@ -123,7 +109,7 @@ export class BiDiConnection {
         },
       });
 
-      this.ws!.send(JSON.stringify(command));
+      this.transport!.send(JSON.stringify(command));
     });
   }
 
@@ -201,9 +187,10 @@ export class BiDiConnection {
    * Close the connection
    */
   async close(): Promise<void> {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    if (this.transport) {
+      const transport = this.transport;
+      this.transport = null;
+      await transport.close();
       this.connected = false;
       this.rejectAllPending(new Error('Connection closed'));
     }
