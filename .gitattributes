@@ -1,3 +1,7 @@
 # The vendored mapper is checked byte-for-byte against a fresh build
 # (`npm run mapper:check`); keep LF on every OS.
 src/lib/bidi/vendor/** -text
+
+# Vitest imports these CLI modules. Keep their shebang lines LF even when
+# core.autocrlf is enabled; CRLF shebangs fail in the test module loader.
+scripts/mapper/*.mjs text eol=lf

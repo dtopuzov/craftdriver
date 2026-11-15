@@ -1,5 +1,6 @@
-import { describe, it, beforeAll, afterAll, beforeEach, expect } from 'vitest';
+import { describe, it, beforeAll, afterAll, beforeEach, expect, vi } from 'vitest';
 import { Browser } from '../src';
+import type { BiDiSession } from '../src/lib/bidi';
 import { EXAMPLES_BASE_URL, BROWSER_NAME } from './utils';
 
 /**
@@ -87,6 +88,49 @@ describe('screenshots', () => {
     await expect(browser.screenshot({ fullPage: true, selector: '#s1' })).rejects.toThrow(
       /mutually exclusive/
     );
+  });
+
+  it.each([
+    [false, 'Cannot find context with specified id'],
+    [true, 'Cannot find context with specified id'],
+    [false, 'execution contexts cleared'],
+    [true, 'execution contexts cleared'],
+  ] as const)('recovers a screenshot (fullPage=%s) after %s', async (fullPage, message) => {
+    const conn = (browser as unknown as { bidiSession: BiDiSession }).bidiSession.getConnection();
+    const original = conn.send.bind(conn);
+    let captures = 0;
+    const send = vi.spyOn(conn, 'send').mockImplementation((method, params) => {
+      if (method === 'browsingContext.captureScreenshot' && ++captures === 1) {
+        return Promise.reject(new Error(`BiDi error [unknown error]: ${message}`));
+      }
+      return original(method, params);
+    });
+    try {
+      const image = await browser.screenshot({ fullPage });
+      expect(captures).toBe(2);
+      expect(pngSize(image).height).toBeGreaterThan(0);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it('does not retry unrelated screenshot failures', async () => {
+    const conn = (browser as unknown as { bidiSession: BiDiSession }).bidiSession.getConnection();
+    const original = conn.send.bind(conn);
+    let captures = 0;
+    const send = vi.spyOn(conn, 'send').mockImplementation((method, params) => {
+      if (method === 'browsingContext.captureScreenshot') {
+        captures++;
+        return Promise.reject(new Error('BiDi error [no such frame]: target closed'));
+      }
+      return original(method, params);
+    });
+    try {
+      await expect(browser.screenshot()).rejects.toThrow(/target closed/);
+      expect(captures).toBe(1);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it('selector screenshot returns just the element', async () => {

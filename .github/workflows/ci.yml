@@ -138,7 +138,7 @@ jobs:
       # and the chromedriver launch it falls back to.
       - name: Chrome hybrid launch and fallback
         shell: bash
-        run: npx vitest run tests/chrome-launcher.test.ts tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts tests/hybrid-fallback.test.ts
+        run: npx vitest run tests/chrome-launcher.test.ts tests/mapper-bundle.test.ts tests/hybrid-launch.test.ts tests/hybrid-fallback.test.ts tests/hybrid-fallback-init.test.ts
         env:
           HEADLESS: true
 

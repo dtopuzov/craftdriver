@@ -124,76 +124,88 @@ function header(manifest) {
  */
 export async function buildMapper(manifest) {
   return withToolchain(manifest, async (dir) => {
-    const { build } = await import(
+    const esbuild = await import(
       pathToFileURL(path.join(dir, 'node_modules', 'esbuild', 'lib', 'main.js')).href
     );
-    const entry = Object.entries(ENTRY_EXPORTS)
-      .map(([name, from]) => `export { ${name} } from '${from}';`)
-      .join('\n');
-    fs.writeFileSync(path.join(dir, 'entry.mjs'), entry + '\n');
-
-    const result = await build({
-      entryPoints: ['entry.mjs'],
-      absWorkingDir: dir,
-      bundle: true,
-      format: 'esm',
-      platform: 'node',
-      target: 'node22',
-      minify: false,
-      legalComments: 'eof',
-      metafile: true,
-      write: false,
-      logLevel: 'silent',
-    });
-    const code = result.outputFiles[0].text;
-    const output = Object.values(result.metafile.outputs)[0];
-
-    const failures = checkGuards({
-      metafile: result.metafile,
-      code,
-      exportNames: output.exports,
-      manifest,
-    });
-    if (failures.length) {
-      const err = new Error(`Mapper bundle guards failed:\n- ${failures.join('\n- ')}`);
-      err.guardFailures = failures;
-      throw err;
+    // The async API keeps an esbuild service process running from the
+    // toolchain dir. Stop it before withToolchain removes that dir: on Windows
+    // the running binary holds the directory and the removal fails (EPERM).
+    try {
+      return await bundleWith(esbuild.build, dir, manifest);
+    } finally {
+      await esbuild.stop();
     }
-
-    const declDir = path.join(dir, 'node_modules', SRC);
-    const api =
-      API_DECLARATIONS.map(
-        (rel) =>
-          `// ${rel}\n${normalizeDeclarations(fs.readFileSync(path.join(declDir, rel), 'utf8'))}`
-      ).join('\n\n') + '\n';
-
-    const bundle = header(manifest) + code;
-    const next = {
-      ...manifest,
-      output: { bytes: Buffer.byteLength(bundle), sha256: sha256(bundle) },
-      apiFingerprint: sha256(api),
-    };
-
-    const files = {
-      [FILES.bundle]: bundle,
-      [FILES.api]: api,
-      [FILES.manifest]: formatManifest(next),
-    };
-    for (const pkg of manifest.bundledPackages) {
-      files[`LICENSE.${pkg}`] = fs.readFileSync(
-        path.join(dir, 'node_modules', pkg, 'LICENSE'),
-        'utf8'
-      );
-    }
-
-    const inputs = Object.keys(result.metafile.inputs);
-    const report = {
-      modules: inputs.filter((i) => packageOf(i)).length,
-      packages: [...new Set(inputs.map(packageOf).filter(Boolean))].sort(),
-      bytes: next.output.bytes,
-    };
-    return { files, manifest: next, report };
   });
+}
+
+/** The bundle, declarations, manifest and licenses, built with esbuild's `build`. */
+async function bundleWith(build, dir, manifest) {
+  const entry = Object.entries(ENTRY_EXPORTS)
+    .map(([name, from]) => `export { ${name} } from '${from}';`)
+    .join('\n');
+  fs.writeFileSync(path.join(dir, 'entry.mjs'), entry + '\n');
+
+  const result = await build({
+    entryPoints: ['entry.mjs'],
+    absWorkingDir: dir,
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node22',
+    minify: false,
+    legalComments: 'eof',
+    metafile: true,
+    write: false,
+    logLevel: 'silent',
+  });
+  const code = result.outputFiles[0].text;
+  const output = Object.values(result.metafile.outputs)[0];
+
+  const failures = checkGuards({
+    metafile: result.metafile,
+    code,
+    exportNames: output.exports,
+    manifest,
+  });
+  if (failures.length) {
+    const err = new Error(`Mapper bundle guards failed:\n- ${failures.join('\n- ')}`);
+    err.guardFailures = failures;
+    throw err;
+  }
+
+  const declDir = path.join(dir, 'node_modules', SRC);
+  const api =
+    API_DECLARATIONS.map(
+      (rel) =>
+        `// ${rel}\n${normalizeDeclarations(fs.readFileSync(path.join(declDir, rel), 'utf8'))}`
+    ).join('\n\n') + '\n';
+
+  const bundle = header(manifest) + code;
+  const next = {
+    ...manifest,
+    output: { bytes: Buffer.byteLength(bundle), sha256: sha256(bundle) },
+    apiFingerprint: sha256(api),
+  };
+
+  const files = {
+    [FILES.bundle]: bundle,
+    [FILES.api]: api,
+    [FILES.manifest]: formatManifest(next),
+  };
+  for (const pkg of manifest.bundledPackages) {
+    files[`LICENSE.${pkg}`] = fs.readFileSync(
+      path.join(dir, 'node_modules', pkg, 'LICENSE'),
+      'utf8'
+    );
+  }
+
+  const inputs = Object.keys(result.metafile.inputs);
+  const report = {
+    modules: inputs.filter((i) => packageOf(i)).length,
+    packages: [...new Set(inputs.map(packageOf).filter(Boolean))].sort(),
+    bytes: next.output.bytes,
+  };
+  return { files, manifest: next, report };
 }
 
 /** Lines that differ between two texts: the first mismatch, for a readable error. */

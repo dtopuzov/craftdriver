@@ -117,7 +117,10 @@ export async function withToolchain(manifest, fn) {
     }
     return await fn(dir);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    // esbuild.stop() initiates shutdown but does not await the child exit.
+    // Async removal lets process/pipe close callbacks run between retries,
+    // releasing Windows handles before removing the toolchain directory.
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }
 

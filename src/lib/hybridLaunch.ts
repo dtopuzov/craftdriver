@@ -78,6 +78,11 @@ function hybridBlocker(input: ChromeLaunchRouteInput): string | undefined {
   if (input.args?.some((a) => /^--remote-debugging-(port|pipe|address)\b/.test(a))) {
     return 'args set their own --remote-debugging-* endpoint';
   }
+  // chromedriver merges its launch prefs (downloadsDir) into an existing
+  // profile; the hybrid launcher only writes prefs into a fresh one.
+  if (input.args?.some((a) => /^--user-data-dir=/.test(a))) {
+    return 'args set their own --user-data-dir profile';
+  }
   return undefined;
 }
 
@@ -154,6 +159,12 @@ export interface HybridLaunch {
   driver: Driver;
   transport: BiDiTransport;
   chrome: LaunchedChrome;
+  /**
+   * Record that this launch failed after `launchHybridChrome` returned (the
+   * BiDi session initialization), so later launches skip the hybrid attempt
+   * for this Chrome, as for a failure inside `launchHybridChrome`.
+   */
+  markFailed(): void;
 }
 
 /**
@@ -316,7 +327,14 @@ export async function launchHybridChrome(input: HybridLaunchInput): Promise<Hybr
     ready.catch(() => {});
     endpoint.pendingSession = { placeholder, ready };
 
-    return { driver: new Driver(endpoint, placeholder), transport, chrome };
+    return {
+      driver: new Driver(endpoint, placeholder),
+      transport,
+      chrome,
+      markFailed: () => {
+        if (!input.forced) failedBinaries.add(binary);
+      },
+    };
   } catch (err) {
     if (!input.forced && !(err instanceof HybridUnavailableError)) failedBinaries.add(binary);
     await transport?.close().catch(() => {});
