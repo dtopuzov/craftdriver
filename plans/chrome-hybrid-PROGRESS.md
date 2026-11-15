@@ -248,8 +248,11 @@ must know.)
 
 ## Next steps (owner decides)
 
-1. Push the branch / open a PR; watch the non-blocking `chrome-hybrid` CI job
-   and the macOS/Windows hybrid smoke (Windows close path is untested locally).
+1. Push the branch / open a PR and check the existing CI jobs: the default
+   Chrome suite, `chrome-chromedriver-launch`, and macOS/Windows launch smoke.
+   The earlier non-blocking `chrome-hybrid` job was replaced when hybrid
+   became the default. Windows follow-up validation is recorded in
+   [the QA review](../reviews/chrome-hybrid-launch-qa-review.md).
 2. (done 2026-11-01) G3: `'auto'` is hybrid; see "Hybrid by default".
 3. Optional, needs measuring (deferred by owner): shared mapper worker per
    process; A3.2 perf arm; Plan M M2.2.

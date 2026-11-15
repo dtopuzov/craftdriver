@@ -3,7 +3,13 @@
 > **Implementation progress:** tracked in [chrome-hybrid-PROGRESS.md](chrome-hybrid-PROGRESS.md)
 > (task checklist with [x]/[ ]/[-] status, research answers, and how to resume).
 
-Status: proposed (2026-10-31). Owner decision needed at gates G0 and G3.
+Status: implemented; the owner skipped the measurement gates and selected
+hybrid by default on 2026-11-01. The original proposal below is retained as
+design history: its proposed gates, `chromeLaunchMode` option and
+`loadMapper()` name do not describe the current implementation. See the
+progress record for those decisions and
+[the QA review](../reviews/chrome-hybrid-launch-qa-review.md) for validation
+and follow-up fixes.
 Companion: [chrome-driverless.md](chrome-driverless.md) (Plan B, the bigger
 alternative). Plans A and B share the foundation tasks A2.1–A2.3.
 
