@@ -100,6 +100,7 @@ class WorkerMapperTransport implements BiDiTransport {
   private messageHandler: (data: string) => void = () => {};
   private closeHandlers: Array<() => void> = [];
   private closed = false;
+  private disposal?: Promise<void>;
 
   constructor(private worker: Worker) {
     worker.on('message', (m: FromWorker) => {
@@ -127,12 +128,20 @@ class WorkerMapperTransport implements BiDiTransport {
     return !this.closed;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    // Mapper first, then the CDP socket it was using, then the thread.
-    this.worker.postMessage({ type: 'close' });
-    this.markClosed();
-    await this.worker.terminate();
+  /**
+   * Dispose of the worker. `closed` only tracks the connection: when Chrome
+   * went away first (crash, external close) the worker is still alive and
+   * listening on its port, and would keep the caller's process from exiting.
+   * Repeated calls share one disposal.
+   */
+  close(): Promise<void> {
+    this.disposal ??= (async () => {
+      // Mapper first, then the CDP socket it was using, then the thread.
+      if (!this.closed) this.worker.postMessage({ type: 'close' });
+      this.markClosed();
+      await this.worker.terminate();
+    })();
+    return this.disposal;
   }
 
   private markClosed(): void {

@@ -291,7 +291,9 @@ instead, as it always did, when:
 - the launch is not a local Chrome/Chromium with BiDi (Firefox, Safari,
   Electron, remote sessions, `enableBiDi: false`);
 - `mobileEmulation` is set (chromedriver only emulates on a Chrome it
-  launched itself), or `args` set their own `--remote-debugging-*` endpoint;
+  launched itself), or `args` set their own `--remote-debugging-*` endpoint
+  or `--user-data-dir` profile (chromedriver applies `downloadsDir` to an
+  existing profile);
 - the installed Chrome is outside the versions this craftdriver release was
   tested with (currently Chrome 140 to 159). The bundled mapper speaks
   WebDriver BiDi to craftdriver but Chrome's own DevTools protocol to the

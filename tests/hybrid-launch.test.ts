@@ -10,8 +10,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import { Worker } from 'node:worker_threads';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Browser } from '../src';
+import { startInProcessMapper } from '../src/lib/bidi/inProcessMapper';
+import { launchChrome } from '../src/lib/chromeLauncher';
+import { findChromeBinary } from '../src/lib/driverManager';
 import { CraftdriverError, ErrorCode } from '../src/lib/errors';
 import { HttpClient } from '../src/lib/http';
 import {
@@ -54,6 +60,7 @@ describe('chrome launch routing', () => {
     ['BiDi off', { bidiRequested: false }, /needs BiDi/],
     ['mobile emulation', { mobileEmulation: true }, /mobileEmulation/],
     ['own debugging port', { args: ['--remote-debugging-port=9333'] }, /remote-debugging/],
+    ['own profile', { args: ['--user-data-dir=/tmp/profile'] }, /user-data-dir/],
     ['electron', { kind: 'electron' }, /electron launches/],
     ['remote', { kind: 'remote' }, /remote launches/],
   ])('%s: uses chromedriver, also when hybrid is forced', (_, over, reason) => {
@@ -245,6 +252,61 @@ describe.runIf(IS_CHROMIUM && process.platform !== 'win32')('hybrid launch clean
       );
     } finally {
       await browser.quit();
+    }
+  });
+});
+
+describe.runIf(IS_CHROMIUM)('hybrid launch with a caller-owned profile', () => {
+  it('honors downloadsDir with a caller-owned profile, and keeps the profile', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'craftdriver-own-profile-'));
+    const profile = path.join(root, 'profile');
+    const oldDownloads = path.join(root, 'old-downloads');
+    const wanted = path.join(root, 'wanted-downloads');
+    fs.mkdirSync(path.join(profile, 'Default'), { recursive: true });
+    fs.mkdirSync(oldDownloads);
+    fs.writeFileSync(
+      path.join(profile, 'Default', 'Preferences'),
+      JSON.stringify({
+        download: { default_directory: oldDownloads, prompt_for_download: false },
+      })
+    );
+    try {
+      const browser = await launchWithMode(undefined, {
+        browserName: 'chrome',
+        args: [`--user-data-dir=${profile}`],
+        downloadsDir: wanted,
+      });
+      try {
+        await browser.navigateTo(`${EXAMPLES_BASE_URL}/download.html`);
+        const dl = await browser.waitForDownload(() => browser.click('#download-btn'));
+        expect(path.dirname(dl.path)).toBe(wanted);
+        expect(fs.readdirSync(oldDownloads)).toEqual([]);
+      } finally {
+        await browser.quit();
+      }
+      expect(fs.existsSync(path.join(profile, 'Default', 'Preferences'))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  });
+});
+
+describe.runIf(IS_CHROMIUM)('in-process mapper cleanup', () => {
+  // The worker listens on its parent port until terminated, so a surviving
+  // worker keeps the caller's process alive after a crash or external close.
+  it('terminates the worker when Chrome closed first, once across repeated close()', async () => {
+    const chrome = await launchChrome({ binary: findChromeBinary()!, headless: true });
+    const terminate = vi.spyOn(Worker.prototype, 'terminate');
+    try {
+      const transport = await startInProcessMapper(chrome.wsUrl, { capabilities: {} });
+      await chrome.close();
+      await expect.poll(() => transport.isOpen()).toBe(false);
+      await Promise.all([transport.close(), transport.close()]);
+      await transport.close();
+      expect(terminate).toHaveBeenCalledTimes(1);
+    } finally {
+      terminate.mockRestore();
+      await chrome.close();
     }
   });
 });

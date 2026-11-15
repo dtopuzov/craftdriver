@@ -833,6 +833,9 @@ export class Browser {
       args: launchArgs,
     });
     let hybrid: HybridLaunch | undefined;
+    // The hybrid Browser, created early so its BiDi session initializes
+    // inside the fallback boundary below.
+    let hybridBrowser: Browser | undefined;
     if (route.path === 'hybrid') {
       const chromeOptions = caps['goog:chromeOptions'] as { prefs: Record<string, unknown> };
       try {
@@ -845,12 +848,29 @@ export class Browser {
           unhandledPromptBehavior: caps.unhandledPromptBehavior,
           forced: route.forced,
         });
-        debugChromeLaunch('hybrid');
       } catch (err) {
         // Nothing of the hybrid attempt is left running: fall back to the
         // chromedriver launch below, unless the override forced hybrid.
         if (route.forced) throw err;
         noticeHybridFallback(err);
+      }
+      if (hybrid) {
+        // Nothing has reached the caller yet, so a failure opening the BiDi
+        // session (initial context tree, subscriptions) still falls back.
+        hybridBrowser = new Browser(hybrid.driver);
+        hybridBrowser._driverService = driverService;
+        hybridBrowser._chrome = hybrid.chrome;
+        try {
+          await hybridBrowser.initInProcessBiDi(hybrid.transport);
+          debugChromeLaunch('hybrid');
+        } catch (err) {
+          await hybridBrowser.quit().catch(() => {});
+          hybrid.markFailed();
+          hybrid = undefined;
+          hybridBrowser = undefined;
+          if (route.forced) throw err;
+          noticeHybridFallback(err);
+        }
       }
     } else if (isChromeFamily && target.kind === 'browser') {
       debugChromeLaunch(`chromedriver (${route.reason})`);
@@ -875,7 +895,7 @@ export class Browser {
     } else {
       driver = await builder.build();
     }
-    const browser = new Browser(driver);
+    const browser = hybridBrowser ?? new Browser(driver);
     browser._downloadsDir = downloadsDir;
     browser._driverService = driverService;
     browser._browserName = name;
@@ -909,9 +929,8 @@ export class Browser {
     try {
       // Initialize BiDi session if WebSocket URL available
       const wsUrl = (driver as any).__wsUrl;
-      if (hybrid) {
-        await browser.initInProcessBiDi(hybrid.transport);
-      } else if (wsUrl && bidiRequested) {
+      // A hybrid Browser's BiDi session is already open (see above).
+      if (!hybrid && wsUrl && bidiRequested) {
         await browser.initBiDi(wsUrl);
       }
 
@@ -1007,8 +1026,9 @@ export class Browser {
 
   /**
    * Initialize the BiDi session over an in-process transport (hybrid launch).
-   * Nothing to retry, and the caller asked for BiDi, so a failure fails the
-   * launch instead of degrading to Classic-only.
+   * Nothing to retry, and the caller asked for BiDi, so a failure is not
+   * degraded to Classic-only: `launch` falls back to a chromedriver launch,
+   * or fails when the override forces hybrid.
    */
   private async initInProcessBiDi(transport: BiDiTransport): Promise<void> {
     const session = new BiDiSession(this.driver);
